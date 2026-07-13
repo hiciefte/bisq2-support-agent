@@ -195,4 +195,4 @@ def test_notification_state_failure_has_distinct_log(caplog) -> None:
     assert captured["detector_key"] == "user_directory_impersonation"
     assert "Failed to mark proactive finding" in caplog.text
     assert "Failed to persist proactive finding" not in caplog.text
-    assert completed is True
+    assert completed is False

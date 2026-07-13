@@ -103,6 +103,34 @@ class TestMatrixChannelLifecycle:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
+    async def test_start_wires_trust_alerts_before_message_handler(self):
+        order: list[str] = []
+        mock_conn_manager = SimpleNamespace(
+            connect=AsyncMock(),
+        )
+        message_handler = SimpleNamespace(
+            channel=None,
+            start=AsyncMock(side_effect=lambda: order.append("message_handler")),
+        )
+        runtime = MagicMock(spec=ChannelRuntime)
+        runtime.settings = SimpleNamespace()
+        runtime.resolve_optional = MagicMock(
+            side_effect=lambda name: {
+                "matrix_connection_manager": mock_conn_manager,
+                "matrix_message_handler": message_handler,
+            }.get(name)
+        )
+        channel = MatrixChannel(runtime)
+        channel._wire_trust_monitor_alerts = AsyncMock(
+            side_effect=lambda: order.append("trust_alerts")
+        )
+
+        await channel.start()
+
+        assert order[:2] == ["trust_alerts", "message_handler"]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
     async def test_wire_trust_monitor_binds_matrix_owner_loop(self):
         publisher = SimpleNamespace(
             matrix_notifier=None,

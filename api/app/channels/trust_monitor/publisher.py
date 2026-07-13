@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable, Coroutine
-from concurrent.futures import CancelledError, TimeoutError
+from concurrent.futures import CancelledError
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import Any
 
 from app.channels.trust_monitor.models import TrustAlertSurface, TrustFinding
@@ -125,7 +126,7 @@ class CompositeTrustAlertPublisher(TrustAlertPublisher):
 
         try:
             return bool(future.result(timeout=self.delivery_timeout_seconds))
-        except TimeoutError:
+        except FutureTimeoutError:
             future.cancel()
             logger.warning(
                 "Trust matrix notifier timed out detector=%s actor=%s timeout_seconds=%s",

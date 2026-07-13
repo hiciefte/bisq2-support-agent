@@ -36,6 +36,7 @@ from app.channels.staff import (
     staff_resolver_service_key,
 )
 from app.channels.traits import ChannelTraits
+from app.channels.trust_monitor.executor import run_in_trust_monitor_executor
 
 logger = logging.getLogger(__name__)
 
@@ -310,6 +311,10 @@ class MatrixChannel(ChannelBase):
             self._logger.exception(f"Failed to connect to Matrix homeserver: {e}")
             self._is_connected = False
 
+        # Bind delivery before the message callback can ingest a finding. The
+        # handler starts Matrix sync, so wiring after start leaves a real race.
+        await self._wire_trust_monitor_alerts()
+
         # Wire message handler if registered (push message flow)
         message_handler = self.runtime.resolve_optional("matrix_message_handler")
         if message_handler:
@@ -321,9 +326,6 @@ class MatrixChannel(ChannelBase):
             except Exception as e:
                 self._logger.warning(f"Failed to start message handler: {e}")
 
-        # Bind the publisher before registering callbacks that offload ingest to
-        # worker threads; otherwise an early event can race alert-loop wiring.
-        await self._wire_trust_monitor_alerts()
         trust_monitor_handler = self.runtime.resolve_optional(
             "matrix_trust_monitor_handler"
         )
@@ -502,7 +504,7 @@ class MatrixChannel(ChannelBase):
         sync_rooms = resolve_allowed_sync_rooms(settings)
 
         async def _handle_proactive_finding(result: Any) -> bool:
-            return await asyncio.to_thread(
+            return await run_in_trust_monitor_executor(
                 persist_proactive_finding,
                 trust_monitor_service=trust_monitor_service,
                 sync_rooms=sync_rooms,

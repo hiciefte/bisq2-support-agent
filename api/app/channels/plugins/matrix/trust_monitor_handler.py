@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
 from app.channels.plugins.matrix.room_filter import normalize_room_ids
 from app.channels.trust_monitor.events import TrustEvent
+from app.channels.trust_monitor.executor import run_in_trust_monitor_executor
 from app.channels.trust_monitor.models import TrustEventType
 
 
@@ -67,7 +67,7 @@ class MatrixTrustMonitorHandler:
             if timestamp
             else datetime.now(UTC)
         )
-        await asyncio.to_thread(
+        await run_in_trust_monitor_executor(
             self.trust_monitor_service.ingest_event,
             TrustEvent(
                 channel_id="matrix",
@@ -98,7 +98,7 @@ class MatrixTrustMonitorHandler:
                     if ts
                     else datetime.now(UTC)
                 )
-                await asyncio.to_thread(
+                await run_in_trust_monitor_executor(
                     self.trust_monitor_service.ingest_event,
                     TrustEvent(
                         channel_id="matrix",

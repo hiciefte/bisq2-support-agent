@@ -88,4 +88,5 @@ def persist_proactive_finding(
             finding.id,
             exc_info=True,
         )
+        return False
     return True

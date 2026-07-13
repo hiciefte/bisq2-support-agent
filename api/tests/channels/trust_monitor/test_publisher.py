@@ -87,10 +87,14 @@ async def test_staff_alert_reports_false_when_delivery_returns_false() -> None:
 @pytest.mark.asyncio
 async def test_staff_alert_times_out_without_marking_delivery_success() -> None:
     release = asyncio.Event()
+    finished = asyncio.Event()
 
     async def notify(_finding: TrustFinding) -> bool:
-        await release.wait()
-        return True
+        try:
+            await release.wait()
+            return True
+        finally:
+            finished.set()
 
     publisher = CompositeTrustAlertPublisher(
         matrix_notifier=notify,
@@ -101,6 +105,8 @@ async def test_staff_alert_times_out_without_marking_delivery_success() -> None:
     delivered = await asyncio.to_thread(publisher.publish, _finding())
 
     assert delivered is False
+    release.set()
+    await asyncio.wait_for(finished.wait(), timeout=1)
 
 
 def test_staff_alert_reports_unscheduled_without_bound_running_loop() -> None:

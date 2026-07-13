@@ -16,6 +16,8 @@ import asyncio
 import logging
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
 from app.channels.traits import get_channel_traits
@@ -69,6 +71,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 _GROUP_CHANNEL_MAX_ANSWER_LENGTH = 500
+_CONTEXT_LLM_FALLBACK_WORKERS = 4
 _DEFINITION_QUESTION_PATTERNS = (
     r"^\s*what\s+is\b",
     r"^\s*what'?s\b",
@@ -241,6 +244,10 @@ class SimplifiedRAGService:
         self.retriever = None
         self.document_retriever = None  # Will be initialized after retriever
         self._background_tasks: set[asyncio.Task[Any]] = set()
+        self._context_llm_executor: Optional[ThreadPoolExecutor] = ThreadPoolExecutor(
+            max_workers=_CONTEXT_LLM_FALLBACK_WORKERS,
+            thread_name_prefix="context-llm-fallback",
+        )
         self.llm = None
         self.rag_chain = None
         self.prompt = None
@@ -659,6 +666,10 @@ class SimplifiedRAGService:
     async def cleanup(self):
         """Clean up resources."""
         logger.info("Cleaning up simplified RAG service resources...")
+        context_llm_executor = self._context_llm_executor
+        self._context_llm_executor = None
+        if context_llm_executor is not None:
+            context_llm_executor.shutdown(wait=False, cancel_futures=True)
         self.retriever = None
         self.document_retriever = None
         self.rag_chain = None
@@ -738,11 +749,18 @@ class SimplifiedRAGService:
             # The provider exposes a synchronous invoke API. Keep it off the event
             # loop and bound the no-document fallback so one slow provider call
             # cannot stall unrelated requests indefinitely.
+            context_llm_executor = self._context_llm_executor
+            if context_llm_executor is None:
+                raise RuntimeError("Context LLM executor has been shut down")
+
             response_text = await asyncio.wait_for(
-                asyncio.to_thread(
-                    self.llm.invoke,
-                    user_content,
-                    system_content=system_content,
+                asyncio.get_running_loop().run_in_executor(
+                    context_llm_executor,
+                    partial(
+                        self.llm.invoke,
+                        user_content,
+                        system_content=system_content,
+                    ),
                 ),
                 timeout=self.settings.CONTEXT_LLM_TIMEOUT_SECONDS,
             )

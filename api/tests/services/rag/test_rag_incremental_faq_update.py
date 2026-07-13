@@ -12,12 +12,21 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from collections.abc import Callable
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from app.services.simplified_rag_service import SimplifiedRAGService
 from langchain_core.documents import Document
+
+
+async def _wait_until(predicate: Callable[[], bool], *, timeout: float = 1) -> None:
+    async def poll() -> None:
+        while not predicate():
+            await asyncio.sleep(0)
+
+    await asyncio.wait_for(poll(), timeout=timeout)
 
 
 def _faq_doc(faq_id: str, question: str, answer: str) -> Document:
@@ -256,8 +265,7 @@ class TestIncrementalFAQUpdate:
     async def test_cancelled_same_faq_waiter_releases_lock_reference(self, rag_service):
         held_lock = await rag_service.faq_index_sync.acquire_lock("faq-1")
         waiter = asyncio.create_task(rag_service.faq_index_sync.acquire_lock("faq-1"))
-        while rag_service._faq_index_lock_refs.get("faq-1") != 2:
-            await asyncio.sleep(0)
+        await _wait_until(lambda: rag_service._faq_index_lock_refs.get("faq-1") == 2)
 
         waiter.cancel()
         with pytest.raises(asyncio.CancelledError):

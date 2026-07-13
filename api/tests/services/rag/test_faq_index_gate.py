@@ -1,9 +1,18 @@
 """Concurrency invariants for FAQ index rebuild/update coordination."""
 
 import asyncio
+from collections.abc import Callable
 
 import pytest
 from app.services.rag.faq_index_sync import AsyncSharedExclusiveGate
+
+
+async def _wait_until(predicate: Callable[[], bool], *, timeout: float = 1) -> None:
+    async def poll() -> None:
+        while not predicate():
+            await asyncio.sleep(0)
+
+    await asyncio.wait_for(poll(), timeout=timeout)
 
 
 @pytest.mark.asyncio
@@ -30,8 +39,7 @@ async def test_waiting_writer_blocks_new_shared_entries() -> None:
     first_task = asyncio.create_task(first_reader())
     await asyncio.sleep(0)
     writer_task = asyncio.create_task(writer())
-    while gate.waiting_writers == 0:
-        await asyncio.sleep(0)
+    await _wait_until(lambda: gate.waiting_writers > 0)
     second_task = asyncio.create_task(second_reader())
     await asyncio.sleep(0)
 
@@ -65,8 +73,7 @@ async def test_cancelled_writer_does_not_strand_shared_entries() -> None:
     first_task = asyncio.create_task(holding_reader())
     await asyncio.sleep(0)
     writer_task = asyncio.create_task(waiting_writer())
-    while gate.waiting_writers == 0:
-        await asyncio.sleep(0)
+    await _wait_until(lambda: gate.waiting_writers > 0)
 
     writer_task.cancel()
     with pytest.raises(asyncio.CancelledError):

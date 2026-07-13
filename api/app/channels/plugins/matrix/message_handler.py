@@ -15,6 +15,7 @@ from app.channels.plugins.matrix.room_filter import normalize_room_ids
 from app.channels.policy import is_generation_enabled
 from app.channels.response_dispatcher import ChannelResponseDispatcher
 from app.channels.staff import resolve_channel_staff_resolver
+from app.channels.trust_monitor.executor import run_in_trust_monitor_executor
 
 
 class _MissingNioEvent:
@@ -384,7 +385,7 @@ class MatrixMessageHandler:
                 or str(getattr(event, "event_id", "") or ""),
                 metadata={"body_length": len(self._extract_event_text(event))},
             )
-            await asyncio.to_thread(service.ingest_event, trust_event)
+            await run_in_trust_monitor_executor(service.ingest_event, trust_event)
         except Exception:
             logger.debug(
                 "Failed recording Matrix trust-monitor event room_id=%s sender_id=%s",
