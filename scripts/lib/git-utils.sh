@@ -214,18 +214,18 @@ preserve_production_data() {
 
     # SECURITY: Canonicalize path to prevent traversal attacks
     repo_dir=$(realpath -e "$repo_dir" 2>/dev/null) || {
-        log_error "Repository directory does not exist: ${1:-.}"
+        log_error "Repository directory does not exist: ${1:-.}" >&2
         return 1
     }
 
     # SECURITY: Validate path structure (must contain bisq-support or be a test directory)
     if [[ ! "$repo_dir" =~ (bisq-support|bisq.*test) ]]; then
-        log_error "Invalid repository directory: $repo_dir"
+        log_error "Invalid repository directory: $repo_dir" >&2
         return 1
     fi
 
     cd "$repo_dir" || {
-        log_error "Failed to change to repository directory: $repo_dir"
+        log_error "Failed to change to repository directory: $repo_dir" >&2
         return 1
     }
 
@@ -233,7 +233,7 @@ preserve_production_data() {
     local lock_file="$repo_dir/api/data/.backup.lock"
     exec 200>"$lock_file"
     if ! flock -x -w 30 200; then
-        log_error "Could not acquire backup lock (another backup in progress)"
+        log_error "Could not acquire backup lock (another backup in progress)" >&2
         return 1
     fi
 
@@ -253,7 +253,7 @@ preserve_production_data() {
     mkdir -p "$backup_dir"
     chmod 700 "$backup_dir"
 
-    log_info "Backing up production data files..."
+    log_info "Backing up production data files..." >&2
     local backed_up_count=0
     local max_file_size=$((50 * 1024 * 1024))  # 50MB limit
 
@@ -262,7 +262,7 @@ preserve_production_data() {
 
         # SECURITY: Validate file type and permissions
         if [ ! -f "$file_path" ] || [ -L "$file_path" ]; then
-            log_debug "Skipping non-regular file: $file"
+            log_debug "Skipping non-regular file: $file" >&2
             continue
         fi
 
@@ -270,13 +270,13 @@ preserve_production_data() {
         local file_size
         file_size=$(stat -c%s "$file_path" 2>/dev/null || stat -f%z "$file_path" 2>/dev/null)
         if [ "$file_size" -gt "$max_file_size" ]; then
-            log_warning "Skipping oversized file (>50MB): $file"
+            log_warning "Skipping oversized file (>50MB): $file" >&2
             continue
         fi
 
         # SECURITY: Verify file is readable
         if [ ! -r "$file_path" ]; then
-            log_error "Cannot read file: $file"
+            log_error "Cannot read file: $file" >&2
             flock -u 200
             return 1
         fi
@@ -284,18 +284,18 @@ preserve_production_data() {
         # Use -- to prevent filename interpretation
         cp -- "$file_path" "$backup_dir/"
         backed_up_count=$((backed_up_count + 1))
-        log_debug "Backed up: $file"
+        log_debug "Backed up: $file" >&2
     done
 
     # Release lock
     flock -u 200
 
     if [ "$backed_up_count" -gt 0 ]; then
-        log_success "Backed up $backed_up_count production data file(s) to: $backup_dir"
+        log_success "Backed up $backed_up_count production data file(s) to: $backup_dir" >&2
         echo "$backup_dir"
         return 0
     else
-        log_warning "No production data files found to backup"
+        log_warning "No production data files found to backup" >&2
         rmdir "$backup_dir" 2>/dev/null
         return 0
     fi

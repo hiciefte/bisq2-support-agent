@@ -245,6 +245,72 @@ def test_source_env_file_exports_variables_to_child_process(tmp_path: Path) -> N
     assert result.returncode == 0, result.stderr
 
 
+def test_preserve_production_data_command_substitution_returns_backup_path(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "bisq-support-test"
+    data_dir = repo / "api" / "data"
+    data_dir.mkdir(parents=True)
+    (data_dir / "faqs.db").write_bytes(b"sqlite fixture")
+
+    result = run_bash(
+        f"""
+        source "{GIT_UTILS_SH}"
+        realpath() {{
+            if [ "$1" = "-e" ]; then
+                command realpath "$2"
+            else
+                command realpath "$@"
+            fi
+        }}
+        flock() {{ return 0; }}
+        backup_dir=$(preserve_production_data "{repo}")
+        printf '%s' "$backup_dir"
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 0, result.stderr
+    output_lines = result.stdout.splitlines()
+    assert len(output_lines) == 1
+    backup_dir = Path(output_lines[0])
+    assert backup_dir.is_dir()
+    assert backup_dir.parent == data_dir
+    assert (backup_dir / "faqs.db").read_bytes() == b"sqlite fixture"
+    assert "Backing up production data files" in result.stderr
+    assert "Backed up 1 production data file(s)" in result.stderr
+
+
+def test_preserve_production_data_command_substitution_returns_empty_without_data(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "bisq-support-test"
+    (repo / "api" / "data").mkdir(parents=True)
+
+    result = run_bash(
+        f"""
+        source "{GIT_UTILS_SH}"
+        realpath() {{
+            if [ "$1" = "-e" ]; then
+                command realpath "$2"
+            else
+                command realpath "$@"
+            fi
+        }}
+        flock() {{ return 0; }}
+        backup_dir=$(preserve_production_data "{repo}")
+        printf '%s' "$backup_dir"
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ""
+    assert "Backing up production data files" in result.stderr
+    assert "No production data files found to backup" in result.stderr
+    assert not list((repo / "api" / "data").glob(".backup_*"))
+
+
 def test_validate_runtime_configuration_requires_trust_monitor_secret() -> None:
     result = run_bash(
         f"""
