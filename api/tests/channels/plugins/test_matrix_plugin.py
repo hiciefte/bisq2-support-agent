@@ -8,6 +8,7 @@ Note: Matrix channel wraps the existing Matrix integration components:
 - Matrix nio AsyncClient for room operations
 """
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -97,6 +98,27 @@ class TestMatrixChannelLifecycle:
 
         assert channel.is_connected is True
         mock_conn_manager.connect.assert_called_once()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_wire_trust_monitor_binds_matrix_owner_loop(self):
+        publisher = SimpleNamespace(
+            matrix_notifier=None,
+            bind_loop=MagicMock(),
+        )
+        trust_monitor_service = SimpleNamespace(publisher=publisher)
+        runtime = MagicMock(spec=ChannelRuntime)
+        runtime.settings = SimpleNamespace(MATRIX_STAFF_ROOM="!staff:matrix.org")
+        runtime.resolve_optional = MagicMock(
+            side_effect=lambda name: (
+                trust_monitor_service if name == "trust_monitor_service" else None
+            )
+        )
+        channel = MatrixChannel(runtime)
+
+        await channel._wire_trust_monitor_alerts()
+
+        publisher.bind_loop.assert_called_once_with(asyncio.get_running_loop())
 
     @pytest.mark.unit
     @pytest.mark.asyncio

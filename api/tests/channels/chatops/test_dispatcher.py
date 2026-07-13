@@ -101,6 +101,7 @@ def _service() -> MagicMock:
     service.claim_escalation = AsyncMock()
     service.unclaim_escalation = AsyncMock()
     service.respond_to_escalation = AsyncMock()
+    service.retry_delivery = AsyncMock()
     service.prioritize_escalation = AsyncMock()
     service.close_escalation = AsyncMock()
     return service
@@ -213,6 +214,63 @@ async def test_dispatch_send_uses_ai_draft_and_cancels_arbitration_when_thread_i
         31, "Draft answer", "@staff:server"
     )
     assert result.message == "Sent case #31 to the user."
+
+
+@pytest.mark.asyncio
+async def test_dispatch_send_reports_failed_user_delivery_honestly() -> None:
+    service = _service()
+    pending = _escalation(33, status=EscalationStatus.IN_REVIEW)
+    failed = _escalation(
+        33,
+        status=EscalationStatus.RESPONDED,
+        staff_id="@staff:server",
+        staff_answer=pending.ai_draft_answer,
+    ).model_copy(
+        update={
+            "delivery_status": EscalationDeliveryStatus.FAILED,
+            "delivery_error": "transport unavailable",
+            "delivery_attempts": 1,
+        }
+    )
+    service.repository.get_by_id.return_value = pending
+    service.respond_to_escalation.return_value = failed
+    dispatcher = ChatOpsDispatcher(escalation_service=service)
+
+    result = await dispatcher.dispatch(_command(ChatOpsCommandName.SEND, case_id=33))
+
+    assert result.ok is False
+    assert "not delivered" in result.message.lower()
+    assert "retry" in result.message.lower()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_send_retries_persisted_edited_answer() -> None:
+    service = _service()
+    failed_edit = _escalation(
+        34,
+        status=EscalationStatus.RESPONDED,
+        staff_id="@staff:server",
+        staff_answer="Edited staff answer",
+    ).model_copy(
+        update={
+            "delivery_status": EscalationDeliveryStatus.FAILED,
+            "delivery_attempts": 1,
+        }
+    )
+    delivered = failed_edit.model_copy(
+        update={"delivery_status": EscalationDeliveryStatus.DELIVERED}
+    )
+    service.repository.get_by_id.return_value = failed_edit
+    service.retry_delivery.return_value = delivered
+    dispatcher = ChatOpsDispatcher(escalation_service=service)
+
+    result = await dispatcher.dispatch(_command(ChatOpsCommandName.SEND, case_id=34))
+
+    service.retry_delivery.assert_awaited_once_with(34)
+    service.respond_to_escalation.assert_not_awaited()
+    assert delivered.staff_answer == "Edited staff answer"
+    assert result.ok is True
+    assert result.message == "Sent case #34 to the user."
 
 
 @pytest.mark.asyncio

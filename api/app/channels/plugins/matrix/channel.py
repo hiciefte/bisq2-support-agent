@@ -33,6 +33,7 @@ from app.channels.staff import (
     StaffResolver,
     collect_staff_display_names,
     collect_trusted_staff_ids,
+    staff_resolver_service_key,
 )
 from app.channels.traits import ChannelTraits
 
@@ -165,7 +166,11 @@ class MatrixChannel(ChannelBase):
             ),
             display_names=collect_staff_display_names(settings),
         )
-        runtime.register("staff_resolver", matrix_staff_resolver, allow_override=True)
+        runtime.register(
+            staff_resolver_service_key("matrix"),
+            matrix_staff_resolver,
+            allow_override=True,
+        )
 
         runtime.register(
             "matrix_message_handler",
@@ -316,6 +321,9 @@ class MatrixChannel(ChannelBase):
             except Exception as e:
                 self._logger.warning(f"Failed to start message handler: {e}")
 
+        # Bind the publisher before registering callbacks that offload ingest to
+        # worker threads; otherwise an early event can race alert-loop wiring.
+        await self._wire_trust_monitor_alerts()
         trust_monitor_handler = self.runtime.resolve_optional(
             "matrix_trust_monitor_handler"
         )
@@ -325,7 +333,6 @@ class MatrixChannel(ChannelBase):
                 self._logger.info("Matrix trust monitor handler started")
             except Exception as e:
                 self._logger.warning(f"Failed to start trust monitor handler: {e}")
-        await self._wire_trust_monitor_alerts()
         await self._start_proactive_scanner()
 
         # Wire reaction handler if registered
@@ -462,6 +469,9 @@ class MatrixChannel(ChannelBase):
             await self.send_message(target, message)
 
         publisher.matrix_notifier = _notify_staff_room
+        bind_loop = getattr(publisher, "bind_loop", None)
+        if callable(bind_loop):
+            bind_loop(asyncio.get_running_loop())
 
     async def _start_proactive_scanner(self) -> None:
         """Start Matrix-specific proactive trust-monitor scans."""

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.channels.chatops import ChatOpsAuthorizer, ChatOpsDispatcher, ChatOpsParser
+from app.channels.staff import resolve_channel_staff_resolver
 from app.metrics.operator_metrics import record_chatops_auth, record_chatops_parse
 
 logger = logging.getLogger(__name__)
@@ -85,7 +86,7 @@ class Bisq2ChatOpsAdapter:
         authorizer = ChatOpsAuthorizer(
             enabled=self.enabled,
             allowed_room_ids=self.allowed_channel_ids,
-            staff_resolver=self.runtime.resolve_optional("staff_resolver"),
+            staff_resolver=resolve_channel_staff_resolver(self.runtime, "bisq2"),
             surface_label="Bisq2 ChatOps",
             allowed_scope_label="configured Bisq2 staff channel",
         )

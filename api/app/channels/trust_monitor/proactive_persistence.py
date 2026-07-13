@@ -40,10 +40,15 @@ def persist_proactive_finding(
             alert_surface=policy.alert_surface,
             evidence_summary=result.evidence_summary,
             created_at=result.occurred_at,
-            notify=True,
+            notify=False,
         )
-        if trust_monitor_service.publisher:
-            trust_monitor_service.publisher.publish(finding)
+        if trust_monitor_service.publisher and trust_monitor_service.publisher.publish(
+            finding
+        ):
+            trust_monitor_service.store.mark_finding_notified(
+                finding.id,
+                notified_at=result.occurred_at,
+            )
     except Exception:
         log.warning(
             "Failed to persist proactive finding for %s (%s)",

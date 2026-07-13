@@ -35,11 +35,16 @@ def _make_service(policy_surface: TrustAlertSurface):
             captured.update(kwargs)
             return SimpleNamespace(id="finding-1", **kwargs)
 
+        def mark_finding_notified(self, finding_id, *, notified_at):
+            captured["marked_finding_id"] = finding_id
+            captured["notified_at"] = notified_at
+
     class _Publisher:
         published: list = []
 
         def publish(self, finding):
             self.published.append(finding)
+            return True
 
     publisher = _Publisher()
     service = SimpleNamespace(
@@ -90,6 +95,38 @@ def test_persister_falls_back_space_id_when_no_sync_rooms() -> None:
     )
 
     assert captured["space_id"] == "proactive_scan"
+
+
+def test_persister_records_notification_only_after_successful_schedule() -> None:
+    captured: dict = {}
+    marked: list[str] = []
+
+    class _Store:
+        def upsert_finding(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(id="finding-1", **kwargs)
+
+        def mark_finding_notified(self, finding_id, *, notified_at):
+            marked.append(finding_id)
+
+    service = SimpleNamespace(
+        store=_Store(),
+        publisher=SimpleNamespace(publish=lambda _finding: False),
+        policy_service=SimpleNamespace(
+            get_policy=lambda: SimpleNamespace(
+                alert_surface=TrustAlertSurface.STAFF_ROOM
+            )
+        ),
+    )
+
+    persist_proactive_finding(
+        trust_monitor_service=service,
+        sync_rooms=["!room:matrix.org"],
+        result=_make_result(TrustAlertSurface.BOTH),
+    )
+
+    assert captured["notify"] is False
+    assert marked == []
 
 
 def test_persister_swallows_exceptions() -> None:

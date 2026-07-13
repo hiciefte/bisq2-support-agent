@@ -1,5 +1,6 @@
 """Escalation lifecycle orchestration service."""
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Literal, Optional
@@ -78,6 +79,44 @@ class EscalationService:
         self.embeddings = embeddings
         self.rag_service = rag_service
         self.event_broker = event_broker
+        self._delivery_locks: dict[int, asyncio.Lock] = {}
+        self._delivery_lock_refs: dict[int, int] = {}
+        self._delivery_locks_guard = asyncio.Lock()
+
+    async def _acquire_delivery_lock(self, escalation_id: int) -> asyncio.Lock:
+        """Acquire a ref-counted per-case lock for save-and-deliver operations."""
+        async with self._delivery_locks_guard:
+            lock = self._delivery_locks.get(escalation_id)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._delivery_locks[escalation_id] = lock
+            self._delivery_lock_refs[escalation_id] = (
+                self._delivery_lock_refs.get(escalation_id, 0) + 1
+            )
+        try:
+            await lock.acquire()
+        except BaseException:
+            await self._drop_delivery_lock_ref(escalation_id, lock)
+            raise
+        return lock
+
+    async def _drop_delivery_lock_ref(
+        self, escalation_id: int, lock: asyncio.Lock
+    ) -> None:
+        async with self._delivery_locks_guard:
+            ref_count = self._delivery_lock_refs.get(escalation_id, 1) - 1
+            if ref_count <= 0:
+                if self._delivery_locks.get(escalation_id) is lock:
+                    self._delivery_locks.pop(escalation_id, None)
+                self._delivery_lock_refs.pop(escalation_id, None)
+            else:
+                self._delivery_lock_refs[escalation_id] = ref_count
+
+    async def _release_delivery_lock(
+        self, escalation_id: int, lock: asyncio.Lock
+    ) -> None:
+        lock.release()
+        await self._drop_delivery_lock_ref(escalation_id, lock)
 
     async def _publish_update(self, escalation: Escalation) -> None:
         if self.event_broker is None:
@@ -199,16 +238,54 @@ class EscalationService:
         self, escalation_id: int, staff_answer: str, staff_id: str
     ) -> Escalation:
         """Save staff response, deliver to user, record learning."""
+        lock = await self._acquire_delivery_lock(escalation_id)
+        try:
+            return await self._respond_to_escalation_locked(
+                escalation_id, staff_answer, staff_id
+            )
+        finally:
+            await self._release_delivery_lock(escalation_id, lock)
+
+    async def _respond_to_escalation_locked(
+        self, escalation_id: int, staff_answer: str, staff_id: str
+    ) -> Escalation:
+        """Respond while holding the per-case delivery lock."""
         escalation = await self.repository.get_by_id(escalation_id)
         if escalation is None:
             raise EscalationNotFoundError(f"Escalation {escalation_id} not found")
 
-        # Already responded by same staff — idempotent
+        is_replacement = False
+        # Same answer is idempotent; a failed answer may be replaced and retried.
         if (
             escalation.status == EscalationStatus.RESPONDED
             and escalation.staff_id == staff_id
         ):
-            return escalation
+            delivery_pending = escalation.channel != "web" and (
+                escalation.delivery_status
+                in {
+                    EscalationDeliveryStatus.PENDING,
+                    EscalationDeliveryStatus.FAILED,
+                }
+            )
+            if str(escalation.staff_answer or "") == staff_answer:
+                if delivery_pending:
+                    return await self._retry_saved_delivery(escalation)
+                return escalation
+            if escalation.channel == "web":
+                # Web clients poll the already-persisted response; preserve the
+                # historical idempotent contract for duplicate submissions.
+                return escalation
+            if not delivery_pending:
+                raise EscalationInvalidStateError(
+                    f"Escalation {escalation_id} response was already delivered"
+                )
+            is_replacement = True
+
+        if escalation.status == EscalationStatus.RESPONDED and not is_replacement:
+            raise EscalationAlreadyClaimedError(
+                f"Escalation {escalation_id} already responded by "
+                f"{escalation.staff_id or 'another staff member'}"
+            )
 
         # Closed — cannot respond
         if escalation.status == EscalationStatus.CLOSED:
@@ -242,13 +319,21 @@ class EscalationService:
                 staff_id=staff_id,
                 responded_at=now,
                 edit_distance=edit_distance,
+                delivery_status=(
+                    EscalationDeliveryStatus.NOT_REQUIRED
+                    if escalation.channel == "web"
+                    else EscalationDeliveryStatus.PENDING
+                ),
+                delivery_error="",
+                delivery_attempts=0 if is_replacement else escalation.delivery_attempts,
             ),
         )
-        ESCALATION_LIFECYCLE.labels(action="responded").inc()
+        if not is_replacement:
+            ESCALATION_LIFECYCLE.labels(action="responded").inc()
         await self._publish_update(updated)
 
-        # Track response time
-        if escalation.created_at:
+        # Track response time only for the first staff response.
+        if not is_replacement and escalation.created_at:
             delta = (now - escalation.created_at).total_seconds()
             ESCALATION_RESPONSE_TIME.observe(delta)
 
@@ -258,58 +343,15 @@ class EscalationService:
                 "escalation_id": escalation_id,
                 "channel": escalation.channel,
                 "staff_id": staff_id,
+                "replacement": is_replacement,
             },
         )
 
-        # Attempt delivery (non-blocking)
-        channel = escalation.channel
-        if self.response_delivery is not None:
-            delivery_attempts = (updated.delivery_attempts or 0) + 1
-            try:
-                delivered = await self.response_delivery.deliver(updated, staff_answer)
-                if delivered:
-                    ESCALATION_DELIVERY.labels(channel=channel, outcome="success").inc()
-                    if channel != "web":
-                        updated = await self.repository.update(
-                            escalation_id,
-                            EscalationUpdate(
-                                delivery_status=EscalationDeliveryStatus.DELIVERED,
-                                delivery_error="",
-                                delivery_attempts=delivery_attempts,
-                                last_delivery_at=now,
-                            ),
-                        )
-                else:
-                    ESCALATION_DELIVERY.labels(channel=channel, outcome="failed").inc()
-                    logger.warning("Delivery failed for escalation %d", escalation_id)
-                    if channel != "web":
-                        updated = await self.repository.update(
-                            escalation_id,
-                            EscalationUpdate(
-                                delivery_status=EscalationDeliveryStatus.FAILED,
-                                delivery_error="Delivery returned False",
-                                delivery_attempts=delivery_attempts,
-                                last_delivery_at=now,
-                            ),
-                        )
-            except Exception:
-                ESCALATION_DELIVERY.labels(channel=channel, outcome="error").inc()
-                logger.exception("Delivery error for escalation %d", escalation_id)
-                if channel != "web":
-                    updated = await self.repository.update(
-                        escalation_id,
-                        EscalationUpdate(
-                            delivery_status=EscalationDeliveryStatus.FAILED,
-                            delivery_error="Exception during delivery",
-                            delivery_attempts=delivery_attempts,
-                            last_delivery_at=now,
-                        ),
-                    )
-        else:
-            logger.debug(
-                "No response delivery configured, skipping for escalation %d",
-                escalation_id,
-            )
+        updated = await self._attempt_delivery(
+            updated,
+            staff_answer,
+            channel=escalation.channel,
+        )
 
         # Record learning
         if self.learning_engine is not None:
@@ -337,6 +379,130 @@ class EscalationService:
             )
 
         return updated
+
+    async def retry_delivery(self, escalation_id: int) -> Escalation:
+        """Retry a saved non-web staff response within the configured budget."""
+        lock = await self._acquire_delivery_lock(escalation_id)
+        try:
+            escalation = await self.repository.get_by_id(escalation_id)
+            if escalation is None:
+                raise EscalationNotFoundError(f"Escalation {escalation_id} not found")
+            return await self._retry_saved_delivery(escalation)
+        finally:
+            await self._release_delivery_lock(escalation_id, lock)
+
+    async def _retry_saved_delivery(self, escalation: Escalation) -> Escalation:
+        """Retry a loaded escalation while its per-case lock is held."""
+        if escalation.channel == "web":
+            return escalation
+        if escalation.delivery_status == EscalationDeliveryStatus.DELIVERED:
+            return escalation
+        if not str(escalation.staff_answer or "").strip():
+            raise EscalationNotRespondedError(
+                f"Escalation {escalation.id} has no saved staff answer"
+            )
+        return await self._attempt_delivery(escalation, escalation.staff_answer)
+
+    async def _attempt_delivery(
+        self,
+        escalation: Escalation,
+        staff_answer: str,
+        *,
+        channel: str | None = None,
+    ) -> Escalation:
+        """Attempt one delivery after durably recording its pending state."""
+        channel = str(channel or escalation.channel)
+        if channel == "web":
+            if self.response_delivery is None:
+                return escalation
+            try:
+                delivered = await self.response_delivery.deliver(
+                    escalation, staff_answer
+                )
+            except Exception:
+                ESCALATION_DELIVERY.labels(channel=channel, outcome="error").inc()
+                logger.exception("Delivery error for escalation %d", escalation.id)
+            else:
+                outcome = "success" if delivered else "failed"
+                ESCALATION_DELIVERY.labels(channel=channel, outcome=outcome).inc()
+            return escalation
+
+        max_retries = max(
+            0,
+            int(getattr(self.settings, "ESCALATION_DELIVERY_MAX_RETRIES", 3)),
+        )
+        max_attempts = 1 + max_retries
+        attempts = max(0, int(escalation.delivery_attempts or 0))
+        if attempts >= max_attempts:
+            raise EscalationInvalidStateError(
+                f"Escalation {escalation.id} delivery retry limit reached"
+            )
+
+        attempt_number = attempts + 1
+        attempted_at = datetime.now(timezone.utc)
+        pending = await self.repository.update(
+            escalation.id,
+            EscalationUpdate(
+                delivery_status=EscalationDeliveryStatus.PENDING,
+                delivery_error="",
+                delivery_attempts=attempt_number,
+                last_delivery_at=attempted_at,
+            ),
+        )
+        if self.response_delivery is None:
+            ESCALATION_DELIVERY.labels(channel=channel, outcome="failed").inc()
+            final = await self.repository.update(
+                escalation.id,
+                EscalationUpdate(
+                    delivery_status=EscalationDeliveryStatus.FAILED,
+                    delivery_error="Response delivery is not configured",
+                    delivery_attempts=attempt_number,
+                    last_delivery_at=attempted_at,
+                ),
+            )
+            await self._publish_update(final)
+            return final
+
+        try:
+            delivered = await self.response_delivery.deliver(pending, staff_answer)
+        except Exception:
+            ESCALATION_DELIVERY.labels(channel=channel, outcome="error").inc()
+            logger.exception("Delivery error for escalation %d", escalation.id)
+            final = await self.repository.update(
+                escalation.id,
+                EscalationUpdate(
+                    delivery_status=EscalationDeliveryStatus.FAILED,
+                    delivery_error="Exception during delivery",
+                    delivery_attempts=attempt_number,
+                    last_delivery_at=attempted_at,
+                ),
+            )
+        else:
+            if delivered:
+                ESCALATION_DELIVERY.labels(channel=channel, outcome="success").inc()
+                final = await self.repository.update(
+                    escalation.id,
+                    EscalationUpdate(
+                        delivery_status=EscalationDeliveryStatus.DELIVERED,
+                        delivery_error="",
+                        delivery_attempts=attempt_number,
+                        last_delivery_at=attempted_at,
+                    ),
+                )
+            else:
+                ESCALATION_DELIVERY.labels(channel=channel, outcome="failed").inc()
+                logger.warning("Delivery failed for escalation %d", escalation.id)
+                final = await self.repository.update(
+                    escalation.id,
+                    EscalationUpdate(
+                        delivery_status=EscalationDeliveryStatus.FAILED,
+                        delivery_error="Delivery returned False",
+                        delivery_attempts=attempt_number,
+                        last_delivery_at=attempted_at,
+                    ),
+                )
+        await self._publish_update(final)
+        return final
 
     # ------------------------------------------------------------------
     # Staff Rating

@@ -20,6 +20,7 @@ from app.metrics.operator_metrics import (
 from app.models.escalation import (
     EscalationAlreadyClaimedError,
     EscalationClosedError,
+    EscalationDeliveryStatus,
     EscalationInvalidStateError,
     EscalationNotFoundError,
     EscalationPriority,
@@ -348,28 +349,38 @@ class ChatOpsDispatcher:
         escalation = await self.escalation_service.repository.get_by_id(command.case_id)
         if escalation is None:
             return self._not_found(command)
-        draft = str(getattr(escalation, "ai_draft_answer", "") or "").strip()
-        if not draft:
-            return ChatOpsResult(
-                handled=True,
-                ok=False,
-                message=f"Case #{command.case_id} has no AI draft to send.",
-                command_name=command.name.value,
-                case_id=command.case_id,
-            )
         try:
             await self._cancel_arbitration_if_possible(escalation)
-            updated = await self.escalation_service.respond_to_escalation(
-                command.case_id,
-                draft,
-                command.actor_id,
+            retry_saved_answer = (
+                getattr(escalation, "status", None) == EscalationStatus.RESPONDED
+                and getattr(escalation, "delivery_status", None)
+                in {
+                    EscalationDeliveryStatus.PENDING,
+                    EscalationDeliveryStatus.FAILED,
+                }
+                and bool(str(getattr(escalation, "staff_answer", "") or "").strip())
             )
-            return ChatOpsResult(
-                handled=True,
-                ok=True,
-                message=f"Sent case #{updated.id} to the user.",
-                command_name=command.name.value,
-                case_id=updated.id,
+            if retry_saved_answer:
+                updated = await self.escalation_service.retry_delivery(command.case_id)
+            else:
+                draft = str(getattr(escalation, "ai_draft_answer", "") or "").strip()
+                if not draft:
+                    return ChatOpsResult(
+                        handled=True,
+                        ok=False,
+                        message=f"Case #{command.case_id} has no AI draft to send.",
+                        command_name=command.name.value,
+                        case_id=command.case_id,
+                    )
+                updated = await self.escalation_service.respond_to_escalation(
+                    command.case_id,
+                    draft,
+                    command.actor_id,
+                )
+            return self._delivery_result(
+                command,
+                updated,
+                success_message=f"Sent case #{updated.id} to the user.",
             )
         except self._DOMAIN_EXCEPTIONS as exc:
             return self._domain_error(command, exc)
@@ -394,12 +405,10 @@ class ChatOpsDispatcher:
                 edited_message,
                 command.actor_id,
             )
-            return ChatOpsResult(
-                handled=True,
-                ok=True,
-                message=f"Edited and sent case #{updated.id}.",
-                command_name=command.name.value,
-                case_id=updated.id,
+            return self._delivery_result(
+                command,
+                updated,
+                success_message=f"Edited and sent case #{updated.id}.",
             )
         except self._DOMAIN_EXCEPTIONS as exc:
             return self._domain_error(command, exc)
@@ -455,6 +464,48 @@ class ChatOpsDispatcher:
         if not thread_id:
             return
         await cancel(thread_id)
+
+    @staticmethod
+    def _delivery_result(
+        command: ChatOpsCommand,
+        escalation: Any,
+        *,
+        success_message: str,
+    ) -> ChatOpsResult:
+        delivery_status = getattr(escalation, "delivery_status", None)
+        if delivery_status == EscalationDeliveryStatus.FAILED:
+            detail = str(getattr(escalation, "delivery_error", "") or "").strip()
+            suffix = f" ({detail})" if detail else ""
+            return ChatOpsResult(
+                handled=True,
+                ok=False,
+                message=(
+                    f"Saved the staff answer for case #{escalation.id}, but it was "
+                    f"not delivered to the user{suffix}. Retry `!case send "
+                    f"{escalation.id}`."
+                ),
+                command_name=command.name.value,
+                case_id=escalation.id,
+            )
+        if delivery_status == EscalationDeliveryStatus.PENDING:
+            return ChatOpsResult(
+                handled=True,
+                ok=False,
+                message=(
+                    f"Saved the staff answer for case #{escalation.id}, but delivery "
+                    f"is still pending. It has not been confirmed delivered; retry "
+                    f"`!case send {escalation.id}`."
+                ),
+                command_name=command.name.value,
+                case_id=escalation.id,
+            )
+        return ChatOpsResult(
+            handled=True,
+            ok=True,
+            message=success_message,
+            command_name=command.name.value,
+            case_id=escalation.id,
+        )
 
     @staticmethod
     def _derive_case_state(escalation: Any) -> str:

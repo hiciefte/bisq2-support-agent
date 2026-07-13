@@ -17,6 +17,8 @@ from app.channels.reactions import (
     ReactionProcessor,
     ReactionRating,
 )
+from app.channels.staff import resolve_channel_staff_resolver
+from app.models.escalation import EscalationDeliveryStatus
 
 NioReactionEventType: Any = object
 NioRedactionEventType: Any = object
@@ -222,7 +224,7 @@ class MatrixReactionHandler(ReactionHandlerBase):
         normalized = str(sender or "").strip()
         if not normalized:
             return False
-        resolver = self.runtime.resolve_optional("staff_resolver")
+        resolver = resolve_channel_staff_resolver(self.runtime, "matrix")
         if resolver is None:
             return False
         is_staff = getattr(resolver, "is_staff", None)
@@ -244,13 +246,37 @@ class MatrixReactionHandler(ReactionHandlerBase):
         escalation_service: Any,
         escalation_id: int,
     ) -> str:
+        escalation = await self._load_escalation(
+            escalation_service=escalation_service,
+            escalation_id=escalation_id,
+        )
+        return str(getattr(escalation, "ai_draft_answer", "") or "").strip()
+
+    @staticmethod
+    async def _load_escalation(
+        *, escalation_service: Any, escalation_id: int
+    ) -> Any | None:
         repository = getattr(escalation_service, "repository", None)
         get_by_id = getattr(repository, "get_by_id", None)
-        if callable(get_by_id):
-            escalation = await get_by_id(escalation_id)
-        else:
-            escalation = None
-        return str(getattr(escalation, "ai_draft_answer", "") or "").strip()
+        return await get_by_id(escalation_id) if callable(get_by_id) else None
+
+    @staticmethod
+    def _staff_delivery_notice(
+        *, escalation_id: int, escalation: Any, success_message: str
+    ) -> str:
+        status = getattr(escalation, "delivery_status", None)
+        if status in {
+            EscalationDeliveryStatus.PENDING,
+            EscalationDeliveryStatus.FAILED,
+        }:
+            detail = str(getattr(escalation, "delivery_error", "") or "").strip()
+            suffix = f" ({detail})" if detail else ""
+            return (
+                f"Saved escalation #{escalation_id} response, but it was not "
+                f"delivered to the user{suffix}. Reply `/send` to retry the "
+                "persisted answer."
+            )
+        return success_message
 
     @staticmethod
     def _parse_staff_command(command_text: str) -> tuple[str, str]:
@@ -348,11 +374,21 @@ class MatrixReactionHandler(ReactionHandlerBase):
                 return True
 
             answer_text = str(payload or "").strip()
+            retry_saved_answer = False
             if not answer_text:
-                answer_text = await self._load_escalation_draft_answer(
+                existing = await self._load_escalation(
                     escalation_service=escalation_service,
                     escalation_id=escalation_id,
                 )
+                retry_saved_answer = getattr(existing, "delivery_status", None) in {
+                    EscalationDeliveryStatus.PENDING,
+                    EscalationDeliveryStatus.FAILED,
+                } and bool(str(getattr(existing, "staff_answer", "") or "").strip())
+                answer_text = str(
+                    getattr(existing, "staff_answer", "")
+                    if retry_saved_answer
+                    else getattr(existing, "ai_draft_answer", "") or ""
+                ).strip()
             if not answer_text:
                 self._logger.warning(
                     "Ignoring Matrix /send command with empty final answer escalation_id=%s sender=%s",
@@ -367,15 +403,24 @@ class MatrixReactionHandler(ReactionHandlerBase):
                 sender,
                 len(answer_text),
             )
-            await escalation_service.respond_to_escalation(
-                escalation_id,
-                answer_text,
-                sender,
-            )
+            if retry_saved_answer:
+                updated = await escalation_service.retry_delivery(escalation_id)
+            else:
+                updated = await escalation_service.respond_to_escalation(
+                    escalation_id,
+                    answer_text,
+                    sender,
+                )
             await self._send_staff_thread_notice(
                 room_id=room_id,
                 root_event_id=reply_event_id,
-                body=f"Sent escalation #{escalation_id} response to the user.",
+                body=self._staff_delivery_notice(
+                    escalation_id=escalation_id,
+                    escalation=updated,
+                    success_message=(
+                        f"Sent escalation #{escalation_id} response to the user."
+                    ),
+                ),
             )
             return True
         except Exception:
@@ -480,13 +525,19 @@ class MatrixReactionHandler(ReactionHandlerBase):
                         escalation_id,
                     )
                     return True
-                await escalation_service.respond_to_escalation(
+                updated = await escalation_service.respond_to_escalation(
                     escalation_id, draft, sender
                 )
                 await self._send_staff_thread_notice(
                     room_id=room_id,
                     root_event_id=str(target_event_id),
-                    body=f"Approved escalation #{escalation_id} and sent response.",
+                    body=self._staff_delivery_notice(
+                        escalation_id=escalation_id,
+                        escalation=updated,
+                        success_message=(
+                            f"Approved escalation #{escalation_id} and sent response."
+                        ),
+                    ),
                 )
                 self._logger.info(
                     "Approved escalation via Matrix reaction escalation_id=%s sender=%s",

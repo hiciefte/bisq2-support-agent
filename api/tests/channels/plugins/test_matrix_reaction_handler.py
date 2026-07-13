@@ -18,6 +18,7 @@ from app.channels.reactions import (
     ReactionProcessor,
     ReactionRating,
 )
+from app.models.escalation import EscalationDeliveryStatus
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -518,8 +519,16 @@ class TestMatrixReactionStaffActions:
         escalation_service.repository.get_by_id = AsyncMock(
             return_value=SimpleNamespace(ai_draft_answer="AI draft response")
         )
-        escalation_service.respond_to_escalation = AsyncMock(return_value=MagicMock())
+        escalation_service.respond_to_escalation = AsyncMock(
+            return_value=SimpleNamespace(
+                id=321,
+                delivery_status=EscalationDeliveryStatus.PENDING,
+                delivery_error="",
+            )
+        )
         escalation_service.close_escalation = AsyncMock(return_value=MagicMock())
+        matrix_client = MagicMock()
+        matrix_client.room_send = AsyncMock()
 
         mock_runtime.resolve_optional = MagicMock(
             side_effect=lambda name: (
@@ -528,7 +537,11 @@ class TestMatrixReactionStaffActions:
                 else (
                     escalation_service
                     if name == "escalation_service"
-                    else staff_resolver if name == "staff_resolver" else None
+                    else (
+                        matrix_client
+                        if name == "matrix_client"
+                        else staff_resolver if name == "staff_resolver" else None
+                    )
                 )
             )
         )
@@ -542,6 +555,10 @@ class TestMatrixReactionStaffActions:
         )
         escalation_service.close_escalation.assert_not_awaited()
         mock_processor.process.assert_not_called()
+        notice = matrix_client.room_send.await_args.kwargs["content"]["body"]
+        assert "sent response" not in notice.lower()
+        assert "not delivered" in notice.lower()
+        assert "/send" in notice
 
     @pytest.mark.asyncio
     async def test_thumbs_down_dismisses_staff_escalation_notice(
@@ -693,7 +710,13 @@ class TestMatrixReactionStaffActions:
         escalation_service.repository.get_by_id = AsyncMock(
             return_value=SimpleNamespace(ai_draft_answer="Draft from AI")
         )
-        escalation_service.respond_to_escalation = AsyncMock(return_value=MagicMock())
+        escalation_service.respond_to_escalation = AsyncMock(
+            return_value=SimpleNamespace(
+                id=111,
+                delivery_status=EscalationDeliveryStatus.FAILED,
+                delivery_error="transport unavailable",
+            )
+        )
         escalation_service.close_escalation = AsyncMock(return_value=MagicMock())
         matrix_client = MagicMock()
         matrix_client.room_send = AsyncMock(
@@ -731,6 +754,9 @@ class TestMatrixReactionStaffActions:
         matrix_client.room_send.assert_awaited_once()
         sent_content = matrix_client.room_send.call_args.kwargs["content"]
         assert sent_content["msgtype"] == "m.notice"
+        assert "sent escalation" not in sent_content["body"].lower()
+        assert "not delivered" in sent_content["body"].lower()
+        assert "/send" in sent_content["body"]
         assert sent_content["m.relates_to"]["rel_type"] == "m.thread"
         assert (
             sent_content["m.relates_to"]["m.in_reply_to"]["event_id"]
@@ -790,6 +816,71 @@ class TestMatrixReactionStaffActions:
             112, "Draft from AI", "@staff:server"
         )
         escalation_service.close_escalation.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_staff_command_send_retries_persisted_edited_answer(
+        self, handler, mock_runtime
+    ):
+        staff_resolver = SimpleNamespace(
+            is_staff=lambda sender: str(sender or "").strip() == "@staff:server"
+        )
+        tracker = MagicMock()
+        tracker.lookup.return_value = SimpleNamespace(
+            routing_action="staff_escalation_notice",
+            internal_message_id="staff-escalation-114",
+            answer="Escalation #114 queued",
+        )
+        failed = SimpleNamespace(
+            id=114,
+            ai_draft_answer="Draft from AI",
+            staff_answer="Edited staff answer",
+            delivery_status=EscalationDeliveryStatus.FAILED,
+            delivery_error="transport unavailable",
+        )
+        delivered = SimpleNamespace(
+            **{
+                **failed.__dict__,
+                "delivery_status": EscalationDeliveryStatus.DELIVERED,
+                "delivery_error": "",
+            }
+        )
+        escalation_service = MagicMock()
+        escalation_service.repository = MagicMock()
+        escalation_service.repository.get_by_id = AsyncMock(return_value=failed)
+        escalation_service.respond_to_escalation = AsyncMock()
+        escalation_service.retry_delivery = AsyncMock(return_value=delivered)
+        matrix_client = MagicMock()
+        matrix_client.room_send = AsyncMock()
+
+        mock_runtime.resolve_optional = MagicMock(
+            side_effect=lambda name: (
+                tracker
+                if name == "sent_message_tracker"
+                else (
+                    escalation_service
+                    if name == "escalation_service"
+                    else (
+                        matrix_client
+                        if name == "matrix_client"
+                        else staff_resolver if name == "staff_resolver" else None
+                    )
+                )
+            )
+        )
+
+        handled = await handler.handle_staff_command(
+            room_id="!staff:server",
+            reply_to_event_id="$staff-msg:server",
+            command_text="/send",
+            sender="@staff:server",
+        )
+
+        assert handled is True
+        escalation_service.retry_delivery.assert_awaited_once_with(114)
+        escalation_service.respond_to_escalation.assert_not_awaited()
+        assert delivered.staff_answer == "Edited staff answer"
+        notice = matrix_client.room_send.await_args.kwargs["content"]["body"]
+        assert "sent escalation #114" in notice.lower()
 
     @pytest.mark.asyncio
     async def test_staff_command_dismiss_closes_escalation(self, handler, mock_runtime):

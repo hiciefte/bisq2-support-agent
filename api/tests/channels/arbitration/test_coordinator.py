@@ -12,6 +12,7 @@ from app.channels.models import (
     ResponseMetadata,
     UserContext,
 )
+from app.channels.response_dispatcher import DispatchOutcome
 
 
 def _incoming(
@@ -357,6 +358,50 @@ async def test_autonomous_dispatch_retries_once_before_dead_letter_escalation() 
     channel.send_message.assert_awaited_once()
     failure_notice = channel.send_message.call_args.args[1]
     assert "follow up" in failure_notice.answer.lower()
+    assert coordinator._threads == {}
+
+
+@pytest.mark.asyncio
+async def test_autonomous_queued_dispatch_is_terminal_without_failure_notice() -> None:
+    incoming = _incoming()
+    response = _outgoing(incoming)
+    response = response.model_copy(
+        update={
+            "requires_human": True,
+            "metadata": response.metadata.model_copy(
+                update={"routing_action": "needs_human"}
+            ),
+        }
+    )
+    on_release = AsyncMock(return_value=response)
+    on_dispatch = AsyncMock(return_value=DispatchOutcome.QUEUED)
+    escalation_service = MagicMock()
+    escalation_service.create_escalation = AsyncMock()
+    channel = MagicMock()
+    channel.get_delivery_target = MagicMock(return_value="!room:server")
+    channel.send_message = AsyncMock(return_value=True)
+    coordinator = ArbitrationCoordinator(
+        policy_service=_policy_service(mode="autonomous"),
+        escalation_service=escalation_service,
+        dispatch_retry_delay_seconds=0,
+    )
+
+    await coordinator.enqueue(
+        incoming=incoming,
+        thread_id=("!room:server", "@user:server"),
+        room_or_conversation_id="!room:server",
+        on_release=on_release,
+        on_dispatch=on_dispatch,
+        channel=channel,
+    )
+    await coordinator._on_wait_timer_elapsed(
+        thread_id="!room:server::@user:server",
+        generation=1,
+    )
+
+    on_dispatch.assert_awaited_once_with(incoming, response)
+    escalation_service.create_escalation.assert_not_awaited()
+    channel.send_message.assert_not_awaited()
     assert coordinator._threads == {}
 
 

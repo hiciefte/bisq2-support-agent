@@ -11,11 +11,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
-from app.channels.models import (
-    IncomingMessage,
-    OutgoingMessage,
-    ResponseMetadata,
-)
+from app.channels.models import IncomingMessage, OutgoingMessage, ResponseMetadata
 from app.channels.policy import (
     get_acknowledgment_message_template,
     get_acknowledgment_mode,
@@ -28,7 +24,7 @@ from app.channels.policy import (
     get_staff_active_cooldown_seconds,
     get_timer_jitter_max_seconds,
 )
-from app.channels.response_dispatcher import ChannelResponseDispatcher
+from app.channels.response_dispatcher import ChannelResponseDispatcher, DispatchOutcome
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +46,9 @@ class _ThreadEntry:
     timer_task: asyncio.Task[None] | None = None
     hitl_task: asyncio.Task[None] | None = None
     on_release: Callable[[IncomingMessage], Awaitable[Any]] | None = None
-    on_dispatch: Callable[[IncomingMessage, Any], Awaitable[bool]] | None = None
+    on_dispatch: Callable[[IncomingMessage, Any], Awaitable[DispatchOutcome]] | None = (
+        None
+    )
     channel: Any | None = None
 
     def build_incoming(self, max_accumulated_chars: int) -> IncomingMessage:
@@ -109,7 +107,7 @@ class ArbitrationCoordinator:
         thread_id: str | tuple[str, str],
         room_or_conversation_id: str,
         on_release: Callable[[IncomingMessage], Awaitable[Any]],
-        on_dispatch: Callable[[IncomingMessage, Any], Awaitable[bool]],
+        on_dispatch: Callable[[IncomingMessage, Any], Awaitable[DispatchOutcome]],
         channel: Any | None = None,
     ) -> bool:
         """Queue a message for arbitration or dispatch immediately when eligible."""
@@ -128,7 +126,8 @@ class ArbitrationCoordinator:
 
         if delay_seconds <= 0:
             response = await on_release(incoming)
-            return bool(await on_dispatch(incoming, response))
+            outcome = DispatchOutcome.coerce(await on_dispatch(incoming, response))
+            return outcome is DispatchOutcome.SENT
 
         if (
             normalized_thread not in self._threads
@@ -140,7 +139,8 @@ class ArbitrationCoordinator:
                 normalized_thread,
             )
             response = await on_release(incoming)
-            return bool(await on_dispatch(incoming, response))
+            outcome = DispatchOutcome.coerce(await on_dispatch(incoming, response))
+            return outcome is DispatchOutcome.SENT
 
         lock = self._lock_for(normalized_thread)
         should_acknowledge = False
@@ -348,7 +348,7 @@ class ArbitrationCoordinator:
                         )
                         return
 
-            dispatch_sent = await self._dispatch_with_retry(
+            dispatch_outcome = await self._dispatch_with_retry(
                 incoming=merged_incoming,
                 response=response,
                 on_dispatch=on_dispatch,
@@ -358,9 +358,11 @@ class ArbitrationCoordinator:
             async with lock:
                 entry = self._threads.get(thread_id)
                 if entry is not None and entry.generation == generation:
-                    entry.state = (
-                        "ai_sent" if dispatch_sent else "dispatch_failed_escalated"
-                    )
+                    entry.state = {
+                        DispatchOutcome.SENT: "ai_sent",
+                        DispatchOutcome.QUEUED: "ai_queued",
+                        DispatchOutcome.FAILED: "dispatch_failed_escalated",
+                    }[dispatch_outcome]
                     await self._publish_staff_assist(
                         entry,
                         incoming=merged_incoming,
@@ -460,24 +462,24 @@ class ArbitrationCoordinator:
         *,
         incoming: IncomingMessage,
         response: Any,
-        on_dispatch: Callable[[IncomingMessage, Any], Awaitable[bool]],
+        on_dispatch: Callable[[IncomingMessage, Any], Awaitable[DispatchOutcome]],
         channel: Any | None,
         channel_id: str,
-    ) -> bool:
-        first_sent = bool(await on_dispatch(incoming, response))
-        if first_sent:
-            return True
+    ) -> DispatchOutcome:
+        first_outcome = DispatchOutcome.coerce(await on_dispatch(incoming, response))
+        if first_outcome is not DispatchOutcome.FAILED:
+            return first_outcome
         await asyncio.sleep(self.dispatch_retry_delay_seconds)
-        second_sent = bool(await on_dispatch(incoming, response))
-        if second_sent:
-            return True
+        second_outcome = DispatchOutcome.coerce(await on_dispatch(incoming, response))
+        if second_outcome is not DispatchOutcome.FAILED:
+            return second_outcome
         await self._create_escalation(incoming=incoming, response=response)
         await self._send_dispatch_failure_notice(
             channel=channel,
             incoming=incoming,
             channel_id=channel_id,
         )
-        return False
+        return DispatchOutcome.FAILED
 
     async def _run_hitl_timeout(
         self,

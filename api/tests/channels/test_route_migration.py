@@ -79,6 +79,7 @@ class TestChannelLifecycle:
 
         # Should have rate_limit as pre-hook
         assert "rate_limit" in pre_hook_names
+        assert "global_llm_budget" in pre_hook_names
         # Should have pii_filter as post-hook
         assert "pii_filter" in post_hook_names
 

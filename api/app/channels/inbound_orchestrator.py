@@ -16,6 +16,7 @@ from app.channels.events import (
 )
 from app.channels.models import GatewayError
 from app.channels.policy import apply_autosend_policy, is_autosend_enabled
+from app.channels.response_dispatcher import DispatchOutcome
 
 logger = logging.getLogger(__name__)
 _MISSING = object()
@@ -107,10 +108,12 @@ class InboundMessageOrchestrator:
                     )
                     return apply_autosend_policy(response, autosend_enabled)
 
-                async def _on_dispatch(queued_incoming: Any, response: Any) -> bool:
+                async def _on_dispatch(
+                    queued_incoming: Any, response: Any
+                ) -> DispatchOutcome:
                     if response is None:
-                        return False
-                    return bool(
+                        return DispatchOutcome.FAILED
+                    return DispatchOutcome.coerce(
                         await self.dispatcher.dispatch(queued_incoming, response)
                     )
 
@@ -135,7 +138,12 @@ class InboundMessageOrchestrator:
                     self.channel_id,
                 )
                 response = apply_autosend_policy(response, autosend_enabled)
-                sent = bool(await self.dispatcher.dispatch(incoming, response))
+                outcome = DispatchOutcome.coerce(
+                    await self.dispatcher.dispatch(incoming, response)
+                )
+                # Preserve the public boolean contract: queued work is terminal
+                # for retry decisions, but it was not sent to the user.
+                sent = outcome is DispatchOutcome.SENT
             await self._update_thread_state(canonical, incoming=incoming)
             return sent
         except Exception:

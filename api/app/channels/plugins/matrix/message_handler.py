@@ -14,6 +14,7 @@ from app.channels.models import ChannelType, IncomingMessage, UserContext
 from app.channels.plugins.matrix.room_filter import normalize_room_ids
 from app.channels.policy import is_generation_enabled
 from app.channels.response_dispatcher import ChannelResponseDispatcher
+from app.channels.staff import resolve_channel_staff_resolver
 
 
 class _MissingNioEvent:
@@ -317,16 +318,7 @@ class MatrixMessageHandler:
             return False
 
     def _resolve_staff_resolver(self, runtime: Any) -> Any | None:
-        if runtime is None:
-            return None
-        resolve_optional = getattr(runtime, "resolve_optional", None)
-        if not callable(resolve_optional):
-            return None
-        try:
-            return resolve_optional("staff_resolver")
-        except Exception:
-            logger.debug("Failed resolving Matrix staff_resolver", exc_info=True)
-            return None
+        return resolve_channel_staff_resolver(runtime, "matrix")
 
     @staticmethod
     def _resolve_sender_display_name(*, room: Any, sender_id: str) -> str:
