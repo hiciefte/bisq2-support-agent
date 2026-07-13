@@ -24,6 +24,11 @@ from tenacity import (
 logger = logging.getLogger(__name__)
 
 
+def active_collection_alias(base_collection_name: str) -> str:
+    """Return the stable alias used by all live Qdrant reads and writes."""
+    return f"{base_collection_name}__active"
+
+
 def _stable_int_id(key: str) -> int:
     """Generate a deterministic 63-bit int ID from an arbitrary string key."""
     digest = hashlib.sha256(key.encode("utf-8")).digest()
@@ -70,7 +75,8 @@ class QdrantIndexManager:
     def __init__(self, settings: Settings, client: Optional[QdrantClient] = None):
         self.settings = settings
         self.data_dir = Path(settings.DATA_DIR)
-        self.collection_name = settings.QDRANT_COLLECTION
+        self.base_collection_name = settings.QDRANT_COLLECTION
+        self.collection_name = active_collection_alias(self.base_collection_name)
         self.metadata_path = self.data_dir / "qdrant_index_metadata.json"
         self.vocab_path = self.data_dir / getattr(
             settings, "BM25_VOCABULARY_FILE", "bm25_vocabulary.json"
@@ -143,11 +149,28 @@ class QdrantIndexManager:
         return meta
 
     def collection_exists(self) -> bool:
+        return self._get_alias_target() is not None
+
+    def _physical_collection_exists(self, collection_name: str) -> bool:
         try:
             cols = self._client.get_collections()
-            return any(c.name == self.collection_name for c in cols.collections)
+            return any(c.name == collection_name for c in cols.collections)
         except Exception:
             return False
+
+    def _get_alias_target(self) -> Optional[str]:
+        try:
+            return self._get_alias_target_strict()
+        except Exception:
+            return None
+
+    def _get_alias_target_strict(self) -> Optional[str]:
+        """Resolve the active alias without hiding transport failures."""
+        aliases = self._client.get_aliases().aliases
+        for alias in aliases:
+            if alias.alias_name == self.collection_name:
+                return str(alias.collection_name)
+        return None
 
     def get_collection_info(self) -> Optional[Dict[str, Any]]:
         try:
@@ -220,23 +243,14 @@ class QdrantIndexManager:
         for i in range(0, len(items), batch_size):
             yield items[i : i + batch_size]
 
-    def _ensure_collection(self, vector_size: int, recreate: bool) -> None:
-        if recreate and self.collection_exists():
-            logger.warning(
-                f"Deleting existing Qdrant collection: {self.collection_name}"
-            )
-            self._client.delete_collection(self.collection_name)
-
-        if self.collection_exists():
-            return
-
+    def _create_collection(self, collection_name: str, vector_size: int) -> None:
         logger.info(
-            f"Creating Qdrant collection '{self.collection_name}' (dense_size={vector_size})"
+            f"Creating Qdrant collection '{collection_name}' (dense_size={vector_size})"
         )
         # Some qdrant-client versions may not expose Modifier.NONE explicitly.
         modifier_none = getattr(rest.Modifier, "NONE", None)
         self._client.create_collection(
-            collection_name=self.collection_name,
+            collection_name=collection_name,
             vectors_config={
                 "dense": rest.VectorParams(
                     size=vector_size, distance=rest.Distance.COSINE
@@ -255,15 +269,76 @@ class QdrantIndexManager:
 
         # Payload indexes used by protocol-aware retrieval filters.
         self._client.create_payload_index(
-            collection_name=self.collection_name,
+            collection_name=collection_name,
             field_name="protocol",
             field_schema=rest.PayloadSchemaType.KEYWORD,
         )
         self._client.create_payload_index(
-            collection_name=self.collection_name,
+            collection_name=collection_name,
             field_name="type",
             field_schema=rest.PayloadSchemaType.KEYWORD,
         )
+
+    def _swap_active_alias(self, new_collection: str) -> Optional[str]:
+        """Atomically point the stable read alias at ``new_collection``."""
+        old_collection = self._get_alias_target()
+        operations: List[rest.AliasOperations] = []
+        if old_collection is not None:
+            operations.append(
+                rest.DeleteAliasOperation(
+                    delete_alias=rest.DeleteAlias(alias_name=self.collection_name)
+                )
+            )
+        operations.append(
+            rest.CreateAliasOperation(
+                create_alias=rest.CreateAlias(
+                    collection_name=new_collection,
+                    alias_name=self.collection_name,
+                )
+            )
+        )
+        self._client.update_collection_aliases(operations)
+        return old_collection
+
+    def _restore_active_alias(self, previous_collection: Optional[str]) -> None:
+        """Restore the pre-build alias target after a commit-side failure."""
+        operations: List[rest.AliasOperations] = [
+            rest.DeleteAliasOperation(
+                delete_alias=rest.DeleteAlias(alias_name=self.collection_name)
+            )
+        ]
+        if previous_collection is not None:
+            operations.append(
+                rest.CreateAliasOperation(
+                    create_alias=rest.CreateAlias(
+                        collection_name=previous_collection,
+                        alias_name=self.collection_name,
+                    )
+                )
+            )
+        try:
+            self._client.update_collection_aliases(operations)
+        except Exception as rollback_error:
+            try:
+                current_target = self._get_alias_target_strict()
+            except Exception as reconciliation_error:
+                raise rollback_error from reconciliation_error
+            if current_target != previous_collection:
+                raise
+
+    def _verify_built_collection(
+        self, collection_name: str, expected_points: int
+    ) -> None:
+        info = self._client.get_collection(collection_name)
+        if info.points_count != expected_points:
+            raise RuntimeError(
+                f"Qdrant build verification failed: expected {expected_points} "
+                f"points, found {info.points_count}"
+            )
+        status = getattr(info, "status", None)
+        status_value = getattr(status, "value", status)
+        if str(status_value).lower() == "red":
+            raise RuntimeError("Qdrant build verification failed: collection is red")
 
     def _faq_point_id(self, faq_id: str, chunk_index: int) -> int:
         """Deterministic point ID for a FAQ chunk (re-upsert overwrites)."""
@@ -455,7 +530,24 @@ class QdrantIndexManager:
 
         logger.info(f"Rebuilding Qdrant index (reason={reason})")
 
-        texts = [d.page_content or "" for d in documents]
+        # Qdrant upserts replace points that share an ID. Deduplicate the same
+        # stable document key before embedding so verification counts the points
+        # that can actually exist in the physical collection.
+        unique_documents: List[Document] = []
+        seen_document_keys: set[str] = set()
+        for document in documents:
+            document_key = self._build_doc_key(document)
+            if document_key in seen_document_keys:
+                continue
+            seen_document_keys.add(document_key)
+            unique_documents.append(document)
+        if len(unique_documents) != len(documents):
+            logger.info(
+                "Deduplicated %s identical Qdrant chunk(s) before rebuild",
+                len(documents) - len(unique_documents),
+            )
+
+        texts = [d.page_content or "" for d in unique_documents]
 
         # Build a stable BM25 vocabulary/stats from the full corpus. Persist it only
         # after the dense rebuild succeeds so failed embedding calls do not leave
@@ -468,59 +560,152 @@ class QdrantIndexManager:
         if vector_size <= 0:
             raise ValueError("Failed to determine embedding vector size")
 
-        # Create/recreate collection and upsert all points.
-        self._ensure_collection(vector_size=vector_size, recreate=True)
-
-        total = len(documents)
+        # Build into a unique physical collection. Live reads continue through
+        # the stable alias until this collection has been fully verified.
+        build_collection = f"{self.base_collection_name}__build_{time.time_ns()}"
+        old_collection = self._get_alias_target()
+        if old_collection is None and self._physical_collection_exists(
+            self.base_collection_name
+        ):
+            # First blue/green rebuild after upgrading from the legacy layout.
+            old_collection = self.base_collection_name
+        total = len(unique_documents)
         upserted = 0
         start = time.time()
+        staged_vocab_path = self.vocab_path.with_name(
+            f".{self.vocab_path.name}.{build_collection}.tmp"
+        )
+        alias_committed = False
 
-        for batch_docs in self._iter_batches(documents, embed_batch_size):
-            batch_texts = [d.page_content or "" for d in batch_docs]
-            batch_dense = embeddings.embed_documents(batch_texts)
+        try:
+            self._create_collection(build_collection, vector_size=vector_size)
+            for batch_docs in self._iter_batches(unique_documents, embed_batch_size):
+                batch_texts = [d.page_content or "" for d in batch_docs]
+                batch_dense = embeddings.embed_documents(batch_texts)
 
-            points: List[rest.PointStruct] = []
-            for doc, dense_vec in zip(batch_docs, batch_dense, strict=True):
-                content = doc.page_content or ""
-                md = dict(doc.metadata) if doc.metadata else {}
+                points: List[rest.PointStruct] = []
+                for doc, dense_vec in zip(batch_docs, batch_dense, strict=True):
+                    content = doc.page_content or ""
+                    md = dict(doc.metadata) if doc.metadata else {}
 
-                # Sparse vector using frozen corpus stats (no mutation).
-                sparse_idx, sparse_val = tokenizer.vectorize_document_static(content)
-                point_id = _stable_int_id(self._build_doc_key(doc))
-
-                points.append(
-                    rest.PointStruct(
-                        id=point_id,
-                        vector={
-                            "dense": dense_vec,
-                            "sparse": rest.SparseVector(
-                                indices=sparse_idx, values=sparse_val
-                            ),
-                        },
-                        payload={
-                            "content": content,
-                            **md,
-                        },
+                    # Sparse vector using frozen corpus stats (no mutation).
+                    sparse_idx, sparse_val = tokenizer.vectorize_document_static(
+                        content
                     )
+                    point_id = _stable_int_id(self._build_doc_key(doc))
+
+                    points.append(
+                        rest.PointStruct(
+                            id=point_id,
+                            vector={
+                                "dense": dense_vec,
+                                "sparse": rest.SparseVector(
+                                    indices=sparse_idx, values=sparse_val
+                                ),
+                            },
+                            payload={
+                                "content": content,
+                                **md,
+                            },
+                        )
+                    )
+
+                for upsert_points in self._iter_batches(points, upsert_batch_size):
+                    self._client.upsert(
+                        collection_name=build_collection,
+                        points=upsert_points,
+                        wait=True,
+                    )
+                    upserted += len(upsert_points)
+
+                logger.info(f"Upserted {upserted}/{total} indexed chunks...")
+
+            self._verify_built_collection(build_collection, upserted)
+            self.vocab_path.parent.mkdir(parents=True, exist_ok=True)
+            staged_vocab_path.write_text(
+                tokenizer.export_vocabulary(), encoding="utf-8"
+            )
+            try:
+                alias_old_collection = self._swap_active_alias(build_collection)
+            except Exception as swap_error:
+                # Qdrant may commit the atomic alias update and then time out while
+                # returning the response. Reconcile that ambiguous result before
+                # deciding whether the build succeeded or is safe to delete.
+                try:
+                    current_target = self._get_alias_target_strict()
+                except Exception as reconciliation_error:
+                    logger.error(
+                        "Unable to reconcile Qdrant alias after swap failure; "
+                        "preserving both collections",
+                        exc_info=True,
+                    )
+                    raise swap_error from reconciliation_error
+                if current_target != build_collection:
+                    raise
+                logger.warning(
+                    "Qdrant alias swap response failed, but alias '%s' is active; "
+                    "completing rebuild commit",
+                    build_collection,
                 )
-
-            for upsert_points in self._iter_batches(points, upsert_batch_size):
-                self._client.upsert(
-                    collection_name=self.collection_name, points=upsert_points
+                alias_old_collection = old_collection
+            alias_committed = True
+            if alias_old_collection is not None:
+                old_collection = alias_old_collection
+        except Exception:
+            staged_vocab_path.unlink(missing_ok=True)
+            # Delete only when a strict alias read proves the build is not live.
+            try:
+                current_target = self._get_alias_target_strict()
+            except Exception:
+                logger.error(
+                    "Unable to verify Qdrant alias after rebuild failure; "
+                    "preserving incomplete build '%s'",
+                    build_collection,
+                    exc_info=True,
                 )
-                upserted += len(upsert_points)
+            else:
+                if current_target != build_collection:
+                    try:
+                        self._client.delete_collection(build_collection)
+                    except Exception:
+                        logger.warning(
+                            "Failed to clean up incomplete Qdrant build '%s'",
+                            build_collection,
+                            exc_info=True,
+                        )
+            raise
 
-            logger.info(f"Upserted {upserted}/{total} indexed chunks...")
+        if not alias_committed:
+            raise RuntimeError("Qdrant rebuild ended without committing active alias")
 
-        duration = time.time() - start
-        info = self.get_collection_info()
-
-        self.vocab_path.parent.mkdir(parents=True, exist_ok=True)
-        self.vocab_path.write_text(tokenizer.export_vocabulary(), encoding="utf-8")
+        # The staged file is on the same filesystem, so promotion is atomic. It is
+        # committed before a new retriever is constructed by service setup.
+        try:
+            staged_vocab_path.replace(self.vocab_path)
+        except Exception as promotion_error:
+            try:
+                self._restore_active_alias(old_collection)
+            except Exception as rollback_error:
+                logger.critical(
+                    "Failed to restore Qdrant alias after BM25 vocabulary "
+                    "promotion failure; preserving both collections",
+                    exc_info=True,
+                )
+                raise promotion_error from rollback_error
+            logger.error(
+                "Restored Qdrant alias to '%s' after BM25 vocabulary "
+                "promotion failure; preserving build '%s' for diagnosis",
+                old_collection,
+                build_collection,
+            )
+            raise
         logger.info(
             f"BM25 vocabulary saved to {self.vocab_path} "
             f"(vocab_size={tokenizer.vocabulary_size}, num_docs={tokenizer.get_statistics().get('num_documents')})"
         )
+
+        duration = time.time() - start
+        info = self.get_collection_info()
 
         # Persist metadata after successful build for change detection.
         meta = self.collect_source_metadata()
@@ -532,6 +717,18 @@ class QdrantIndexManager:
             "embedding_dimensions": vector_size,
         }
         self.save_metadata(meta)
+
+        # Retire the previous physical collection only after alias, vocabulary,
+        # and metadata commit-side state have all completed.
+        if old_collection and old_collection != build_collection:
+            try:
+                self._client.delete_collection(old_collection)
+            except Exception:
+                logger.warning(
+                    "Failed to delete retired Qdrant collection '%s'",
+                    old_collection,
+                    exc_info=True,
+                )
 
         logger.info(
             f"Qdrant index rebuild complete in {duration:.2f}s (points={upserted})"

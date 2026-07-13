@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 from app.core.config import Settings
 from app.services.rag.bm25_tokenizer import BM25SparseTokenizer
 from app.services.rag.interfaces import HybridRetrieverProtocol, RetrievedDocument
+from app.services.rag.qdrant_index_manager import active_collection_alias
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as rest
 from qdrant_client.http.exceptions import ResponseHandlingException
@@ -66,7 +67,7 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
             bm25_tokenizer: Optional BM25 tokenizer (defaults to loading from file)
         """
         self.settings = settings
-        self.collection_name = settings.QDRANT_COLLECTION
+        self.collection_name = active_collection_alias(settings.QDRANT_COLLECTION)
 
         # Initialize client (use provided or create new)
         if client is not None:
@@ -165,9 +166,9 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
                 f"Qdrant health check: {len(collections.collections)} collections"
             )
 
-            # Check if our collection exists
+            aliases = self._client.get_aliases().aliases
             collection_exists = any(
-                c.name == self.collection_name for c in collections.collections
+                alias.alias_name == self.collection_name for alias in aliases
             )
 
             if not collection_exists:
@@ -676,8 +677,8 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
             True if collection exists, False otherwise
         """
         try:
-            collections = self._client.get_collections()
-            return any(c.name == self.collection_name for c in collections.collections)
+            aliases = self._client.get_aliases().aliases
+            return any(alias.alias_name == self.collection_name for alias in aliases)
         except Exception as e:
             logger.error(f"Error checking collection existence: {e}")
             return False

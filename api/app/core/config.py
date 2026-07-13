@@ -264,6 +264,12 @@ class Settings(BaseSettings):
     QUERY_REWRITE_MODEL: str = "openai:gpt-4o-mini"
     QUERY_REWRITE_TIMEOUT_SECONDS: float = 2.0
     QUERY_REWRITE_MAX_HISTORY_TURNS: int = 4
+    CONTEXT_LLM_TIMEOUT_SECONDS: float = Field(
+        default=30.0,
+        gt=0.0,
+        le=300.0,
+        description="Timeout for context-only synchronous LLM generation",
+    )
 
     # Hybrid Search Weights (must sum to 1.0)
     # Optimized via RAGAS evaluation: 0.6/0.4 shows +6% faithfulness improvement

@@ -728,8 +728,17 @@ class SimplifiedRAGService:
                 )
             )
 
-            # Get response from LLM
-            response_text = self.llm.invoke(user_content, system_content=system_content)
+            # The provider exposes a synchronous invoke API. Keep it off the event
+            # loop and bound the no-document fallback so one slow provider call
+            # cannot stall unrelated requests indefinitely.
+            response_text = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self.llm.invoke,
+                    user_content,
+                    system_content=system_content,
+                ),
+                timeout=self.settings.CONTEXT_LLM_TIMEOUT_SECONDS,
+            )
             response_content = (
                 response_text.content
                 if hasattr(response_text, "content")

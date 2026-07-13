@@ -130,13 +130,17 @@ class FAQIndexSyncManager:
         """Apply a single FAQ change to the live Qdrant index off-loop."""
         lock: asyncio.Lock | None = None
         try:
-            lock = await self.acquire_lock(faq_id)
-            try:
-                if operation != "delete":
-                    await self.ensure_embeddings_initialized()
-                await asyncio.to_thread(self.service._sync_faq_in_index, faq_id)
-            finally:
-                await self.release_lock(faq_id, lock)
+            # A full rebuild snapshots FAQ data before atomically swapping its alias.
+            # Keep point updates outside that snapshot/swap window so an update cannot
+            # land on the retired collection and disappear from the new active index.
+            async with self.service._setup_lock:
+                lock = await self.acquire_lock(faq_id)
+                try:
+                    if operation != "delete":
+                        await self.ensure_embeddings_initialized()
+                    await asyncio.to_thread(self.service._sync_faq_in_index, faq_id)
+                finally:
+                    await self.release_lock(faq_id, lock)
             logger.info("Applied incremental index update: %s on %s", operation, faq_id)
         except Exception:
             logger.exception(

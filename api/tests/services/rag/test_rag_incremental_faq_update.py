@@ -161,6 +161,28 @@ class TestIncrementalFAQUpdate:
         assert max_active == 1
 
     @pytest.mark.asyncio
+    async def test_incremental_update_waits_for_full_rebuild(self, rag_service):
+        sync_started = asyncio.Event()
+
+        def record_sync(_faq_id: str) -> None:
+            sync_started.set()
+
+        rag_service._sync_faq_in_index = record_sync
+        await rag_service._setup_lock.acquire()
+        update_task = asyncio.create_task(
+            rag_service.faq_index_sync.apply_incremental_update("update", "faq-1", None)
+        )
+
+        try:
+            await asyncio.sleep(0)
+            assert not sync_started.is_set()
+        finally:
+            rag_service._setup_lock.release()
+
+        await update_task
+        assert sync_started.is_set()
+
+    @pytest.mark.asyncio
     async def test_embeddings_initialization_is_serialized(self, rag_service):
         init_calls = 0
         init_active = 0
