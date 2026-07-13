@@ -197,6 +197,16 @@ class Settings(BaseSettings):
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
     OPENAI_MODEL: str = "openai:gpt-4.1-nano"  # Full model ID with provider prefix
     MAX_TOKENS: int = 4096
+    GLOBAL_DAILY_LLM_TOKEN_BUDGET: int = Field(
+        default=10_000_000,
+        gt=0,
+        description="Process-wide conservative LLM token reservations per UTC day",
+    )
+    GLOBAL_LLM_TOKEN_RESERVATION_PER_REQUEST: int = Field(
+        default=100_000,
+        gt=0,
+        description="Fixed worst-case full-RAG token reservation per admitted request",
+    )
     # Temperature for LLM responses (0.0-2.0). Kept low so grounded support
     # answers stay deterministic and faithful to the retrieved context.
     LLM_TEMPERATURE: float = 0.2

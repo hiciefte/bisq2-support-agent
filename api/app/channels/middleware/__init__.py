@@ -6,7 +6,7 @@ Pre and post-processing hooks for cross-cutting concerns.
 from app.channels.middleware.authentication import AuthenticationHook
 from app.channels.middleware.metrics import MetricsHook, MetricsPostHook
 from app.channels.middleware.pii_filter import PIIFilterHook
-from app.channels.middleware.rate_limit import RateLimitHook
+from app.channels.middleware.rate_limit import GlobalLLMTokenBudgetHook, RateLimitHook
 
 __all__ = [
     "AuthenticationHook",
@@ -14,4 +14,5 @@ __all__ = [
     "MetricsPostHook",
     "PIIFilterHook",
     "RateLimitHook",
+    "GlobalLLMTokenBudgetHook",
 ]

@@ -166,6 +166,99 @@ class TestRateLimitHook:
         assert result is None
 
 
+class TestGlobalLLMTokenBudgetHook:
+    """Application-wide budget cannot be reset by changing user identity."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_rotating_user_ids_still_exhausts_global_budget(self):
+        from app.channels.middleware.rate_limit import GlobalLLMTokenBudgetHook
+
+        now = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
+        hook = GlobalLLMTokenBudgetHook(
+            daily_token_budget=4,
+            max_completion_tokens=1,
+            reservation_tokens_per_request=2,
+            now=lambda: now,
+        )
+
+        for index in range(2):
+            message = IncomingMessage(
+                message_id=f"msg-{index}",
+                channel=ChannelType.WEB,
+                question="x",
+                user=UserContext(user_id=f"rotated-user-{index}"),
+            )
+            assert await hook.execute(message) is None
+
+        blocked = await hook.execute(
+            IncomingMessage(
+                message_id="msg-blocked",
+                channel=ChannelType.WEB,
+                question="x",
+                user=UserContext(user_id="another-rotated-user"),
+            )
+        )
+
+        assert isinstance(blocked, GatewayError)
+        assert blocked.error_code == ErrorCode.RATE_LIMIT_EXCEEDED
+        assert blocked.details["scope"] == "global_daily_llm_reservations"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_global_budget_resets_at_next_utc_day(self):
+        from app.channels.middleware.rate_limit import GlobalLLMTokenBudgetHook
+
+        current = [datetime(2026, 7, 13, 23, 59, tzinfo=timezone.utc)]
+        hook = GlobalLLMTokenBudgetHook(
+            daily_token_budget=2,
+            max_completion_tokens=1,
+            reservation_tokens_per_request=2,
+            now=lambda: current[0],
+        )
+
+        def message(message_id: str, user_id: str) -> IncomingMessage:
+            return IncomingMessage(
+                message_id=message_id,
+                channel=ChannelType.WEB,
+                question="x",
+                user=UserContext(user_id=user_id),
+            )
+
+        assert await hook.execute(message("before", "user-before")) is None
+        assert isinstance(
+            await hook.execute(message("blocked", "user-rotated")), GatewayError
+        )
+
+        current[0] = datetime(2026, 7, 14, 0, 1, tzinfo=timezone.utc)
+        assert await hook.execute(message("after", "user-after")) is None
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_budget_uses_operator_selected_worst_case_reservation(self):
+        from app.channels.middleware.rate_limit import GlobalLLMTokenBudgetHook
+
+        hook = GlobalLLMTokenBudgetHook(
+            daily_token_budget=12,
+            max_completion_tokens=1,
+            reservation_tokens_per_request=6,
+        )
+        message = IncomingMessage(
+            message_id="large-prompt",
+            channel=ChannelType.WEB,
+            question="x" * 1000,
+            user=UserContext(user_id="user-large"),
+        )
+
+        assert await hook.execute(message) is None
+        assert await hook.execute(message) is None
+        blocked = await hook.execute(message)
+
+        assert isinstance(blocked, GatewayError)
+        assert blocked.details["requested_reservation"] == 6
+        assert blocked.details["scope"] == "global_daily_llm_reservations"
+
+
 # =============================================================================
 # PII Filter Hook Tests
 # =============================================================================
