@@ -559,12 +559,31 @@ check_and_repair_services() {
 
     cd "$docker_dir" || return 1
 
+    # The currently loaded helpers can outlive a rollback's git reset. Keep the
+    # relay critical when the checked-out Compose file defines it, but do not
+    # try to repair a service that does not exist in an older revision.
+    local compose_services
+    local relay_service_defined=1
+    if compose_services=$(docker compose -f "$compose_file" config --services 2>/dev/null); then
+        relay_service_defined=0
+        local defined_service
+        while IFS= read -r defined_service; do
+            if [ "$defined_service" = "matrix-alert-relay" ]; then
+                relay_service_defined=1
+                break
+            fi
+        done <<< "$compose_services"
+    fi
+
     log_info "Checking all services..."
     echo ""
 
     # Check all services and separate critical from non-critical failures
     local failed_critical=()
     for service in "${all_services[@]}"; do
+        if [ "$service" = "matrix-alert-relay" ] && [ "$relay_service_defined" -eq 0 ]; then
+            continue
+        fi
         if ! check_service "$service" "$docker_dir" "$compose_file"; then
             failed_services+=("$service")
             # Check if this is a critical service

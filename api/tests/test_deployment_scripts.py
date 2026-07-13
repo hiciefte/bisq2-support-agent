@@ -424,6 +424,100 @@ def test_reconcile_runtime_services_falls_back_to_start(tmp_path: Path) -> None:
     assert lines == ["repair-failed", "start-called", "repair-succeeded"]
 
 
+def test_health_repair_skips_relay_missing_from_rollback_compose(
+    tmp_path: Path,
+) -> None:
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    checked_log = tmp_path / "checked.log"
+    docker = fakebin / "docker"
+    docker.write_text(
+        "#!/bin/bash\n"
+        'if [ "$*" = "compose -f docker-compose.yml config --services" ]; then\n'
+        "    printf '%s\\n' qdrant nginx web api bisq2-api prometheus grafana "
+        "node-exporter scheduler alertmanager cadvisor\n"
+        "    exit 0\n"
+        "fi\n"
+        "exit 64\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+
+    result = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        source "{DOCKER_UTILS_SH}"
+        check_service() {{
+            printf '%s\n' "$1" >> "{checked_log}"
+            return 0
+        }}
+        check_and_repair_services "{tmp_path}" "docker-compose.yml"
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 0, result.stderr
+    checked_services = set(checked_log.read_text(encoding="utf-8").splitlines())
+    assert checked_services == {
+        "qdrant",
+        "nginx",
+        "web",
+        "api",
+        "bisq2-api",
+        "prometheus",
+        "grafana",
+        "node-exporter",
+        "scheduler",
+        "alertmanager",
+        "cadvisor",
+    }
+
+
+def test_health_repair_keeps_relay_critical_when_compose_defines_it(
+    tmp_path: Path,
+) -> None:
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    checked_log = tmp_path / "checked.log"
+    restarted_log = tmp_path / "restarted.log"
+    docker = fakebin / "docker"
+    docker.write_text(
+        "#!/bin/bash\n"
+        'if [ "$*" = "compose -f docker-compose.yml config --services" ]; then\n'
+        "    printf '%s\\n' qdrant nginx web api matrix-alert-relay bisq2-api "
+        "prometheus grafana node-exporter scheduler alertmanager cadvisor\n"
+        "    exit 0\n"
+        "fi\n"
+        "exit 64\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+
+    result = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        source "{DOCKER_UTILS_SH}"
+        check_service() {{
+            printf '%s\n' "$1" >> "{checked_log}"
+            [ "$1" != "matrix-alert-relay" ]
+        }}
+        restart_service_with_deps() {{
+            printf '%s\n' "$1" >> "{restarted_log}"
+            return 1
+        }}
+        check_and_repair_services "{tmp_path}" "docker-compose.yml"
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode != 0
+    checked_services = checked_log.read_text(encoding="utf-8").splitlines()
+    assert "matrix-alert-relay" in checked_services
+    assert restarted_log.read_text(encoding="utf-8").splitlines() == [
+        "matrix-alert-relay"
+    ]
+
+
 def test_refresh_runtime_services_includes_qdrant(tmp_path: Path) -> None:
     fakebin = tmp_path / "bin"
     fakebin.mkdir()
