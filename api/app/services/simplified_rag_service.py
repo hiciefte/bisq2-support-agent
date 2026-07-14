@@ -1280,7 +1280,7 @@ class SimplifiedRAGService:
             ]
             noncanonical_scores = [
                 score
-                for doc, score in zip(docs, doc_scores)
+                for doc, score in zip(docs, doc_scores, strict=True)
                 if doc.metadata.get("_canonical_fix_injected") is not True
             ]
             best_retrieval_score = self._best_calibrated_retrieval_score(
