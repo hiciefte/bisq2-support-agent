@@ -1,7 +1,7 @@
 """Escalation post-processing hook.
 
 Creates escalations when a response should be queued for review
-(`needs_human` or `queue_medium`),
+(`needs_human`, `queue_medium`, or a missing/unknown routing action),
 replacing the AI answer with a channel-appropriate escalation message.
 """
 
@@ -38,7 +38,8 @@ class EscalationPostHook(BasePostProcessingHook):
 
     Behavior:
     - auto_send: pass through (return None)
-    - queue_medium / needs_human / requires_human=True: create escalation, replace answer
+    - queue_medium / needs_human / missing or unknown action / requires_human=True:
+      create escalation, replace answer
     - Delegates message formatting to adapter.format_escalation_message()
     """
 

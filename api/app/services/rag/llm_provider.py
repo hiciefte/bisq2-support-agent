@@ -333,6 +333,7 @@ class AISuiteLLMWrapper:
         max_tokens: int,
         temperature: float,
         mcp_url: str = "http://localhost:8000/mcp",
+        mcp_timeout_seconds: float = 30.0,
     ):
         """Initialize the AISuite LLM wrapper.
 
@@ -342,12 +343,14 @@ class AISuiteLLMWrapper:
             max_tokens: Maximum tokens for completion
             temperature: Temperature for response generation (0.0-2.0)
             mcp_url: URL of the MCP HTTP server (default: "http://localhost:8000/mcp")
+            mcp_timeout_seconds: Timeout for each MCP HTTP request
         """
         self.client = client
         self.model_id = model
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.mcp_url = mcp_url
+        self.mcp_timeout_seconds = float(mcp_timeout_seconds)
         self.mcp_client = MCPHttpClient(mcp_url)
 
         logger.info(f"AISuite LLM initialized: {model}, MCP URL: {mcp_url}")
@@ -465,6 +468,7 @@ class AISuiteLLMWrapper:
             "type": "mcp",
             "name": "bisq",
             "server_url": self.mcp_url,
+            "timeout": self.mcp_timeout_seconds,
         }
 
         try:
@@ -606,6 +610,7 @@ class LLMProvider:
             max_tokens=self.settings.MAX_TOKENS,
             temperature=self.settings.LLM_TEMPERATURE,
             mcp_url=mcp_url,
+            mcp_timeout_seconds=self.settings.MCP_LIVE_DATA_TIMEOUT_SECONDS,
         )
         logger.info(f"LLM initialized: {self.settings.OPENAI_MODEL}")
         return self.llm

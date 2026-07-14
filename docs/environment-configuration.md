@@ -259,6 +259,12 @@ Use a dark deploy first, then enable operator-facing features in phases.
 *   **`HYBRID_KEYWORD_WEIGHT`**
     *   Description: Sparse/BM25 weight in hybrid retrieval.
     *   Default: `0.4`
+*   **`RAG_RETRIEVAL_RELEVANCE_FLOOR`**
+    *   Description: Minimum calibrated semantic similarity required for autonomous answer delivery. Missing or lower scores route to human review.
+    *   Default: `0.65`
+*   **`MCP_LIVE_DATA_TIMEOUT_SECONDS`**
+    *   Description: Timeout in seconds for each MCP live-data HTTP request.
+    *   Default: `30`
 *   **`REACTION_NEGATIVE_STABILIZATION_SECONDS`**
     *   Description: Delay window before auto-escalating negative reactions to avoid false positives when users quickly change or remove a thumbs-down reaction.
     *   Default: `20`

@@ -22,4 +22,9 @@ GENERATION_FAILED: str = (
     "Try rephrasing, or ask a human support agent."
 )
 
+LIVE_DATA_UNAVAILABLE: str = (
+    "Live Bisq data is temporarily unavailable. "
+    "This question has been queued for human review."
+)
+
 TECHNICAL_ERROR: str = "Running into technical difficulties. Try again later."

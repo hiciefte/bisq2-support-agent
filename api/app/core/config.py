@@ -271,6 +271,20 @@ class Settings(BaseSettings):
         le=300.0,
         description="Timeout for context-only synchronous LLM generation",
     )
+    MCP_LIVE_DATA_TIMEOUT_SECONDS: float = Field(
+        default=30.0,
+        gt=0.0,
+        le=300.0,
+        description="Timeout for each MCP live-data HTTP request",
+    )
+    RAG_RETRIEVAL_RELEVANCE_FLOOR: float = Field(
+        default=0.65,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Minimum calibrated semantic similarity required for autonomous delivery"
+        ),
+    )
 
     # Hybrid Search Weights (must sum to 1.0)
     # Optimized via RAGAS evaluation: 0.6/0.4 shows +6% faithfulness improvement

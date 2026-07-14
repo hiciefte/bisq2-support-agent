@@ -122,6 +122,7 @@ class TestChannelGatewayRouting:
                     "answer": "Final answer",
                     "sources": [],
                     "response_time": 0.5,
+                    "routing_action": "auto_send",
                 },
             }
 
