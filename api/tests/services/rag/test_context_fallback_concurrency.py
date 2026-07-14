@@ -45,6 +45,8 @@ async def test_context_fallback_does_not_block_event_loop(rag_service) -> None:
     assert tick_elapsed is not None
     assert tick_elapsed < 0.1
     assert response["answer"] == "context answer"
+    assert response["routing_action"] == "needs_human"
+    assert response["requires_human"] is True
 
 
 @pytest.mark.asyncio
@@ -66,6 +68,8 @@ async def test_context_fallback_times_out_to_insufficient_information(
     assert time.monotonic() - started < 0.1
     assert response["answer"] == error_messages.INSUFFICIENT_INFO
     assert response["context_fallback_failed"] is True
+    assert response["routing_action"] == "needs_human"
+    assert response["requires_human"] is True
 
 
 @pytest.mark.asyncio

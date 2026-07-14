@@ -239,6 +239,26 @@ class TestAISuiteLLMWrapperContract:
         assert call_kwargs["tools"][0]["name"] == "bisq"
         assert call_kwargs["tools"][0]["server_url"] == "http://localhost:8000/mcp"
 
+    def test_invoke_with_tools_passes_configured_mcp_timeout(
+        self, mock_ai_client, mock_response
+    ):
+        mock_ai_client.chat.completions.create.return_value = mock_response
+
+        from app.services.rag.llm_provider import AISuiteLLMWrapper
+
+        wrapper = AISuiteLLMWrapper(
+            client=mock_ai_client,
+            model="openai:gpt-4o-mini",
+            max_tokens=1000,
+            temperature=0.1,
+            mcp_timeout_seconds=12.5,
+        )
+
+        wrapper.invoke_with_tools("Test")
+
+        mcp_config = mock_ai_client.chat.completions.create.call_args[1]["tools"][0]
+        assert mcp_config["timeout"] == 12.5
+
     def test_invoke_with_tools_passes_max_turns(self, mock_ai_client, mock_response):
         """invoke_with_tools must pass max_turns for automatic tool loop."""
         mock_ai_client.chat.completions.create.return_value = mock_response

@@ -12,6 +12,7 @@ from copy import deepcopy
 from enum import Enum
 from typing import Any
 
+from app.channels.constants import REVIEW_QUEUE_ACTIONS
 from app.channels.delivery_planner import DeliveryMode, DeliveryPlanner
 from app.channels.escalation_localization import render_escalation_notice
 from app.channels.policy import (
@@ -27,7 +28,6 @@ from app.prompts.runtime_policy import SAFETY_REFLEX_WARNING
 logger = logging.getLogger(__name__)
 
 _DIRECT_DELIVERY_ACTIONS = frozenset({"auto_send", "needs_clarification"})
-_REVIEW_QUEUE_ACTIONS = frozenset({"queue_medium", "needs_human"})
 
 
 class DispatchOutcome(str, Enum):
@@ -280,13 +280,16 @@ class ChannelResponseDispatcher:
             return False
         if routing_action in _DIRECT_DELIVERY_ACTIONS:
             return True
-        # Fail-open for unknown legacy actions to avoid silent user drops.
-        if routing_action and routing_action not in _REVIEW_QUEUE_ACTIONS:
-            logger.warning(
-                "Unknown routing_action=%r for channel dispatcher; defaulting to autosend",
+        if not routing_action:
+            logger.error(
+                "Missing routing_action for channel dispatcher; routing to review queue"
+            )
+        elif routing_action not in REVIEW_QUEUE_ACTIONS:
+            logger.error(
+                "Unknown routing_action=%r for channel dispatcher; routing to review queue",
                 routing_action,
             )
-        return routing_action not in _REVIEW_QUEUE_ACTIONS
+        return False
 
     @staticmethod
     def should_create_escalation(response: Any) -> bool:
@@ -298,7 +301,7 @@ class ChannelResponseDispatcher:
         requires_human = (
             requires_human_raw if isinstance(requires_human_raw, bool) else False
         )
-        return requires_human or routing_action in _REVIEW_QUEUE_ACTIONS
+        return requires_human or routing_action not in _DIRECT_DELIVERY_ACTIONS
 
     def _resolve_escalation_service(self) -> Any | None:
         if self.escalation_service is not None:

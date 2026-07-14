@@ -155,12 +155,18 @@ async def test_run_once_sends_clarification_messages_without_escalation() -> Non
 
 
 @pytest.mark.asyncio
-async def test_run_once_fails_open_and_sends_for_unknown_routing_action() -> None:
+@pytest.mark.parametrize(
+    ("routing_action", "expected_escalation_action"),
+    [("", "needs_human"), ("legacy_auto_send", "legacy_auto_send")],
+)
+async def test_run_once_queues_missing_or_unknown_routing_action(
+    routing_action: str, expected_escalation_action: str
+) -> None:
     channel = MagicMock()
     channel.channel_id = "bisq2"
     channel.runtime = None
     incoming = _incoming()
-    outgoing = _outgoing(routing_action="")
+    outgoing = _outgoing(routing_action=routing_action)
     channel.poll_conversations = AsyncMock(return_value=[incoming])
     channel.handle_incoming = AsyncMock(return_value=outgoing)
     channel.get_delivery_target = MagicMock(return_value="support.support")
@@ -176,9 +182,12 @@ async def test_run_once_fails_open_and_sends_for_unknown_routing_action() -> Non
     )
     processed = await service.run_once()
 
-    assert processed == 1
-    channel.send_message.assert_awaited_once_with("support.support", outgoing)
-    escalation_service.create_escalation.assert_not_awaited()
+    assert processed == 0
+    channel.send_message.assert_awaited_once()
+    assert channel.send_message.call_args.args[1] is not outgoing
+    escalation_service.create_escalation.assert_awaited_once()
+    escalation_payload = escalation_service.create_escalation.call_args.args[0]
+    assert escalation_payload.routing_action == expected_escalation_action
 
 
 @pytest.mark.asyncio

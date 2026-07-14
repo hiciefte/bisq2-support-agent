@@ -27,7 +27,7 @@ def _make_incoming():
     )
 
 
-def _make_outgoing(requires_human=True):
+def _make_outgoing(requires_human=True, routing_action="needs_human"):
     return OutgoingMessage(
         message_id="out-flag-001",
         in_reply_to="msg-flag-001",
@@ -45,6 +45,7 @@ def _make_outgoing(requires_human=True):
             model_name="gpt-4",
             confidence_score=0.3,
             version_confidence=None,
+            routing_action=routing_action,
         ),
         requires_human=requires_human,
     )
@@ -112,7 +113,8 @@ class TestEscalationEnabledFlag:
 
         hook = EscalationPostHook(service, registry, settings=settings)
         result = await hook.execute(
-            _make_incoming(), _make_outgoing(requires_human=False)
+            _make_incoming(),
+            _make_outgoing(requires_human=False, routing_action="auto_send"),
         )
 
         assert result is None
