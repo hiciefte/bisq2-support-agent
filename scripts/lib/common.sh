@@ -89,6 +89,119 @@ check_docker_compose() {
     return 0
 }
 
+_effective_compose_env_value() {
+    local docker_dir="$1"
+    local key="$2"
+    local env_file="$docker_dir/.env"
+
+    # Exported values take precedence over Compose's project .env file.
+    if printenv "$key" >/dev/null 2>&1; then
+        printenv "$key"
+        return 0
+    fi
+
+    if [ -f "$env_file" ]; then
+        awk -v key="$key" '
+            index($0, key "=") == 1 {
+                print substr($0, length(key) + 2)
+                exit
+            }
+        ' "$env_file"
+    fi
+}
+
+validate_base_compose_exposure() {
+    local docker_dir="$1"
+    local setting
+    local value
+
+    # A missing deploy.env must not turn a selected clearnet TLS deployment
+    # into base-only HTTP. Refuse every TLS-only input while no overlay is
+    # selected, regardless of whether it came from the shell or docker/.env.
+    for setting in \
+        NGINX_HTTPS_BIND_ADDRESS \
+        NGINX_TLS_CERTIFICATE_DIR \
+        NGINX_TLS_CERTIFICATE_FILENAME \
+        NGINX_TLS_PRIVATE_KEY_FILENAME; do
+        value=$(_effective_compose_env_value "$docker_dir" "$setting")
+        if [ -n "$value" ]; then
+            log_error \
+                "Base Compose mode conflicts with clearnet TLS settings; restore the reviewed deploy selection" >&2
+            return 1
+        fi
+    done
+
+    value=$(_effective_compose_env_value "$docker_dir" NGINX_TLS_REDIRECT_HTTP)
+    if is_env_enabled "$value"; then
+        log_error \
+            "Base Compose mode cannot enable HTTPS redirection; restore the reviewed deploy selection" >&2
+        return 1
+    fi
+
+    value=$(_effective_compose_env_value "$docker_dir" NGINX_HTTP_BIND_ADDRESS)
+    case "$value" in
+        ""|127.0.0.1)
+            ;;
+        *)
+            log_error \
+                "Base Compose mode requires the loopback HTTP bind; restore the reviewed deploy selection" >&2
+            return 1
+            ;;
+    esac
+
+    return 0
+}
+
+# Only the reviewed production TLS overlay may be persisted in deploy.env.
+# Keeping this allowlist here prevents deploy-path configuration from loading
+# arbitrary Compose files with host mounts or privileged service definitions.
+validate_compose_override_file() {
+    local docker_dir="${1:-${DOCKER_DIR:-}}"
+    local override_file="${BISQ_SUPPORT_COMPOSE_OVERRIDE_FILE:-}"
+
+    if [ -z "$override_file" ]; then
+        validate_base_compose_exposure "$docker_dir"
+        return $?
+    fi
+
+    if [ "$override_file" != "docker-compose.tls.yml" ]; then
+        log_error \
+            "BISQ_SUPPORT_COMPOSE_OVERRIDE_FILE must be empty or docker-compose.tls.yml" >&2
+        return 1
+    fi
+
+    if [ -z "$docker_dir" ] || [ ! -f "$docker_dir/$override_file" ]; then
+        log_error \
+            "Configured Compose override is unavailable in the Docker directory" >&2
+        return 1
+    fi
+
+    return 0
+}
+
+# Run every production Compose action with the persisted, validated overlay.
+# With no configured override this is exactly equivalent to the legacy
+# `docker compose -f docker-compose.yml ...` invocation.
+run_docker_compose() {
+    local docker_dir="$1"
+    local compose_file="$2"
+    shift 2
+
+    if ! validate_compose_override_file "$docker_dir"; then
+        return 1
+    fi
+
+    local compose_args=(-f "$compose_file")
+    if [ -n "${BISQ_SUPPORT_COMPOSE_OVERRIDE_FILE:-}" ]; then
+        compose_args+=(-f "$BISQ_SUPPORT_COMPOSE_OVERRIDE_FILE")
+    fi
+
+    (
+        cd "$docker_dir" || return 1
+        docker compose "${compose_args[@]}" "$@"
+    )
+}
+
 # Source environment configuration (legacy — kept for backward compatibility)
 source_env_file() {
     local env_file="${1:-/etc/bisq-support/deploy.env}"
@@ -111,18 +224,18 @@ source_env_file() {
 # ---------------------------------------------------------------------------
 # Single-source-of-truth env architecture
 #
-# deploy.env  → deploy-path vars ONLY (repo URLs, install dirs)
+# deploy.env  → allowlisted deploy settings (repo/install paths, TLS overlay)
 # docker/.env → ALL app config (secrets, room IDs, feature flags)
 #
 # Docker Compose reads docker/.env automatically. Scripts source deploy.env
-# only for the handful of shell-only vars that Docker doesn't need.
+# only for the handful of shell-only settings that Docker doesn't need.
 # ---------------------------------------------------------------------------
 
-# Allowed deploy-path variable prefixes/names.
+# Allowed deployment setting names.
 # Everything else in deploy.env is considered app config (a shadowing risk).
-_DEPLOY_PATH_VARS="BISQ_SUPPORT_INSTALL_DIR|BISQ_SUPPORT_REPO_URL|BISQ_SUPPORT_SECRETS_DIR|BISQ2_INSTALL_DIR|BISQ2_REPO_URL"
+_DEPLOY_PATH_VARS="BISQ_SUPPORT_INSTALL_DIR|BISQ_SUPPORT_REPO_URL|BISQ_SUPPORT_SECRETS_DIR|BISQ_SUPPORT_COMPOSE_OVERRIDE_FILE|BISQ2_INSTALL_DIR|BISQ2_REPO_URL"
 
-# Source ONLY deploy-path variables from deploy.env.
+# Source ONLY allowlisted deployment settings from deploy.env.
 # App config vars are ignored so they cannot shadow docker/.env values.
 source_deploy_paths() {
     local env_file="${1:-/etc/bisq-support/deploy.env}"
@@ -132,7 +245,7 @@ source_deploy_paths() {
         return 1
     fi
 
-    log_info "Sourcing deploy-path variables from $env_file"
+    log_info "Sourcing deployment settings from $env_file"
 
     while IFS= read -r line || [ -n "$line" ]; do
         line="${line#"${line%%[![:space:]]*}"}"
@@ -555,6 +668,8 @@ export -f check_required_commands
 export -f check_root
 export -f check_docker_daemon
 export -f check_docker_compose
+export -f validate_compose_override_file
+export -f run_docker_compose
 export -f source_env_file
 export -f source_deploy_paths
 export -f validate_app_env

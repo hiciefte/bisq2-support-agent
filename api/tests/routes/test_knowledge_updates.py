@@ -8,6 +8,7 @@ from app.routes.admin.knowledge_updates import (
     KnowledgeCoverageReconciliationRequest,
     KnowledgeReviewRequest,
     PromoteCodeEvidenceRequest,
+    UpdateKnowledgeDocumentRequest,
     apply_knowledge_update_rework_action,
     approve_knowledge_update,
     get_current_knowledge_update,
@@ -16,6 +17,7 @@ from app.routes.admin.knowledge_updates import (
     get_knowledge_update_rework_triage,
     promote_code_evidence_to_knowledge_update,
     reconcile_reviewed_knowledge_coverage,
+    update_knowledge_update_document,
 )
 from app.services.knowledge_updates.llm_wiki_update_service import (
     KnowledgeUpdateService,
@@ -339,6 +341,47 @@ async def test_reviewed_knowledge_coverage_apply_marks_safe_matches_approved(
         pipeline.repository.get_by_id(51).faq_id == "llm_wiki:bisq2-reputation-basics"
     )
     assert pipeline.repository.get_by_id(52).review_status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_coverage_reconciliation_value_error_hides_internal_detail(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    private_detail = "PRIVATE_RECONCILIATION_DETAIL"
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)),
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    pipeline = _PipelineService([])
+
+    class _FailingReconciler:
+        def __init__(self, settings: Settings) -> None:
+            self.settings = settings
+
+        def reconcile(self, *args, **kwargs):
+            raise ValueError(private_detail)
+
+    monkeypatch.setattr(
+        knowledge_updates,
+        "LLMWikiCoverageReconciliationService",
+        _FailingReconciler,
+    )
+    caplog.set_level("WARNING", logger=knowledge_updates.__name__)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await reconcile_reviewed_knowledge_coverage(
+            request_body=KnowledgeCoverageReconciliationRequest(apply=False),
+            request=_Request(),
+            pipeline_service=pipeline,
+            service=service,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Invalid coverage reconciliation request"
+    assert private_detail not in exc_info.value.detail
+    assert private_detail in caplog.text
 
 
 @pytest.mark.asyncio
@@ -1093,6 +1136,40 @@ class _Request:
 
 
 @pytest.mark.asyncio
+async def test_update_document_value_error_hides_internal_detail(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    private_detail = "PRIVATE_DOCUMENT_DETAIL"
+    candidate = _candidate()
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)),
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    pipeline = _PipelineService([candidate])
+
+    def _reject_document(**kwargs):
+        raise ValueError(private_detail)
+
+    monkeypatch.setattr(service, "update_document_markdown", _reject_document)
+    caplog.set_level("WARNING", logger=knowledge_updates.__name__)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await update_knowledge_update_document(
+            candidate_id=candidate.id,
+            request_body=UpdateKnowledgeDocumentRequest(markdown="Reviewed content"),
+            pipeline_service=pipeline,
+            service=service,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Invalid knowledge update document"
+    assert private_detail not in exc_info.value.detail
+    assert private_detail in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_approve_knowledge_update_passes_review_outcome_feedback(
     tmp_path: Path,
 ) -> None:
@@ -1128,6 +1205,43 @@ async def test_approve_knowledge_update_passes_review_outcome_feedback(
         approved.future_generator_note
         == "Future drafts should avoid unsupported UI labels."
     )
+
+
+@pytest.mark.asyncio
+async def test_approve_value_error_hides_internal_detail(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    private_detail = "PRIVATE_APPROVAL_DETAIL"
+    candidate = _candidate()
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)),
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    pipeline = _PipelineService([candidate])
+    request = _Request()
+
+    def _reject_approval(**kwargs):
+        raise ValueError(private_detail)
+
+    monkeypatch.setattr(service, "approve", _reject_approval)
+    caplog.set_level("WARNING", logger=knowledge_updates.__name__)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await approve_knowledge_update(
+            candidate_id=candidate.id,
+            request_body=KnowledgeReviewRequest(reviewer="admin"),
+            request=request,
+            background_tasks=BackgroundTasks(),
+            pipeline_service=pipeline,
+            service=service,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Invalid knowledge update approval"
+    assert private_detail not in exc_info.value.detail
+    assert private_detail in caplog.text
 
 
 @pytest.mark.asyncio
@@ -1358,3 +1472,40 @@ async def test_promote_code_evidence_endpoint_accepts_symbol_less_evidence(
 
     assert response["candidate"]["source"] == "code_evidence"
     assert source_ref in response["proposal"]["source_refs"]
+
+
+@pytest.mark.asyncio
+async def test_promote_code_evidence_value_error_hides_internal_detail(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    private_detail = "PRIVATE_CODE_EVIDENCE_DETAIL"
+    repository = UnifiedFAQCandidateRepository(str(tmp_path / "unified_training.db"))
+    pipeline = type("Pipeline", (), {"repository": repository})()
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)),
+        db_path=repository.db_path,
+    )
+
+    def _reject_evidence(*args, **kwargs):
+        raise ValueError(private_detail)
+
+    monkeypatch.setattr(
+        knowledge_updates,
+        "_code_evidence_record_from_payload",
+        _reject_evidence,
+    )
+    caplog.set_level("WARNING", logger=knowledge_updates.__name__)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await promote_code_evidence_to_knowledge_update(
+            request_body=PromoteCodeEvidenceRequest(evidence={}),
+            pipeline_service=pipeline,
+            service=service,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Invalid code evidence proposal"
+    assert private_detail not in exc_info.value.detail
+    assert private_detail in caplog.text

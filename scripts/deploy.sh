@@ -5,16 +5,18 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 # shellcheck disable=SC1091
-source "$SCRIPT_DIR/lib/common.sh"
+source "$SCRIPT_DIR/lib/docker-utils.sh"
 
 # --- Source Environment Configuration --- #
-# Only deploy-path vars; docker/.env provides app config to Docker Compose.
+# Only allowlisted deploy settings; docker/.env provides app config to Compose.
 source_deploy_paths "/etc/bisq-support/deploy.env" || true
 # --- End Source Environment Configuration --- #
 
 # Define installation directory, user, and other constants
 INSTALL_DIR=${BISQ_SUPPORT_INSTALL_DIR:-/opt/bisq-support}
 DOCKER_DIR="$INSTALL_DIR/docker"
+SECRETS_DIR=${BISQ_SUPPORT_SECRETS_DIR:-$INSTALL_DIR/secrets}
+LOG_DIR="$INSTALL_DIR/logs"
 
 if ! validate_runtime_configuration "$DOCKER_DIR/.env"; then
     exit 1
@@ -366,43 +368,18 @@ chmod -R 775 "$INSTALL_DIR/api/data"
 
 # Start services
 echo -e "${BLUE}Starting services in production mode...${NC}"
-docker compose -f docker-compose.yml build --pull --no-cache
-docker compose -f docker-compose.yml up -d
+run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" build --pull --no-cache
+run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" up -d
 
-# Wait for services to be healthy
+# Validate one-shot secret initialization separately from long-running health.
 echo -e "${BLUE}Waiting for Docker services to become healthy...${NC}"
-MAX_WAIT=180 # Increased wait time
-WAIT_INTERVAL=10 # Increased check interval
-ELAPSED_TIME=0
-
-while [ $ELAPSED_TIME -lt $MAX_WAIT ]; do
-    # Get total number of services defined in the compose file
-    SERVICE_NAMES=$(docker compose -f docker-compose.yml config --services)
-    TOTAL_SERVICES=$(echo "$SERVICE_NAMES" | wc -l)
-    HEALTHY_CONTAINERS=$(docker compose -f docker-compose.yml ps --filter health=healthy -q | wc -l) # Count healthy
-
-    if [ "$TOTAL_SERVICES" -eq 0 ]; then
-      echo -e "${RED}No services defined in docker-compose.yml.${NC}"
-      exit 1
-    fi
-
-    if [ "$HEALTHY_CONTAINERS" -eq "$TOTAL_SERVICES" ]; then
-        echo -e "${GREEN}All $TOTAL_SERVICES Docker services are healthy.${NC}"
-        break
-    fi
-
-    RUNNING_CONTAINERS=$(docker compose -f docker-compose.yml ps --filter status=running -q | wc -l)
-    echo -e "${YELLOW}Waiting for services... ($HEALTHY_CONTAINERS/$TOTAL_SERVICES healthy, $RUNNING_CONTAINERS running) [${ELAPSED_TIME}s/${MAX_WAIT}s]${NC}"
-    sleep $WAIT_INTERVAL
-    ELAPSED_TIME=$((ELAPSED_TIME + WAIT_INTERVAL))
-done
-
-if [ $ELAPSED_TIME -ge $MAX_WAIT ]; then
-    echo -e "${RED}Error: Docker services did not become healthy within $MAX_WAIT seconds.${NC}"
-    # Show status and logs for debugging
-    docker compose -f docker-compose.yml ps
-    echo "--- Last logs --- "
-    docker compose -f docker-compose.yml logs --tail=50
+if ! wait_for_compose_health \
+    "$DOCKER_DIR" \
+    "$COMPOSE_FILE" \
+    180 \
+    10 \
+    scheduler-secret-init \
+    alertmanager-secret-init; then
     exit 1
 fi
 
@@ -513,4 +490,4 @@ export APP_GID
 
 # Stop any existing containers before building/starting
 echo -e "${BLUE}Stopping any old containers...${NC}"
-docker compose -f "$COMPOSE_FILE" down
+run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" down

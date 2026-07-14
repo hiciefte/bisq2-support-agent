@@ -74,6 +74,7 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
             self._client = client
         else:
             self._client = self._create_client()
+        self._closed = False
 
         # Initialize embeddings (use provided or create via multi-provider abstraction)
         if embeddings is not None:
@@ -152,6 +153,13 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
     def client(self) -> QdrantClient:
         """Get the Qdrant client instance."""
         return self._client
+
+    def close(self) -> None:
+        """Release the underlying Qdrant client exactly once."""
+        if self._closed:
+            return
+        self._client.close()
+        self._closed = True
 
     def health_check(self) -> bool:
         """Check if Qdrant is healthy and accessible.

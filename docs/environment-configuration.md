@@ -4,16 +4,21 @@ This document details the environment variables used by the Bisq Support Agent p
 
 ## Environment Architecture
 
-The project uses a **single source of truth** pattern for configuration:
+The project separates operator-managed configuration from generated runtime
+credentials:
 
 | File | Purpose | Contains |
 |------|---------|----------|
-| `docker/.env` | **All app config** | Secrets, room IDs, feature flags, API keys |
-| `/etc/bisq-support/deploy.env` | **Deploy-path vars only** | Repo URLs, install directories |
+| `docker/.env` | **Operator-managed app config** | Room IDs, feature flags, API keys, and application credentials other than the generated boundary secrets |
+| Compose named secret volumes | **Generated boundary credentials** | Separate scheduler API and Alertmanager webhook secrets, each visible only to its authorized services |
+| `/etc/bisq-support/deploy.env` | **Deploy settings only** | Repo URLs, install directories, reviewed Compose override |
 
 **How it works:**
 - Docker Compose reads `docker/.env` automatically (it sits next to `docker-compose.yml`)
-- Shell scripts (`start.sh`, `update.sh`, etc.) call `source_deploy_paths` to load only the 4 path variables from `deploy.env`
+- One-shot Compose initialization services create the scheduler and Alertmanager
+  boundary secrets in separate persistent named volumes before their consumers
+  start; these values never pass through `docker/.env`
+- Shell scripts (`start.sh`, `update.sh`, etc.) call `source_deploy_paths` to load only the allowlisted deployment settings from `deploy.env`
 - App config vars in `deploy.env` are **ignored** to prevent shadowing `docker/.env`
 - `start.sh` runs `validate_app_env` and `detect_env_shadowing` as pre-flight checks
 
@@ -37,6 +42,14 @@ These variables live in `/etc/bisq-support/deploy.env` and are used only by shel
 *   **`BISQ_SUPPORT_SECRETS_DIR`**
     *   Description: The absolute path to store generated secrets (like API keys, passwords).
     *   Default: `$BISQ_SUPPORT_INSTALL_DIR/secrets`
+*   **`BISQ_SUPPORT_COMPOSE_OVERRIDE_FILE`**
+    *   Description: Persists the reviewed TLS Compose overlay across deployment,
+        update, start, stop, health-repair, and rollback commands. The only
+        accepted non-empty value is `docker-compose.tls.yml`; arbitrary Compose
+        files and paths are rejected. The selected file must exist in the
+        deployment's `docker/` directory or operations fail closed.
+    *   Default: Empty (base Compose file only, suitable for the documented
+        Tor-only mode).
 *   **`BISQ_SUPPORT_LOG_DIR`**
     *   Description: The absolute path for storing host-level logs (like deployment script logs, *not* application logs inside Docker).
     *   Default: `$BISQ_SUPPORT_INSTALL_DIR/logs`
@@ -44,9 +57,15 @@ These variables live in `/etc/bisq-support/deploy.env` and are used only by shel
     *   Description: The absolute path to the private SSH key used for authenticating with Git repositories.
     *   Default: `$HOME/.ssh/bisq2_support_agent` (Note: `$HOME` resolves to the home directory of the user running the script, typically `/root` when using `sudo`)
 
-## Docker Container Variables (`docker/.env`)
+## Docker Container Configuration
 
-These variables configure the application services running inside Docker containers. They are primarily set in the `docker/.env` file located within the installation directory (`$BISQ_SUPPORT_INSTALL_DIR/docker/.env`). The deployment script copies `docker/.env.example` if `.env` doesn't exist and injects some secrets.
+These variables configure the application services running inside Docker
+containers. They are primarily set in the `docker/.env` file located within the
+installation directory (`$BISQ_SUPPORT_INSTALL_DIR/docker/.env`). The deployment
+script copies `docker/.env.example` if `.env` does not exist and injects some
+operator-managed secrets. `SCHEDULER_API_TOKEN` and
+`ALERTMANAGER_WEBHOOK_SECRET` are exceptions: Compose initializes them in
+isolated persistent volumes and their consumers load them at runtime.
 
 *   **`OPENAI_API_KEY`**
     *   Description: (Required) Your API key from OpenAI, used for LLM operations via AISuite and embeddings.
@@ -62,6 +81,12 @@ These variables configure the application services running inside Docker contain
 *   **`ADMIN_API_KEY`**
     *   Description: A secret key required to access administrative API endpoints (e.g., feedback processing). The deployment script generates a random key and stores it in `$BISQ_SUPPORT_SECRETS_DIR/admin_api_key`, then injects it into `.env`.
     *   Default in `.env.example`: `dev_admin_key`
+*   **`SCHEDULER_API_TOKEN`**
+    *   Description: Dedicated token accepted only by private scheduler job endpoints. Compose generates it once in an isolated persistent volume, and the API and scheduler load it at startup. Do not add it to `docker/.env` or reuse the admin key.
+    *   Default: No environment-file value; startup fails closed if the mounted runtime secret is invalid.
+*   **`ALERTMANAGER_WEBHOOK_SECRET`**
+    *   Description: Dedicated Bearer secret shared only by Alertmanager and the isolated Matrix alert relay. Compose generates it once in a separate persistent volume; it is not stored in `docker/.env`.
+    *   Default: No environment-file value; relay startup and readiness fail closed if the mounted runtime secret is invalid.
 *   **`DEBUG`**
     *   Description: Set to `true` to enable debug mode for the API (provides more verbose error output). Should be `false` in production.
     *   Default: `false`
@@ -278,5 +303,24 @@ Use a dark deploy first, then enable operator-facing features in phases.
     *   Default: `Bisq 2 Support Agent`
 *   **`HEALTHCHECK_URL`**
     *   Description: (Optional) Healthchecks.io ping URL for external health monitoring. The scheduler container pings this URL every 15 minutes to confirm the system is operational. If not configured, external alerting will not be available (local monitoring via Prometheus/Grafana will still function).
-    *   Example: `https://hc-ping.com/YOUR-UUID-HERE`
+    *   Example: an operator-managed Healthchecks.io ping URL.
     *   Default: None (feature disabled if not set)
+
+### Public Listener and TLS Variables
+
+See [Public Access: Clearnet TLS or Tor-Only](runbooks/public-access.md) before
+setting these values. The repository does not choose public names, addresses,
+certificate paths, or exposure mode.
+
+* **`NGINX_HTTP_BIND_ADDRESS`**: Host interface for the base HTTP listener. The
+  Compose fail-safe default is loopback.
+* **`NGINX_HTTPS_BIND_ADDRESS`**: Host interface published by the optional TLS
+  Compose overlay; required when using that overlay.
+* **`NGINX_TLS_CERTIFICATE_DIR`**: Operator-managed host certificate directory,
+  mounted read-only by the TLS overlay.
+* **`NGINX_TLS_CERTIFICATE_FILENAME`**: Certificate-chain filename within the
+  mounted directory.
+* **`NGINX_TLS_PRIVATE_KEY_FILENAME`**: Private-key filename within the mounted
+  directory.
+* **`NGINX_TLS_REDIRECT_HTTP`**: Enables HTTP-to-HTTPS redirects only when a
+  complete certificate pair is present. Default: `false`.

@@ -129,6 +129,38 @@ def verify_grafana_datasource_key(provided_key: str, settings: Settings) -> bool
     return secrets.compare_digest(provided_key, datasource_key)
 
 
+def verify_scheduler_access(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+) -> bool:
+    """Authorize only the narrowly scoped internal scheduler token."""
+    configured_token = settings.SCHEDULER_API_TOKEN.strip()
+    if not configured_token or len(configured_token) < MIN_API_KEY_LENGTH:
+        logger.error("Scheduler API access attempted without a secure configured token")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduler access is not configured",
+        )
+
+    provided_token = request.headers.get("X-Scheduler-Token")
+    if not provided_token:
+        logger.warning("Scheduler API access attempted without authentication")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Scheduler authentication required",
+        )
+
+    if not secrets.compare_digest(provided_token, configured_token):
+        logger.warning("Invalid scheduler API credentials")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid scheduler credentials",
+        )
+
+    request.state.scheduler_authenticated = True
+    return True
+
+
 def _b64url(data: bytes) -> str:
     """Base64 URL-safe encoding without padding."""
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()

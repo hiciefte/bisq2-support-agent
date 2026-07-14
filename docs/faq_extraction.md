@@ -36,10 +36,12 @@ Located in `api/app/scripts/extract_faqs.py`, this script:
 
 The `scheduler` service in Docker Compose periodically calls:
 
-- `POST /admin/training/sync/bisq`
-- `POST /admin/training/sync/matrix`
+- `POST /internal/scheduler/training-sync/bisq`
+- `POST /internal/scheduler/training-sync/matrix`
 
-These endpoints run the unified training pipeline and persist extracted FAQ entries to `faqs.db`.
+These private-network endpoints accept only the scheduler's dedicated runtime
+credential. They run one source of the unified training pipeline at a time and
+persist extracted FAQ entries to `faqs.db`.
 
 ## Data Flow
 

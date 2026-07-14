@@ -59,6 +59,17 @@ class TestQdrantHybridRetriever:
         assert retriever.settings == mock_settings
         assert retriever.collection_name == "test_collection__active"
 
+    def test_close_releases_qdrant_client_once(
+        self, mock_settings, mock_qdrant_client, mock_embeddings
+    ):
+        """Closing a retriever releases its client and is idempotent."""
+        retriever = QdrantHybridRetriever(mock_settings)
+
+        retriever.close()
+        retriever.close()
+
+        mock_qdrant_client.close.assert_called_once_with()
+
     def test_health_check_healthy(
         self, mock_settings, mock_qdrant_client, mock_embeddings
     ):

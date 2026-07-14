@@ -502,6 +502,35 @@ class TestMCPHttpServerContract:
         data = response.json()
         assert data["id"] == "custom-id-123"
 
+    def test_internal_tool_error_is_logged_but_not_returned(
+        self, test_client, mock_bisq_service, caplog
+    ):
+        """Unexpected tool failures must not disclose exception details."""
+        private_detail = "private-backend-detail"
+        mock_bisq_service.get_markets_formatted.side_effect = RuntimeError(
+            private_detail
+        )
+
+        with caplog.at_level("ERROR"):
+            response = test_client.post(
+                "/mcp",
+                json={
+                    "jsonrpc": "2.0",
+                    "method": "tools/call",
+                    "params": {"name": "get_markets", "arguments": {}},
+                    "id": 14,
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["error"] == {
+            "code": -32603,
+            "message": "Internal server error",
+        }
+        assert private_detail not in response.text
+        assert private_detail in caplog.text
+
 
 class TestMCPToolSchemas:
     """Test that tool schemas are correctly defined."""

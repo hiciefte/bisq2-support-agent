@@ -6,9 +6,20 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 NGINX_HTTP_CONFIG = PROJECT_ROOT / "docker" / "nginx" / "nginx.conf"
-SITE_CONFIGS = [
+PRODUCTION_SITE_CONFIG = (
+    PROJECT_ROOT / "docker" / "nginx" / "conf.d" / "default.prod.conf"
+)
+PRODUCTION_ROUTES_CONFIG = (
+    PROJECT_ROOT
+    / "docker"
+    / "nginx"
+    / "conf.d"
+    / "snippets"
+    / "application-routes.prod.conf"
+)
+ROUTE_CONFIGS = [
     PROJECT_ROOT / "docker" / "nginx" / "conf.d" / "default.conf",
-    PROJECT_ROOT / "docker" / "nginx" / "conf.d" / "default.prod.conf",
+    PRODUCTION_ROUTES_CONFIG,
 ]
 
 
@@ -30,7 +41,13 @@ def test_nginx_declares_address_keyed_llm_zone() -> None:
     assert "limit_req_zone $binary_remote_addr zone=llm_addr:" in content
 
 
-@pytest.mark.parametrize("config_path", SITE_CONFIGS, ids=lambda path: path.name)
+def test_production_server_includes_the_tested_route_configuration() -> None:
+    content = PRODUCTION_SITE_CONFIG.read_text(encoding="utf-8")
+
+    assert "include /etc/nginx/conf.d/snippets/application-routes.prod.conf;" in content
+
+
+@pytest.mark.parametrize("config_path", ROUTE_CONFIGS, ids=lambda path: path.name)
 @pytest.mark.parametrize(
     ("declaration", "rewrite"),
     [
@@ -53,7 +70,7 @@ def test_chat_endpoints_apply_session_and_address_limits(
     assert rewrite in block
 
 
-@pytest.mark.parametrize("config_path", SITE_CONFIGS, ids=lambda path: path.name)
+@pytest.mark.parametrize("config_path", ROUTE_CONFIGS, ids=lambda path: path.name)
 def test_synchronous_chat_query_has_llm_sized_proxy_timeouts(
     config_path: Path,
 ) -> None:

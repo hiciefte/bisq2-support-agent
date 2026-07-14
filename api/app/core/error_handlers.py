@@ -6,12 +6,41 @@ for all application exceptions.
 """
 
 import logging
+from typing import cast
 
 from app.core.exceptions import BaseAppException
 from fastapi import Request, status
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException
 
 logger = logging.getLogger(__name__)
+
+
+async def http_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Keep client errors actionable while hiding server-side details."""
+    exc = cast(HTTPException, exc)
+
+    if exc.status_code < status.HTTP_500_INTERNAL_SERVER_ERROR:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail},
+            headers=exc.headers,
+        )
+
+    logger.error(
+        "HTTP server error: %s",
+        exc.detail,
+        extra={
+            "status_code": exc.status_code,
+            "path": request.url.path,
+            "method": request.method,
+        },
+    )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": "Internal server error"},
+        headers=exc.headers,
+    )
 
 
 async def base_exception_handler(
@@ -36,12 +65,18 @@ async def base_exception_handler(
         },
     )
 
+    public_message = (
+        exc.detail
+        if exc.status_code < status.HTTP_500_INTERNAL_SERVER_ERROR
+        else "An unexpected error occurred"
+    )
+
     return JSONResponse(
         status_code=exc.status_code,
         content={
             "error": {
                 "code": exc.error_code,
-                "message": exc.detail,
+                "message": public_message,
                 "status_code": exc.status_code,
             }
         },

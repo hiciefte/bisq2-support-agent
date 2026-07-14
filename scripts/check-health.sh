@@ -8,6 +8,9 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 PROJECT_ROOT="$SCRIPT_DIR/.."
 DOCKER_DIR="$PROJECT_ROOT/docker"
+COMPOSE_FILE="docker-compose.yml"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/common.sh"
 
 # Colors for output
 RED='\033[0;31m'
@@ -15,6 +18,8 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
+
+source_deploy_paths "/etc/bisq-support/deploy.env" >&2 || true
 
 echo "========================================================"
 echo "🔍 Bisq Support Assistant - Health Check Monitor"
@@ -35,7 +40,7 @@ fi
 check_service() {
     local service=$1
     local status
-    status=$(docker compose -f docker-compose.yml ps --format json "$service" 2>/dev/null)
+    status=$(run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" ps --format json "$service" 2>/dev/null)
 
     if [ -z "$status" ]; then
         echo -e "${RED}❌ $service: NOT FOUND${NC}"
@@ -85,16 +90,16 @@ restart_service_with_deps() {
 
     case "$service" in
         "api")
-            docker compose -f docker-compose.yml up -d api web nginx
+            run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" up -d api web nginx
             ;;
         "web")
-            docker compose -f docker-compose.yml up -d web nginx
+            run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" up -d web nginx
             ;;
         "nginx")
-            docker compose -f docker-compose.yml up -d nginx
+            run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" up -d nginx
             ;;
         *)
-            docker compose -f docker-compose.yml up -d "$service"
+            run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" up -d "$service"
             ;;
     esac
 }
@@ -212,7 +217,7 @@ case "${1:-}" in
         ;;
     "--json")
         # JSON output for monitoring systems
-        docker compose -f docker-compose.yml ps --format json | jq -s '.'
+        run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" ps --format json | jq -s '.'
         ;;
     "")
         # Default behavior

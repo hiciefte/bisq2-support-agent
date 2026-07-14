@@ -11,9 +11,9 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from app.channels.plugins.matrix.services.alert_service import MatrixAlertService
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.routes.alertmanager import router as alertmanager_router
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 
 logger = logging.getLogger(__name__)
 
@@ -42,8 +42,16 @@ app.include_router(alertmanager_router)
 
 
 @app.get("/ready")
-async def ready(request: Request) -> dict[str, str]:
-    """Fail readiness when the Matrix alert lane is not configured."""
+async def ready(
+    request: Request, settings: Settings = Depends(get_settings)
+) -> dict[str, str]:
+    """Fail readiness when authentication or the Matrix lane is not configured."""
+    if not settings.ALERTMANAGER_WEBHOOK_SECRET.strip():
+        raise HTTPException(
+            status_code=503,
+            detail="alertmanager_webhook_not_configured",
+        )
+
     service = getattr(request.app.state, "matrix_alert_service", None)
     is_configured = getattr(service, "is_configured", None)
     try:
