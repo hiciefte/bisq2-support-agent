@@ -17,15 +17,28 @@ import logging
 import os
 from typing import Dict, Optional
 
+from app.core.config import get_settings
 from app.metrics.task_metrics import instrument_wiki_update
-from app.scripts.download_bisq2_media_wiki import main as download_main
-from app.scripts.process_wiki_dump import WikiDumpProcessor
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+
+def _download_wiki_dump(*, output_dir: str) -> None:
+    """Load the network-only dependency when the scheduled job actually runs."""
+    from app.scripts.download_bisq2_media_wiki import main as download_main
+
+    download_main(output_dir=output_dir)
+
+
+def _create_wiki_processor(input_file: str, output_file: str):
+    """Load parsing dependencies only for the scheduled wiki job."""
+    from app.scripts.process_wiki_dump import WikiDumpProcessor
+
+    return WikiDumpProcessor(input_file, output_file)
 
 
 @instrument_wiki_update
@@ -37,17 +50,15 @@ async def main() -> Optional[Dict[str, int]]:
         Dict with metrics if successful (pages_processed), None otherwise
     """
     try:
-        # Get project root directory
-        project_root = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "..")
-        )
-        wiki_data_dir = os.path.join(project_root, "data", "wiki")
+        settings = get_settings()
+        wiki_data_dir = settings.WIKI_DIR_PATH
+        os.makedirs(wiki_data_dir, exist_ok=True)
         input_file = os.path.join(wiki_data_dir, "bisq2_dump.xml")
         output_file = os.path.join(wiki_data_dir, "processed_wiki.jsonl")
 
         # Step 1: Download latest wiki dump
         logger.info("Step 1: Downloading latest Bisq MediaWiki dump...")
-        await asyncio.to_thread(download_main, output_dir=wiki_data_dir)
+        await asyncio.to_thread(_download_wiki_dump, output_dir=wiki_data_dir)
         logger.info("Wiki dump downloaded successfully")
 
         # Step 2: Process the dump
@@ -57,7 +68,7 @@ async def main() -> Optional[Dict[str, int]]:
             raise FileNotFoundError(f"Wiki dump file not found: {input_file}")
 
         # Process with metrics collection
-        processor = WikiDumpProcessor(str(input_file), str(output_file))
+        processor = _create_wiki_processor(str(input_file), str(output_file))
 
         # Run processing
         await asyncio.to_thread(processor.process_dump)

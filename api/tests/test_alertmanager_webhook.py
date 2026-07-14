@@ -3,10 +3,17 @@
 Phase 9: Replace token-based Matrix auth with password-based auth.
 """
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from app.core.config import Settings, get_settings
+from app.routes.alertmanager import router
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
+TEST_WEBHOOK_SECRET = "test-only-alertmanager-webhook-secret"
+AUTHORIZATION_HEADER = {"Authorization": f"Bearer {TEST_WEBHOOK_SECRET}"}
 
 
 @pytest.fixture
@@ -73,6 +80,19 @@ def mock_matrix_service():
     service.is_configured.return_value = True
     service.send_alert_message = AsyncMock(return_value=True)
     return service
+
+
+@pytest.fixture
+def alertmanager_app() -> FastAPI:
+    """Mount the relay router without reintroducing it to the main API."""
+    test_app = FastAPI()
+    test_app.include_router(router, prefix="/alertmanager", tags=["Alertmanager"])
+    settings = Settings(
+        _env_file=None,
+        ALERTMANAGER_WEBHOOK_SECRET=TEST_WEBHOOK_SECRET,
+    )
+    test_app.dependency_overrides[get_settings] = lambda: settings
+    return test_app
 
 
 # =============================================================================
@@ -189,11 +209,9 @@ class TestFormatAlertMessage:
 class TestHealthEndpoint:
     """Test alertmanager health endpoint."""
 
-    def test_alertmanager_health_endpoint(self):
+    def test_alertmanager_health_endpoint(self, alertmanager_app):
         """Test health endpoint returns healthy status."""
-        from app.main import app
-
-        client = TestClient(app)
+        client = TestClient(alertmanager_app)
         response = client.get("/alertmanager/health")
 
         assert response.status_code == 200
@@ -204,15 +222,19 @@ class TestHealthEndpoint:
 class TestAlertsEndpoint:
     """Test alertmanager alerts endpoint."""
 
-    def test_receive_alerts_success(self, sample_alert_payload, mock_matrix_service):
+    def test_receive_alerts_success(
+        self, alertmanager_app, sample_alert_payload, mock_matrix_service
+    ):
         """Test successful alert processing."""
-        from app.main import app
-
         # Inject mock matrix service
-        app.state.matrix_alert_service = mock_matrix_service
+        alertmanager_app.state.matrix_alert_service = mock_matrix_service
 
-        client = TestClient(app)
-        response = client.post("/alertmanager/alerts", json=sample_alert_payload)
+        client = TestClient(alertmanager_app)
+        response = client.post(
+            "/alertmanager/alerts",
+            headers=AUTHORIZATION_HEADER,
+            json=sample_alert_payload,
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -222,11 +244,11 @@ class TestAlertsEndpoint:
         # Verify send_alert_message was called
         mock_matrix_service.send_alert_message.assert_called_once()
 
-    def test_receive_alerts_multiple_alerts(self, mock_matrix_service):
+    def test_receive_alerts_multiple_alerts(
+        self, alertmanager_app, mock_matrix_service
+    ):
         """Test processing multiple alerts in one payload."""
-        from app.main import app
-
-        app.state.matrix_alert_service = mock_matrix_service
+        alertmanager_app.state.matrix_alert_service = mock_matrix_service
 
         payload = {
             "receiver": "matrix-notifications",
@@ -245,8 +267,10 @@ class TestAlertsEndpoint:
             ],
         }
 
-        client = TestClient(app)
-        response = client.post("/alertmanager/alerts", json=payload)
+        client = TestClient(alertmanager_app)
+        response = client.post(
+            "/alertmanager/alerts", headers=AUTHORIZATION_HEADER, json=payload
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -256,31 +280,31 @@ class TestAlertsEndpoint:
         assert "Alert1" in batched_message
         assert "Alert2" in batched_message
 
-    def test_receive_alerts_no_matrix_service(self, sample_alert_payload):
+    def test_receive_alerts_no_matrix_service(
+        self, alertmanager_app, sample_alert_payload
+    ):
         """Unavailable delivery must make Alertmanager retry the webhook."""
-        from app.main import app
-
-        # Remove matrix service
-        if hasattr(app.state, "matrix_alert_service"):
-            delattr(app.state, "matrix_alert_service")
-
-        client = TestClient(app)
-        response = client.post("/alertmanager/alerts", json=sample_alert_payload)
+        client = TestClient(alertmanager_app)
+        response = client.post(
+            "/alertmanager/alerts",
+            headers=AUTHORIZATION_HEADER,
+            json=sample_alert_payload,
+        )
 
         assert response.status_code == 503
         assert response.json()["detail"] == "matrix_service_unavailable"
 
     def test_receive_alerts_rejects_unconfigured_matrix_service(
-        self, sample_alert_payload, mock_matrix_service
+        self, alertmanager_app, sample_alert_payload, mock_matrix_service
     ):
         """Permanent configuration gaps are rejected before delivery."""
-        from app.main import app
-
         mock_matrix_service.is_configured.return_value = False
-        app.state.matrix_alert_service = mock_matrix_service
+        alertmanager_app.state.matrix_alert_service = mock_matrix_service
 
-        response = TestClient(app).post(
-            "/alertmanager/alerts", json=sample_alert_payload
+        response = TestClient(alertmanager_app).post(
+            "/alertmanager/alerts",
+            headers=AUTHORIZATION_HEADER,
+            json=sample_alert_payload,
         )
 
         assert response.status_code == 503
@@ -288,34 +312,38 @@ class TestAlertsEndpoint:
         mock_matrix_service.send_alert_message.assert_not_awaited()
 
     def test_receive_alerts_handles_send_failure(
-        self, sample_alert_payload, mock_matrix_service
+        self, alertmanager_app, sample_alert_payload, mock_matrix_service
     ):
         """Test handling of matrix send failures."""
-        from app.main import app
-
         # Make send_alert_message raise an exception
         mock_matrix_service.send_alert_message = AsyncMock(
             side_effect=Exception("Matrix connection failed")
         )
-        app.state.matrix_alert_service = mock_matrix_service
+        alertmanager_app.state.matrix_alert_service = mock_matrix_service
 
-        client = TestClient(app)
-        response = client.post("/alertmanager/alerts", json=sample_alert_payload)
+        client = TestClient(alertmanager_app)
+        response = client.post(
+            "/alertmanager/alerts",
+            headers=AUTHORIZATION_HEADER,
+            json=sample_alert_payload,
+        )
 
         assert response.status_code == 503
         assert response.json()["detail"] == "matrix_delivery_failed"
 
     def test_receive_alerts_handles_false_send_result(
-        self, sample_alert_payload, mock_matrix_service
+        self, alertmanager_app, sample_alert_payload, mock_matrix_service
     ):
         """A false Matrix result is a failed delivery, not a processed alert."""
-        from app.main import app
-
         mock_matrix_service.send_alert_message = AsyncMock(return_value=False)
-        app.state.matrix_alert_service = mock_matrix_service
+        alertmanager_app.state.matrix_alert_service = mock_matrix_service
 
-        client = TestClient(app)
-        response = client.post("/alertmanager/alerts", json=sample_alert_payload)
+        client = TestClient(alertmanager_app)
+        response = client.post(
+            "/alertmanager/alerts",
+            headers=AUTHORIZATION_HEADER,
+            json=sample_alert_payload,
+        )
 
         assert response.status_code == 503
         assert response.json()["detail"] == "matrix_delivery_failed"
@@ -352,24 +380,19 @@ class TestMatrixServiceIntegration:
 class TestRouterRegistration:
     """Test that alertmanager router is properly registered."""
 
-    def test_alertmanager_router_registered(self):
-        """Test that alertmanager routes are registered in the app."""
-        from app.main import app
+    def test_alertmanager_router_is_not_registered_in_main_api(self):
+        """The compatibility router must not be mounted in the main API."""
+        main_path = Path(__file__).resolve().parents[1] / "app" / "main.py"
+        main_source = main_path.read_text(encoding="utf-8")
 
-        # Check that routes exist
-        routes = [route.path for route in app.routes]
+        assert "alertmanager.router" not in main_source
+        assert "    alertmanager," not in main_source
 
-        assert "/alertmanager/health" in routes or any(
-            "/alertmanager" in str(route.path) for route in app.routes
-        )
+    def test_alertmanager_routes_remain_available_to_isolated_relay(
+        self, alertmanager_app
+    ):
+        """The shared router remains mountable by the isolated relay."""
+        routes = [route.path for route in alertmanager_app.routes]
 
-    def test_alertmanager_routes_have_correct_tags(self):
-        """Test that alertmanager routes have correct OpenAPI tags."""
-        from app.main import app
-
-        # Find alertmanager routes
-        for route in app.routes:
-            if hasattr(route, "path") and "/alertmanager" in route.path:
-                if hasattr(route, "tags"):
-                    # Tags should include "alertmanager"
-                    pass  # Tag verification is optional
+        assert "/alertmanager/health" in routes
+        assert "/alertmanager/alerts" in routes

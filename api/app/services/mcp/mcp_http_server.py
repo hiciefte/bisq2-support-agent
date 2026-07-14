@@ -287,7 +287,7 @@ async def handle_jsonrpc(request: JsonRpcRequest) -> dict[str, Any]:
         logger.exception(f"MCP request failed: {e}")
         return make_json_rpc_response(
             id=request.id,
-            error={"code": -32603, "message": f"Internal error: {str(e)}"},
+            error={"code": -32603, "message": "Internal server error"},
         )
 
 

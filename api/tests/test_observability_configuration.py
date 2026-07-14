@@ -58,12 +58,18 @@ def test_alertmanager_routes_notifications_outside_the_api_container() -> None:
     assert all("http://api:" not in url for url in urls)
 
 
-def test_every_compose_service_has_a_healthcheck() -> None:
+def test_every_long_running_compose_service_has_a_healthcheck() -> None:
     services = _load_yaml("docker/docker-compose.yml")["services"]
+    one_shots = {
+        name for name, service in services.items() if service.get("restart") == "no"
+    }
     missing = sorted(
-        name for name, service in services.items() if "healthcheck" not in service
+        name
+        for name, service in services.items()
+        if name not in one_shots and "healthcheck" not in service
     )
 
+    assert one_shots == {"alertmanager-secret-init", "scheduler-secret-init"}
     assert missing == []
 
 
@@ -105,8 +111,18 @@ def test_scheduler_healthcheck_requires_process_and_fresh_heartbeat() -> None:
 
 def test_deploy_health_timeout_is_fail_closed() -> None:
     deploy_script = (REPO_ROOT / "scripts/deploy.sh").read_text(encoding="utf-8")
-    timeout_block = deploy_script.split(
-        "if [ $ELAPSED_TIME -ge $MAX_WAIT ]; then", maxsplit=1
+    docker_utils = (REPO_ROOT / "scripts/lib/docker-utils.sh").read_text(
+        encoding="utf-8"
+    )
+    deploy_health_call = deploy_script.split(
+        "if ! wait_for_compose_health", maxsplit=1
     )[1].split("fi", maxsplit=1)[0]
+    timeout_block = docker_utils.split(
+        'log_error "Docker services did not become healthy', maxsplit=1
+    )[1].split("\n}", maxsplit=1)[0]
 
-    assert "exit 1" in timeout_block
+    assert "scheduler-secret-init" in deploy_health_call
+    assert "alertmanager-secret-init" in deploy_health_call
+    assert "exit 1" in deploy_health_call
+    assert "logs --tail=50" in timeout_block
+    assert "return 1" in timeout_block

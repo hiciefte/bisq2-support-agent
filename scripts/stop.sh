@@ -6,13 +6,14 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 PROJECT_ROOT="$SCRIPT_DIR/.."
 DOCKER_DIR="$PROJECT_ROOT/docker"
+COMPOSE_FILE="docker-compose.yml"
 
 echo "========================================================"
 echo " Stopping Bisq Support Assistant (Production Mode)"
 echo "========================================================"
 
 # --- Source Environment Configuration --- #
-# Only deploy-path vars; docker/.env provides app config to Docker Compose.
+# Only allowlisted deploy settings; docker/.env provides app config to Compose.
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/common.sh"
 setup_colors
@@ -26,6 +27,6 @@ cd "$DOCKER_DIR" || {
 }
 
 echo "Stopping and removing containers..."
-docker compose -f docker-compose.yml down
+run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" down
 
 echo "Application stopped successfully."

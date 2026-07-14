@@ -21,7 +21,7 @@ check_service() {
     local compose_file="${3:-docker-compose.yml}"
 
     local status
-    status=$(docker compose -f "$docker_dir/$compose_file" ps --format json "$service" 2>/dev/null)
+    status=$(run_docker_compose "$docker_dir" "$compose_file" ps --format json "$service" 2>/dev/null)
 
     if [ -z "$status" ]; then
         log_error "$service: NOT FOUND"
@@ -87,6 +87,160 @@ wait_for_healthy() {
     return 1
 }
 
+# Verify that a Compose one-shot service exists and exited successfully.
+check_completed_service() {
+    local service="$1"
+    local docker_dir="${2:-$DOCKER_DIR}"
+    local compose_file="${3:-docker-compose.yml}"
+    local container_id
+    local completion_state
+    local state
+    local exit_code
+
+    if ! container_id=$(run_docker_compose "$docker_dir" "$compose_file" ps --all -q "$service"); then
+        log_error "Failed to inspect one-shot service: $service"
+        return 1
+    fi
+
+    if [ -z "$container_id" ]; then
+        log_error "$service: NOT FOUND"
+        return 1
+    fi
+
+    if [[ "$container_id" == *$'\n'* ]]; then
+        log_error "$service: MULTIPLE CONTAINERS FOUND"
+        return 1
+    fi
+
+    if ! completion_state=$(docker inspect --format='{{.State.Status}} {{.State.ExitCode}}' "$container_id" 2>/dev/null); then
+        log_error "Failed to inspect one-shot container for $service"
+        return 1
+    fi
+
+    read -r state exit_code <<< "$completion_state"
+    if [ "$state" != "exited" ] || [ "$exit_code" != "0" ]; then
+        log_error "$service did not complete successfully (state=$state, exit=$exit_code)"
+        return 1
+    fi
+
+    log_success "$service: COMPLETED"
+    return 0
+}
+
+# Wait for every long-running Compose service to report healthy while treating
+# named one-shot services as completed prerequisites rather than daemons.
+wait_for_compose_health() {
+    local docker_dir="$1"
+    local compose_file="$2"
+    local max_wait="$3"
+    local wait_interval="$4"
+    shift 4
+
+    local -a completed_services=("$@")
+    local -a configured_services=()
+    local -a long_running_services=()
+    local configured_output
+    local service
+    local completed_service
+    local is_completed
+
+    if ! configured_output=$(run_docker_compose "$docker_dir" "$compose_file" config --services); then
+        log_error "Failed to list services from the Compose configuration"
+        return 1
+    fi
+
+    while IFS= read -r service; do
+        if [ -n "$service" ]; then
+            configured_services+=("$service")
+        fi
+    done <<< "$configured_output"
+
+    if [ "${#configured_services[@]}" -eq 0 ]; then
+        log_error "No services defined in $compose_file"
+        return 1
+    fi
+
+    for completed_service in "${completed_services[@]}"; do
+        is_completed=0
+        for service in "${configured_services[@]}"; do
+            if [ "$service" = "$completed_service" ]; then
+                is_completed=1
+                break
+            fi
+        done
+        if [ "$is_completed" -eq 0 ]; then
+            log_error "$completed_service is not defined in $compose_file"
+            return 1
+        fi
+
+        if ! check_completed_service "$completed_service" "$docker_dir" "$compose_file"; then
+            return 1
+        fi
+    done
+
+    for service in "${configured_services[@]}"; do
+        is_completed=0
+        for completed_service in "${completed_services[@]}"; do
+            if [ "$service" = "$completed_service" ]; then
+                is_completed=1
+                break
+            fi
+        done
+        if [ "$is_completed" -eq 0 ]; then
+            long_running_services+=("$service")
+        fi
+    done
+
+    if [ "${#long_running_services[@]}" -eq 0 ]; then
+        log_error "No long-running services defined in $compose_file"
+        return 1
+    fi
+
+    local elapsed_time=0
+    local healthy_output
+    local running_output
+    local healthy_containers
+    local running_containers
+    local total_services="${#long_running_services[@]}"
+
+    while [ "$elapsed_time" -lt "$max_wait" ]; do
+        if ! healthy_output=$(run_docker_compose "$docker_dir" "$compose_file" ps --filter health=healthy -q "${long_running_services[@]}"); then
+            log_error "Failed to inspect Compose service health"
+            return 1
+        fi
+
+        healthy_containers=0
+        if [ -n "$healthy_output" ]; then
+            healthy_containers=$(printf '%s\n' "$healthy_output" | wc -l | tr -d '[:space:]')
+        fi
+
+        if [ "$healthy_containers" -eq "$total_services" ]; then
+            log_success "All $total_services long-running Docker services are healthy"
+            return 0
+        fi
+
+        if ! running_output=$(run_docker_compose "$docker_dir" "$compose_file" ps --filter status=running -q "${long_running_services[@]}"); then
+            log_error "Failed to inspect running Compose services"
+            return 1
+        fi
+
+        running_containers=0
+        if [ -n "$running_output" ]; then
+            running_containers=$(printf '%s\n' "$running_output" | wc -l | tr -d '[:space:]')
+        fi
+
+        log_warning "Waiting for services ($healthy_containers/$total_services healthy, $running_containers running) [${elapsed_time}s/${max_wait}s]"
+        sleep "$wait_interval"
+        elapsed_time=$((elapsed_time + wait_interval))
+    done
+
+    log_error "Docker services did not become healthy within $max_wait seconds"
+    run_docker_compose "$docker_dir" "$compose_file" ps || true
+    log_error "Last service logs:"
+    run_docker_compose "$docker_dir" "$compose_file" logs --tail=50 || true
+    return 1
+}
+
 # Function to check container health using docker inspect
 check_container_health() {
     local container="$1"
@@ -141,25 +295,25 @@ restart_service_with_deps() {
             if uses_qdrant_runtime; then
                 api_services=("qdrant" "${api_services[@]}")
             fi
-            if ! docker compose -f "$compose_file" up -d "${api_services[@]}"; then
+            if ! run_docker_compose "$docker_dir" "$compose_file" up -d "${api_services[@]}"; then
                 log_error "Failed to restart ${api_services[*]}"
                 return 1
             fi
             ;;
         "web")
-            if ! docker compose -f "$compose_file" up -d web nginx; then
+            if ! run_docker_compose "$docker_dir" "$compose_file" up -d web nginx; then
                 log_error "Failed to restart web, nginx"
                 return 1
             fi
             ;;
         "nginx")
-            if ! docker compose -f "$compose_file" up -d nginx; then
+            if ! run_docker_compose "$docker_dir" "$compose_file" up -d nginx; then
                 log_error "Failed to restart nginx"
                 return 1
             fi
             ;;
         *)
-            if ! docker compose -f "$compose_file" up -d "$service"; then
+            if ! run_docker_compose "$docker_dir" "$compose_file" up -d "$service"; then
                 log_error "Failed to restart $service"
                 return 1
             fi
@@ -177,21 +331,21 @@ ensure_dependent_services() {
     cd "$docker_dir" || return 1
 
     # Check if web and nginx are running
-    if ! docker compose -f "$compose_file" ps --format json web 2>/dev/null | grep -q '"State":"running"'; then
+    if ! run_docker_compose "$docker_dir" "$compose_file" ps --format json web 2>/dev/null | grep -q '"State":"running"'; then
         missing_services+=("web")
     fi
 
-    if ! docker compose -f "$compose_file" ps --format json nginx 2>/dev/null | grep -q '"State":"running"'; then
+    if ! run_docker_compose "$docker_dir" "$compose_file" ps --format json nginx 2>/dev/null | grep -q '"State":"running"'; then
         missing_services+=("nginx")
     fi
 
-    if uses_qdrant_runtime && ! docker compose -f "$compose_file" ps --format json qdrant 2>/dev/null | grep -q '"State":"running"'; then
+    if uses_qdrant_runtime && ! run_docker_compose "$docker_dir" "$compose_file" ps --format json qdrant 2>/dev/null | grep -q '"State":"running"'; then
         missing_services+=("qdrant")
     fi
 
     if [ "${#missing_services[@]}" -gt 0 ]; then
         log_info "Starting missing dependent services: ${missing_services[*]}"
-        docker compose -f "$compose_file" up -d "${missing_services[@]}"
+        run_docker_compose "$docker_dir" "$compose_file" up -d "${missing_services[@]}"
     fi
 }
 
@@ -206,7 +360,7 @@ start_services() {
     }
 
     log_info "Starting containers using $compose_file..."
-    if ! docker compose -f "$compose_file" up -d; then
+    if ! run_docker_compose "$docker_dir" "$compose_file" up -d; then
         log_error "Failed to start containers"
         return 1
     fi
@@ -256,7 +410,7 @@ stop_services() {
     }
 
     log_info "Stopping all services..."
-    if ! docker compose -f "$compose_file" down; then
+    if ! run_docker_compose "$docker_dir" "$compose_file" down; then
         log_error "Failed to stop services"
         return 1
     fi
@@ -266,6 +420,48 @@ stop_services() {
 }
 
 # Function to rebuild and restart services
+service_has_build_configuration() {
+    local service="$1"
+    local docker_dir="${2:-$DOCKER_DIR}"
+    local compose_file="${3:-docker-compose.yml}"
+    local compose_config
+    local build_state
+
+    if ! command -v jq >/dev/null 2>&1; then
+        log_error "jq is required to inspect the Compose build topology"
+        return 2
+    fi
+
+    if ! compose_config=$(run_docker_compose "$docker_dir" "$compose_file" config --format json); then
+        log_error "Failed to inspect the Compose build topology"
+        return 2
+    fi
+
+    if ! build_state=$(printf '%s\n' "$compose_config" | jq -er \
+        --arg service "$service" \
+        'if .services[$service] == null then "missing" elif .services[$service].build == null then "absent" else "present" end'); then
+        log_error "Compose returned an unreadable build topology"
+        return 2
+    fi
+
+    case "$build_state" in
+        present)
+            return 0
+            ;;
+        absent)
+            return 1
+            ;;
+        missing)
+            log_error "Required Compose service is unavailable: $service"
+            return 2
+            ;;
+        *)
+            log_error "Compose returned an unknown build state"
+            return 2
+            ;;
+    esac
+}
+
 rebuild_services() {
     local docker_dir="${1:-$DOCKER_DIR}"
     local compose_file="${2:-docker-compose.yml}"
@@ -275,11 +471,25 @@ rebuild_services() {
         return 1
     }
 
-    # Define services that need rebuilding (excludes nginx and monitoring)
-    local rebuild_services=("api" "web" "bisq2-api")
+    local build_services=("api" "web" "bisq2-api")
+    local rebuild_services=("api" "matrix-alert-relay" "web" "bisq2-api")
+    local relay_build_status
+
+    # Current deployments share the API image with the relay, while older
+    # rollback targets define a separate relay build. Inspect the checked-out
+    # Compose topology so either revision receives the image it declares.
+    if service_has_build_configuration \
+        "matrix-alert-relay" "$docker_dir" "$compose_file"; then
+        build_services+=("matrix-alert-relay")
+    else
+        relay_build_status=$?
+        if [ "$relay_build_status" -gt 1 ]; then
+            return 1
+        fi
+    fi
 
     log_info "Stopping backend services (nginx stays running for maintenance page)..."
-    if ! docker compose -f "$compose_file" stop "${rebuild_services[@]}"; then
+    if ! run_docker_compose "$docker_dir" "$compose_file" stop "${rebuild_services[@]}"; then
         log_error "Failed to stop backend services"
         return 1
     fi
@@ -287,7 +497,7 @@ rebuild_services() {
     log_info "Building backend containers (pulling fresh base images)..."
     # Pass BUILD_ID as build arg for Next.js cache invalidation
     # BUILD_ID is set by update.sh via get_build_id() function
-    if ! docker compose -f "$compose_file" build --pull --build-arg BUILD_ID="${BUILD_ID:-bisq-support-build}" "${rebuild_services[@]}"; then
+    if ! run_docker_compose "$docker_dir" "$compose_file" build --pull --build-arg BUILD_ID="${BUILD_ID:-bisq-support-build}" "${build_services[@]}"; then
         log_error "Failed to rebuild backend containers"
         return 1
     fi
@@ -298,14 +508,14 @@ rebuild_services() {
         runtime_services=("qdrant" "${runtime_services[@]}")
     fi
 
-    if ! docker compose -f "$compose_file" up -d "${runtime_services[@]}"; then
+    if ! run_docker_compose "$docker_dir" "$compose_file" up -d "${runtime_services[@]}"; then
         log_error "Failed to start backend containers"
         return 1
     fi
 
     log_info "Ensuring nginx and dependent services are running..."
     # Make sure nginx is up (in case it wasn't running)
-    if ! docker compose -f "$compose_file" up -d nginx; then
+    if ! run_docker_compose "$docker_dir" "$compose_file" up -d nginx; then
         log_warning "Failed to ensure nginx is running"
     fi
 
@@ -315,7 +525,7 @@ rebuild_services() {
     local monitoring_services=("prometheus" "grafana" "node-exporter" "alertmanager" "cadvisor" "scheduler")
     local monitoring_failed=0
     for svc in "${monitoring_services[@]}"; do
-        if docker compose -f "$compose_file" up -d "$svc" 2>/dev/null; then
+        if run_docker_compose "$docker_dir" "$compose_file" up -d "$svc" 2>/dev/null; then
             log_success "Monitoring service $svc started"
         else
             log_warning "Monitoring service $svc may not be defined or failed to start"
@@ -344,7 +554,7 @@ refresh_runtime_services() {
     }
 
     log_info "Refreshing runtime services to apply environment and compose changes..."
-    docker compose -f "$compose_file" up -d "${services[@]}"
+    run_docker_compose "$docker_dir" "$compose_file" up -d "${services[@]}"
 }
 
 reconcile_runtime_services() {
@@ -539,7 +749,7 @@ show_service_status() {
 
     echo ""
     log_info "Final Service Status:"
-    docker compose -f "$compose_file" ps
+    run_docker_compose "$docker_dir" "$compose_file" ps
     echo ""
 }
 
@@ -564,7 +774,7 @@ check_and_repair_services() {
     # try to repair a service that does not exist in an older revision.
     local compose_services
     local relay_service_defined=1
-    if compose_services=$(docker compose -f "$compose_file" config --services 2>/dev/null); then
+    if compose_services=$(run_docker_compose "$docker_dir" "$compose_file" config --services 2>/dev/null); then
         relay_service_defined=0
         local defined_service
         while IFS= read -r defined_service; do
@@ -665,6 +875,8 @@ check_and_repair_services() {
 # Export all functions
 export -f check_service
 export -f wait_for_healthy
+export -f check_completed_service
+export -f wait_for_compose_health
 export -f check_container_health
 export -f restart_service_with_deps
 export -f ensure_dependent_services

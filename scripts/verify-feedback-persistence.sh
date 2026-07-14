@@ -4,6 +4,12 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/common.sh"
+setup_colors
+source_deploy_paths "/etc/bisq-support/deploy.env" || true
+
 # Colors for output
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -13,6 +19,7 @@ NC='\033[0m'
 # Installation directory
 INSTALL_DIR="${BISQ_SUPPORT_INSTALL_DIR:-/opt/bisq-support}"
 DOCKER_DIR="$INSTALL_DIR/docker"
+COMPOSE_FILE="docker-compose.yml"
 FEEDBACK_DIR="$INSTALL_DIR/api/data/feedback"
 
 echo "=================================="
@@ -129,14 +136,14 @@ check_api_write_access() {
     }
 
     # Check if API container is running
-    if ! docker compose -f docker-compose.yml ps api | grep -q "Up"; then
+    if ! run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" ps api | grep -q "Up"; then
         log_warning "API container is not running. Skipping write access check."
         return 0
     fi
 
     # Test write access by creating a test file
     local test_file="/data/feedback/.write_test_$$"
-    if docker compose -f docker-compose.yml exec -T api sh -c "touch $test_file && rm $test_file" 2>/dev/null; then
+    if run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" exec -T api sh -c "touch $test_file && rm $test_file" 2>/dev/null; then
         log_info "API container has write access to feedback directory"
     else
         log_error "API container CANNOT write to feedback directory!"

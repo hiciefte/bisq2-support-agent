@@ -50,6 +50,10 @@ validate_environment() {
         exit 1
     fi
 
+    if ! validate_compose_override_file "$DOCKER_DIR"; then
+        exit 1
+    fi
+
     # Check if running as root
     if ! check_root; then
         log_warning "This script may need root privileges for some operations"
@@ -142,8 +146,8 @@ rollback_update() {
         exit 2
     }
 
-    docker compose -f "$COMPOSE_FILE" logs > "$failed_dir/docker_logs.txt" 2>&1 || true
-    docker compose -f "$COMPOSE_FILE" ps > "$failed_dir/docker_ps.txt" 2>&1 || true
+    run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" logs > "$failed_dir/docker_logs.txt" 2>&1 || true
+    run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" ps > "$failed_dir/docker_ps.txt" 2>&1 || true
 
     # Stop containers
     log_info "Stopping containers..."
@@ -346,7 +350,7 @@ apply_updates() {
         # Reload nginx to force DNS refresh for the new API container
         # Docker's embedded DNS (127.0.0.11) may cache old container IPs
         log_info "Reloading nginx to refresh API upstream DNS..."
-        if ! docker compose -f "$COMPOSE_FILE" exec -T nginx nginx -s reload; then
+        if ! run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" exec -T nginx nginx -s reload; then
             log_warning "Nginx reload failed, waiting for DNS cache expiry instead..."
             sleep 15
         fi
@@ -368,11 +372,13 @@ apply_updates() {
 
             # Build with BUILD_ID for cache invalidation, then start
             # Note: --build-arg only works with 'docker compose build', not 'up --build'
-            if ! docker compose -f "$COMPOSE_FILE" build --build-arg BUILD_ID="${BUILD_ID:-bisq-support-build}" api matrix-alert-relay; then
+            # matrix-alert-relay consumes the API-built image and is recreated
+            # with API below; it intentionally has no separate build context.
+            if ! run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" build --build-arg BUILD_ID="${BUILD_ID:-bisq-support-build}" api; then
                 log_error "Failed to build API service"
                 rollback_update "API rebuild failed"
             fi
-            if ! docker compose -f "$COMPOSE_FILE" up -d --no-deps api matrix-alert-relay; then
+            if ! run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" up -d --no-deps api matrix-alert-relay; then
                 log_error "Failed to start API service"
                 rollback_update "API rebuild failed"
             fi
@@ -396,7 +402,7 @@ apply_updates() {
             # Reload nginx to force DNS refresh for the new API container
             # Docker's embedded DNS (127.0.0.11) may cache old container IPs
             log_info "Reloading nginx to refresh API upstream DNS..."
-            if ! docker compose -f "$COMPOSE_FILE" exec -T nginx nginx -s reload; then
+            if ! run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" exec -T nginx nginx -s reload; then
                 log_warning "Nginx reload failed, waiting for DNS cache expiry instead..."
                 sleep 15
             fi
@@ -413,7 +419,7 @@ apply_updates() {
         elif [ "$API_RESTART_NEEDED" = "true" ]; then
             log_info "Restarting API service..."
 
-            if ! docker compose -f "$COMPOSE_FILE" restart api matrix-alert-relay; then
+            if ! run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" restart api matrix-alert-relay; then
                 log_error "Failed to restart API service"
                 rollback_update "API restart failed"
             fi
@@ -437,7 +443,7 @@ apply_updates() {
             # Reload nginx to force DNS refresh for the restarted API container
             # Docker's embedded DNS (127.0.0.11) may cache old container IPs
             log_info "Reloading nginx to refresh API upstream DNS..."
-            if ! docker compose -f "$COMPOSE_FILE" exec -T nginx nginx -s reload; then
+            if ! run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" exec -T nginx nginx -s reload; then
                 log_warning "Nginx reload failed, waiting for DNS cache expiry instead..."
                 sleep 15
             fi
@@ -458,11 +464,11 @@ apply_updates() {
 
             # Build with BUILD_ID for cache invalidation, then start
             # Note: --build-arg only works with 'docker compose build', not 'up --build'
-            if ! docker compose -f "$COMPOSE_FILE" build --build-arg BUILD_ID="${BUILD_ID:-bisq-support-build}" web; then
+            if ! run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" build --build-arg BUILD_ID="${BUILD_ID:-bisq-support-build}" web; then
                 log_error "Failed to build Web service"
                 rollback_update "Web rebuild failed"
             fi
-            if ! docker compose -f "$COMPOSE_FILE" up -d --no-deps web; then
+            if ! run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" up -d --no-deps web; then
                 log_error "Failed to start Web service"
                 rollback_update "Web rebuild failed"
             fi
@@ -477,7 +483,7 @@ apply_updates() {
         elif [ "$WEB_RESTART_NEEDED" = "true" ]; then
             log_info "Restarting Web service..."
 
-            if ! docker compose -f "$COMPOSE_FILE" restart web; then
+            if ! run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" restart web; then
                 log_error "Failed to restart Web service"
                 rollback_update "Web restart failed"
             fi
@@ -494,7 +500,7 @@ apply_updates() {
         if [ "$NGINX_RESTART_NEEDED" = "true" ]; then
             log_info "Restarting Nginx service..."
 
-            if ! docker compose -f "$COMPOSE_FILE" restart nginx; then
+            if ! run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" restart nginx; then
                 log_error "Failed to restart Nginx service"
                 rollback_update "Nginx restart failed"
             fi
@@ -584,7 +590,7 @@ run_faq_sqlite_migration() {
     if ! docker ps --format '{{.Names}}' | grep -q "docker-api-1"; then
         log_warning "API container not running - starting services first..."
         cd "$DOCKER_DIR" || return 1
-        docker compose -f "$COMPOSE_FILE" up -d api
+        run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" up -d api
         sleep 10
     fi
 

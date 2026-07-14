@@ -16,7 +16,11 @@ from app.channels.models import ChannelCapability
 from app.channels.runtime import RAGServiceProtocol
 from app.channels.services.live_polling_service import LivePollingService
 from app.core.config import Settings, get_settings
-from app.core.error_handlers import base_exception_handler, unhandled_exception_handler
+from app.core.error_handlers import (
+    base_exception_handler,
+    http_exception_handler,
+    unhandled_exception_handler,
+)
 from app.core.exceptions import BaseAppException
 from app.db.run_migrations import run_migrations
 from app.metrics.tor_metrics import (
@@ -26,7 +30,6 @@ from app.metrics.tor_metrics import (
 from app.middleware import TorDetectionMiddleware
 from app.middleware.cache_control import CacheControlMiddleware
 from app.routes import (
-    alertmanager,
     chat,
     escalation_polling,
     feedback_routes,
@@ -34,6 +37,7 @@ from app.routes import (
     metrics_update,
     onion_verify,
     public_faqs,
+    scheduler,
 )
 from app.routes.admin import include_admin_routers
 from app.services.bisq_mcp_service import Bisq2MCPService
@@ -531,19 +535,6 @@ async def lifespan(app: FastAPI):
     app.state.unified_pipeline_service = unified_pipeline_service
     logger.info("UnifiedPipelineService initialized")
 
-    # Initialize Matrix alert service for Alertmanager notifications
-    logger.info("Initializing MatrixAlertService...")
-    from app.channels.plugins.matrix.services.alert_service import MatrixAlertService
-
-    matrix_alert_service = MatrixAlertService(settings)
-    app.state.matrix_alert_service = matrix_alert_service
-    if matrix_alert_service.is_configured():
-        logger.info(
-            f"MatrixAlertService initialized, alerts will be sent to {settings.MATRIX_ALERT_ROOM}"
-        )
-    else:
-        logger.info("MatrixAlertService not configured (MATRIX_ALERT_ROOM not set)")
-
     # Load LearningEngine persisted state from unified training database
     logger.info("Loading LearningEngine state...")
     learning_engine.load_state(unified_repo)
@@ -613,11 +604,6 @@ async def lifespan(app: FastAPI):
         stop_errors = await channel_registry.stop_all()
         for error in stop_errors:
             logger.error("Channel shutdown error: %s", error)
-
-    # Close Matrix alert service
-    if hasattr(app.state, "matrix_alert_service") and app.state.matrix_alert_service:
-        logger.info("Closing Matrix alert service...")
-        await app.state.matrix_alert_service.close()
 
     # Clean up Bisq MCP service
     if hasattr(app.state, "bisq_mcp_service") and app.state.bisq_mcp_service:
@@ -822,6 +808,7 @@ app.include_router(health.router, tags=["Health"])
 app.include_router(chat.router, prefix="/chat", tags=["Chat"])
 app.include_router(feedback_routes.router, tags=["Feedback"])
 app.include_router(metrics_update.router, tags=["Metrics"])
+app.include_router(scheduler.router)
 app.include_router(
     public_faqs.router, tags=["Public FAQs"]
 )  # Public FAQ endpoints (no auth required)
@@ -833,9 +820,6 @@ app.include_router(onion_verify.router, tags=["Onion Verification"])
 app.include_router(
     mcp_router, tags=["MCP"]
 )  # MCP HTTP endpoint for AISuite integration
-app.include_router(
-    alertmanager.router, prefix="/alertmanager", tags=["Alertmanager"]
-)  # Alertmanager webhook for Matrix notifications
 
 
 @app.get("/healthcheck")
@@ -846,6 +830,7 @@ async def healthcheck():
 # Register exception handlers
 # Register specific application exceptions first
 app.add_exception_handler(BaseAppException, base_exception_handler)  # type: ignore[arg-type]
+app.add_exception_handler(HTTPException, http_exception_handler)
 # Then register generic exception handler as fallback
 app.add_exception_handler(Exception, unhandled_exception_handler)
 

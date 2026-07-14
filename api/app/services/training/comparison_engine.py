@@ -372,7 +372,11 @@ Follow the evaluation rubric in your instructions."""
             return result
 
         except Exception as e:
-            logger.error(f"LLM judge failed after retries: {e}")
+            logger.error(
+                "LLM judge failed after retries: %s",
+                e,
+                exc_info=True,
+            )
             # Return explicit failure, not fake scores
             return {
                 "factual_alignment": None,
@@ -380,7 +384,7 @@ Follow the evaluation rubric in your instructions."""
                 "completeness": None,
                 "hallucination_risk": None,
                 "evaluation_status": "failed",
-                "reasoning": f"LLM evaluation failed: {e}",
+                "reasoning": "LLM evaluation failed",
             }
 
     async def compare(

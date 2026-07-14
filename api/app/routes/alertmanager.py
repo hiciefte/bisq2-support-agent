@@ -15,14 +15,16 @@ Benefits over the old matrix-alertmanager-webhook container:
 Architecture:
     Alertmanager -> POST /alerts -> isolated relay -> Matrix rooms
 
-The main API also mounts this router under ``/alertmanager`` for backward
-compatibility, but production Alertmanager delivery targets the isolated relay.
+The main API intentionally does not mount this router. Alertmanager delivery is
+accepted only by the isolated relay.
 """
 
 import logging
+import secrets
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from app.core.config import Settings, get_settings
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -144,6 +146,28 @@ def format_alert_message(alert: Alert, status: str) -> str:
 # =============================================================================
 
 
+def require_alertmanager_webhook_secret(
+    authorization: Optional[str] = Header(default=None),
+    settings: Settings = Depends(get_settings),
+) -> None:
+    """Require the relay's dedicated Bearer secret without exposing its value."""
+    configured_secret = settings.ALERTMANAGER_WEBHOOK_SECRET
+    if not configured_secret.strip():
+        logger.error("Alertmanager webhook authentication is not configured")
+        raise HTTPException(
+            status_code=503,
+            detail="alertmanager_webhook_not_configured",
+        )
+
+    expected = f"Bearer {configured_secret}"
+    if not secrets.compare_digest(authorization or "", expected):
+        logger.warning("Rejected unauthorized Alertmanager webhook request")
+        raise HTTPException(
+            status_code=401,
+            detail="invalid_alertmanager_credentials",
+        )
+
+
 @router.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
     """Health check endpoint for the alertmanager webhook.
@@ -154,7 +178,11 @@ async def health() -> HealthResponse:
     return HealthResponse(status="healthy")
 
 
-@router.post("/alerts", response_model=AlertResponse)
+@router.post(
+    "/alerts",
+    response_model=AlertResponse,
+    dependencies=[Depends(require_alertmanager_webhook_secret)],
+)
 async def receive_alerts(
     payload: AlertmanagerPayload, request: Request
 ) -> AlertResponse:

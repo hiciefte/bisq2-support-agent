@@ -131,14 +131,17 @@ prometheus:
 
 ### Option 4: Environment Variable Configuration
 
-Set `ADMIN_API_KEY` in `docker/.env` to secure application admin endpoints (including scheduler-triggered admin jobs):
+Set `ADMIN_API_KEY` in `docker/.env` to secure application admin endpoints:
 
 ```
 # Admin API key for protected endpoints
 ADMIN_API_KEY=your_secure_admin_key
 ```
 
-This key is consumed by the API and scheduler flows, not by Prometheus itself.
+This key is consumed by the API, not by Prometheus or the scheduler. Scheduled
+application jobs use a separate, narrowly scoped runtime credential generated
+inside an isolated Compose volume; it must not be copied into `docker/.env` or
+reused as an admin key.
 
 ## Additional Security Recommendations
 

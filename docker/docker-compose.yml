@@ -12,13 +12,15 @@ services:
       - ./nginx/conf.d/snippets:/etc/nginx/conf.d/snippets:ro
       - ./nginx/conf.d/tor-support.conf.template:/etc/nginx/conf.d/tor-support.conf.template:ro
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/docker-entrypoint.d/40-enable-tls.sh:/docker-entrypoint.d/40-enable-tls.sh:ro
       - ./logs/nginx:/var/log/nginx
       - ./nginx/error_pages:/usr/share/nginx/html/error_pages:ro
       # Mount maintenance page
       - ./maintenance/maintenance.html:/usr/share/nginx/html/maintenance.html:ro
     ports:
-      # Bind to all interfaces for clearnet and Tor access
-      - "0.0.0.0:80:80"
+      # Loopback is the fail-safe default. Clearnet operators must explicitly
+      # select the intended host interface after reviewing firewall policy.
+      - "${NGINX_HTTP_BIND_ADDRESS:-127.0.0.1}:80:80"
     depends_on:
       web:
         condition: service_healthy
@@ -60,6 +62,7 @@ services:
     tmpfs:
       - /var/run
       - /var/cache/nginx
+      - /etc/nginx/runtime
       - /tmp
 
   # Bisq2 API service
@@ -105,8 +108,47 @@ services:
     security_opt:
       - seccomp:unconfined
 
+  # Compose owns boundary-secret bootstrap so the first upgrade does not depend
+  # on newly pulled host scripts. Each initializer can access only its volume.
+  scheduler-secret-init:
+    image: alpine:latest
+    restart: "no"
+    network_mode: none
+    read_only: true
+    environment:
+      - RUNTIME_SECRET_FILE=/runtime-secret/scheduler_api_token
+      - RUNTIME_SECRET_LABEL=scheduler API token
+    volumes:
+      - ./scripts/init-runtime-secret.sh:/usr/local/bin/init-runtime-secret.sh:ro
+      - scheduler-api-secret:/runtime-secret
+    entrypoint: ["/bin/sh", "/usr/local/bin/init-runtime-secret.sh"]
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 32
+
+  alertmanager-secret-init:
+    image: alpine:latest
+    restart: "no"
+    network_mode: none
+    read_only: true
+    environment:
+      - RUNTIME_SECRET_FILE=/runtime-secret/alertmanager_webhook_secret
+      - RUNTIME_SECRET_LABEL=Alertmanager webhook secret
+    volumes:
+      - ./scripts/init-runtime-secret.sh:/usr/local/bin/init-runtime-secret.sh:ro
+      - alertmanager-webhook-secret:/runtime-secret
+    entrypoint: ["/bin/sh", "/usr/local/bin/init-runtime-secret.sh"]
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 32
+
   # API backend
   api:
+    image: ${BISQ_SUPPORT_API_IMAGE:-bisq-support-agent-api:local}
     build:
       context: ..
       dockerfile: docker/api/Dockerfile
@@ -118,6 +160,7 @@ services:
     volumes:
       - ../api/app:/app/app # Mount the app directory for development
       - ../api/data:/data # Mount the data directory
+      - scheduler-api-secret:/run/bisq-secrets/scheduler:ro
       # Named volume disabled: causes permission issues in local dev (root:root ownership)
       # - feedback-data:/data/feedback # Named volume for persistent feedback storage
     environment:
@@ -164,20 +207,16 @@ services:
       - ENABLE_PRIVACY_MODE=${ENABLE_PRIVACY_MODE:-true}
       - PII_DETECTION_ENABLED=${PII_DETECTION_ENABLED:-true}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      # Matrix integration configuration (sync lane + alert lane)
+      # Matrix integration configuration (sync lane only)
       - MATRIX_HOMESERVER_URL=${MATRIX_HOMESERVER_URL:-}
       - MATRIX_SYNC_USER=${MATRIX_SYNC_USER:-}
       - MATRIX_SYNC_PASSWORD=${MATRIX_SYNC_PASSWORD:-}
-      - MATRIX_ALERT_USER=${MATRIX_ALERT_USER:-}
-      - MATRIX_ALERT_PASSWORD=${MATRIX_ALERT_PASSWORD:-}
       - MATRIX_SYNC_ENABLED=${MATRIX_SYNC_ENABLED:-false}
       - MATRIX_SYNC_ROOMS=${MATRIX_SYNC_ROOMS:-}
       - MATRIX_STAFF_ROOM=${MATRIX_STAFF_ROOM:-}
       - MATRIX_CHATOPS_ENABLED=${MATRIX_CHATOPS_ENABLED:-false}
       - MATRIX_CHATOPS_ROOM_IDS=${MATRIX_CHATOPS_ROOM_IDS:-}
       - MATRIX_SYNC_SESSION_FILE=${MATRIX_SYNC_SESSION_FILE:-}
-      - MATRIX_ALERT_ROOM=${MATRIX_ALERT_ROOM:-}
-      - MATRIX_ALERT_SESSION_FILE=${MATRIX_ALERT_SESSION_FILE:-}
       - TRUSTED_STAFF_IDS=${TRUSTED_STAFF_IDS:-}
       - TRUST_MONITOR_ENABLED=${TRUST_MONITOR_ENABLED:-true}
       - TRUST_MONITOR_NAME_COLLISION_ENABLED=${TRUST_MONITOR_NAME_COLLISION_ENABLED:-true}
@@ -222,6 +261,9 @@ services:
       - "8000"
     networks:
       - bisq-support-network
+    depends_on:
+      scheduler-secret-init:
+        condition: service_completed_successfully
     healthcheck:
       # Use localhost for more reliable health checking during startup
       test: [ "CMD", "curl", "-fsS", "--max-time", "5", "http://localhost:8000/health" ]
@@ -498,17 +540,13 @@ services:
   # Isolated Matrix relay for Alertmanager notifications. This deliberately
   # starts only the lightweight relay app, not the API's database/RAG lifespan.
   matrix-alert-relay:
-    build:
-      context: ..
-      dockerfile: docker/api/Dockerfile
-      args:
-        - BUILD_ENV=production
-        - APP_UID=${APP_UID:-1001}
-        - APP_GID=${APP_GID:-1001}
+    image: ${BISQ_SUPPORT_API_IMAGE:-bisq-support-agent-api:local}
+    pull_policy: never
     restart: always
     command: ["uvicorn", "app.alert_relay:app", "--host", "0.0.0.0", "--port", "8000", "--loop", "asyncio"]
     volumes:
       - matrix-alert-relay-data:/data
+      - alertmanager-webhook-secret:/run/bisq-secrets/alertmanager:ro
     environment:
       - DATA_DIR=/data
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
@@ -521,6 +559,9 @@ services:
       - "8000"
     networks:
       - bisq-support-network
+    depends_on:
+      alertmanager-secret-init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "curl", "-fsS", "--max-time", "5", "http://localhost:8000/ready"]
       interval: 15s
@@ -552,8 +593,9 @@ services:
     image: prom/alertmanager:v0.26.0
     restart: always
     volumes:
-      - ./alertmanager:/etc/alertmanager
+      - ./alertmanager:/etc/alertmanager:ro
       - alertmanager-data:/alertmanager
+      - alertmanager-webhook-secret:/run/bisq-secrets/alertmanager:ro
     command:
       - '--config.file=/etc/alertmanager/alertmanager.yml'
       - '--storage.path=/alertmanager'
@@ -561,6 +603,11 @@ services:
       - "9093"
     networks:
       - bisq-support-network
+    depends_on:
+      alertmanager-secret-init:
+        condition: service_completed_successfully
+      matrix-alert-relay:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9093/-/healthy"]
       interval: 30s
@@ -584,19 +631,25 @@ services:
     restart: always
     environment:
       - PROMETHEUS_URL=http://prometheus:9090
-      - HEALTHCHECK_URL=${HEALTHCHECK_URL:-https://hc-ping.com/27867359-f4f3-4e22-8f46-8d18a73cf219}
-      - ADMIN_API_KEY=${ADMIN_API_KEY}
+      - HEALTHCHECK_URL=${HEALTHCHECK_URL:-}
       - API_HOST=api
       - API_PORT=8000
       - BISQ_READINESS_CURRENCY=${BISQ_READINESS_CURRENCY:-EUR}
       - BISQ_READINESS_DIRECTION=${BISQ_READINESS_DIRECTION:-SELL}
     volumes:
-      - ./scripts:/scripts:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./scripts/lib:/scripts/lib:ro
+      - ./scripts/bisq-readiness-check.sh:/scripts/bisq-readiness-check.sh:ro
+      - ./scripts/poll-matrix.sh:/scripts/poll-matrix.sh:ro
+      - ./scripts/process-feedback.sh:/scripts/process-feedback.sh:ro
+      - ./scripts/rag-health-check.sh:/scripts/rag-health-check.sh:ro
+      - ./scripts/reconcile-llm-wiki-coverage.sh:/scripts/reconcile-llm-wiki-coverage.sh:ro
+      - ./scripts/update-wiki.sh:/scripts/update-wiki.sh:ro
       - ./logs/cron:/var/log/cron
+      - scheduler-api-secret:/run/bisq-secrets/scheduler:ro
     command: >
       sh -c "
-        apk add --no-cache docker-cli docker-compose bash coreutils curl jq bc &&
+        apk add --no-cache bash coreutils curl jq bc &&
+        . /scripts/lib/scheduler-api.sh &&
         mkdir -p /var/log/cron &&
         # Add @reboot entries to run scripts once when crond starts
         echo '@reboot /scripts/process-feedback.sh >> /var/log/cron/feedback.log 2>&1' > /etc/crontabs/root &&
@@ -616,6 +669,8 @@ services:
         crond -f -l 8 -d 8
       "
     depends_on:
+      scheduler-secret-init:
+        condition: service_completed_successfully
       api:
         condition: service_healthy
       prometheus:
@@ -647,7 +702,9 @@ volumes:
   prometheus-data:
   grafana-data:
   alertmanager-data:
+  alertmanager-webhook-secret:
   matrix-alert-relay-data:
+  scheduler-api-secret:
   qdrant-data:
     name: bisq2-qdrant-data
   web_node_modules:

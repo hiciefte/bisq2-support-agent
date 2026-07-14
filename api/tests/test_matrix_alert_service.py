@@ -394,6 +394,7 @@ class TestAlertmanagerIntegration:
         settings.MATRIX_ALERT_USER = "@bot:matrix.org"
         settings.MATRIX_ALERT_PASSWORD = "password"
         settings.MATRIX_ALERT_ROOM = "!alert:matrix.org"
+        settings.ALERTMANAGER_WEBHOOK_SECRET = "test-only-alertmanager-webhook-secret"
         return settings
 
     def test_alertmanager_route_uses_matrix_alert_service(self):
@@ -410,12 +411,14 @@ class TestAlertmanagerIntegration:
         from app.channels.plugins.matrix.services.alert_service import (
             MatrixAlertService,
         )
+        from app.core.config import get_settings
         from app.routes.alertmanager import router
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
 
         app = FastAPI()
         app.include_router(router, prefix="/alertmanager")
+        app.dependency_overrides[get_settings] = lambda: mock_settings
 
         # Create and configure the service
         service = MatrixAlertService(mock_settings)
@@ -425,6 +428,7 @@ class TestAlertmanagerIntegration:
         client = TestClient(app)
         response = client.post(
             "/alertmanager/alerts",
+            headers={"Authorization": "Bearer test-only-alertmanager-webhook-secret"},
             json={
                 "receiver": "test",
                 "status": "firing",

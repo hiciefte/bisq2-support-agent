@@ -1059,11 +1059,11 @@ async def trigger_bisq_sync(
             message=f"Processed {processed} Bisq conversations",
         )
 
-    except Exception as e:
+    except Exception:
         logger.exception("Bisq sync failed")
         return SyncResponse(
             status="error",
-            message=str(e),
+            message="Bisq sync failed",
         )
 
 
@@ -1143,11 +1143,11 @@ async def trigger_matrix_sync(
             message=f"Processed {processed} Matrix Q&A pairs",
         )
 
-    except Exception as e:
+    except Exception:
         logger.exception("Matrix sync failed")
         return SyncResponse(
             status="error",
-            message=str(e),
+            message="Matrix sync failed",
         )
 
 

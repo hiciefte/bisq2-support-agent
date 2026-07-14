@@ -16,16 +16,17 @@ echo "========================================================"
 
 # --- Source Environment Configuration --- #
 # Single source of truth: docker/.env holds ALL app config (secrets, rooms,
-# feature flags).  deploy.env holds ONLY deploy-path vars (repo URLs, install
-# dirs) that scripts need but Docker doesn't.
+# feature flags). deploy.env holds only allowlisted deployment settings that
+# scripts need but Docker doesn't.
 #
 # Docker Compose reads docker/.env automatically when we `cd $DOCKER_DIR`.
-# We only source deploy.env for the path vars used by shell scripts.
+# We only source deploy.env for settings allowlisted by source_deploy_paths.
 DEPLOY_ENV="/etc/bisq-support/deploy.env"
 source_deploy_paths "$DEPLOY_ENV" || true
 
 # Validate docker/.env has required app config
 DOCKER_ENV="$DOCKER_DIR/.env"
+COMPOSE_FILE="docker-compose.yml"
 if [ -f "$DOCKER_ENV" ]; then
     if ! validate_app_env "$DOCKER_ENV"; then
         echo "Fix the issues in $DOCKER_ENV and retry."
@@ -53,7 +54,7 @@ cd "$DOCKER_DIR" || {
 }
 
 echo "Starting containers using docker-compose.yml..."
-docker compose -f docker-compose.yml up -d
+run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" up -d
 
 echo "Waiting for services to become healthy..."
 
@@ -64,15 +65,15 @@ check_service_health() {
     local attempt=1
 
     while [ "$attempt" -le "$max_attempts" ]; do
-        if docker compose -f docker-compose.yml ps --format json "$service" 2>/dev/null | grep -q '"Health":"healthy"'; then
+        if run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" ps --format json "$service" 2>/dev/null | grep -q '"Health":"healthy"'; then
             echo "✅ $service is healthy"
             return 0
-        elif docker compose -f docker-compose.yml ps --format json "$service" 2>/dev/null | grep -q '"State":"exited"'; then
+        elif run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" ps --format json "$service" 2>/dev/null | grep -q '"State":"exited"'; then
             echo "❌ $service has exited, attempting restart..."
-            docker compose -f docker-compose.yml up -d "$service"
-        elif docker compose -f docker-compose.yml ps --format json "$service" 2>/dev/null | grep -q '"Health":"unhealthy"'; then
+            run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" up -d "$service"
+        elif run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" ps --format json "$service" 2>/dev/null | grep -q '"Health":"unhealthy"'; then
             echo "🔴 $service reports UNHEALTHY, attempting restart..."
-            docker compose -f docker-compose.yml up -d "$service"
+            run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" up -d "$service"
         fi
 
         echo "⏳ Waiting for $service to become healthy (attempt $attempt/$max_attempts)..."
@@ -89,21 +90,21 @@ ensure_dependent_services() {
     local missing_services=()
 
     # Check if web and nginx are running
-    if ! docker compose -f docker-compose.yml ps --format json web 2>/dev/null | grep -q '"State":"running"'; then
+    if ! run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" ps --format json web 2>/dev/null | grep -q '"State":"running"'; then
         missing_services+=("web")
     fi
 
-    if ! docker compose -f docker-compose.yml ps --format json nginx 2>/dev/null | grep -q '"State":"running"'; then
+    if ! run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" ps --format json nginx 2>/dev/null | grep -q '"State":"running"'; then
         missing_services+=("nginx")
     fi
 
-    if uses_qdrant_runtime && ! docker compose -f docker-compose.yml ps --format json qdrant 2>/dev/null | grep -q '"State":"running"'; then
+    if uses_qdrant_runtime && ! run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" ps --format json qdrant 2>/dev/null | grep -q '"State":"running"'; then
         missing_services+=("qdrant")
     fi
 
     if [ "${#missing_services[@]}" -gt 0 ]; then
         echo "🔄 Starting missing dependent services: ${missing_services[*]}"
-        docker compose -f docker-compose.yml up -d "${missing_services[@]}"
+        run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" up -d "${missing_services[@]}"
     fi
 }
 
@@ -129,7 +130,7 @@ fi
 # Display final status
 echo ""
 echo "📊 Final Service Status:"
-docker compose -f docker-compose.yml ps
+run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" ps
 
 # Check if any critical services failed
 if [ $api_healthy -ne 0 ]; then

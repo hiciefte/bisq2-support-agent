@@ -12,6 +12,11 @@ CHECK_HEALTH_SH = REPO_ROOT / "scripts" / "check-health.sh"
 GIT_UTILS_SH = REPO_ROOT / "scripts" / "lib" / "git-utils.sh"
 ROLLBACK_SH = REPO_ROOT / "scripts" / "rollback.sh"
 UPDATE_SH = REPO_ROOT / "scripts" / "update.sh"
+DEPLOY_SH = REPO_ROOT / "scripts" / "deploy.sh"
+START_SH = REPO_ROOT / "scripts" / "start.sh"
+STOP_SH = REPO_ROOT / "scripts" / "stop.sh"
+ROLLBACK_TOR_SH = REPO_ROOT / "scripts" / "rollback-tor.sh"
+VERIFY_FEEDBACK_SH = REPO_ROOT / "scripts" / "verify-feedback-persistence.sh"
 
 
 def clean_git_env(overrides: dict[str, str] | None = None) -> dict[str, str]:
@@ -207,6 +212,407 @@ def test_source_deploy_paths_imports_custom_secrets_directory(tmp_path: Path) ->
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.endswith(str(secrets_dir))
+
+
+def test_source_deploy_paths_imports_compose_override(tmp_path: Path) -> None:
+    deploy_env = tmp_path / "deploy.env"
+    deploy_env.write_text(
+        "BISQ_SUPPORT_COMPOSE_OVERRIDE_FILE=docker-compose.tls.yml\n",
+        encoding="utf-8",
+    )
+
+    result = run_bash(
+        f"""
+        source "{COMMON_SH}"
+        source_deploy_paths "{deploy_env}"
+        printf '%s' "$BISQ_SUPPORT_COMPOSE_OVERRIDE_FILE"
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.endswith("docker-compose.tls.yml")
+
+
+def _write_recording_docker(
+    fakebin: Path, log_path: Path, *, relay_has_build: bool = False
+) -> None:
+    relay_config = (
+        '{"services":{"matrix-alert-relay":{"build":{"context":".."}}}}'
+        if relay_has_build
+        else '{"services":{"matrix-alert-relay":{"image":"relay:local"}}}'
+    )
+    docker = fakebin / "docker"
+    docker.write_text(
+        "#!/bin/bash\n"
+        f'printf \'%s\\n\' "$*" >> "{log_path}"\n'
+        'if [[ "$*" == *"config --format json"* ]]; then\n'
+        f"  printf '%s\\n' '{relay_config}'\n"
+        "fi\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+
+
+def test_compose_helper_preserves_base_only_behavior(tmp_path: Path) -> None:
+    docker_dir = tmp_path / "docker"
+    docker_dir.mkdir()
+    (docker_dir / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    docker_log = tmp_path / "docker.log"
+    _write_recording_docker(fakebin, docker_log)
+
+    result = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        unset BISQ_SUPPORT_COMPOSE_OVERRIDE_FILE
+        source "{COMMON_SH}"
+        run_docker_compose "{docker_dir}" docker-compose.yml ps api
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert docker_log.read_text(encoding="utf-8") == (
+        "compose -f docker-compose.yml ps api\n"
+    )
+
+
+def test_compose_helper_applies_persisted_tls_override(tmp_path: Path) -> None:
+    docker_dir = tmp_path / "docker"
+    docker_dir.mkdir()
+    (docker_dir / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    (docker_dir / "docker-compose.tls.yml").write_text(
+        "services: {}\n", encoding="utf-8"
+    )
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    docker_log = tmp_path / "docker.log"
+    _write_recording_docker(fakebin, docker_log)
+
+    result = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        export BISQ_SUPPORT_COMPOSE_OVERRIDE_FILE=docker-compose.tls.yml
+        source "{COMMON_SH}"
+        run_docker_compose "{docker_dir}" docker-compose.yml up -d nginx
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert docker_log.read_text(encoding="utf-8") == (
+        "compose -f docker-compose.yml -f docker-compose.tls.yml up -d nginx\n"
+    )
+
+
+def test_compose_helper_rejects_unreviewed_override(tmp_path: Path) -> None:
+    docker_dir = tmp_path / "docker"
+    docker_dir.mkdir()
+    (docker_dir / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    docker_log = tmp_path / "docker.log"
+    _write_recording_docker(fakebin, docker_log)
+
+    result = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        export BISQ_SUPPORT_COMPOSE_OVERRIDE_FILE=unreviewed.yml
+        source "{COMMON_SH}"
+        run_docker_compose "{docker_dir}" docker-compose.yml up -d nginx
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode != 0
+    assert "must be empty or docker-compose.tls.yml" in result.stderr
+    assert not docker_log.exists()
+
+
+def test_compose_helper_fails_closed_when_tls_override_is_missing(
+    tmp_path: Path,
+) -> None:
+    docker_dir = tmp_path / "docker"
+    docker_dir.mkdir()
+    (docker_dir / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    docker_log = tmp_path / "docker.log"
+    _write_recording_docker(fakebin, docker_log)
+
+    result = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        export BISQ_SUPPORT_COMPOSE_OVERRIDE_FILE=docker-compose.tls.yml
+        source "{COMMON_SH}"
+        run_docker_compose "{docker_dir}" docker-compose.yml up -d nginx
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode != 0
+    assert "unavailable in the Docker directory" in result.stderr
+    assert not docker_log.exists()
+
+
+def test_compose_helper_rejects_stale_tls_inputs_without_override(
+    tmp_path: Path,
+) -> None:
+    docker_dir = tmp_path / "docker"
+    docker_dir.mkdir()
+    (docker_dir / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    (docker_dir / ".env").write_text(
+        "\n".join(
+            (
+                "NGINX_HTTP_BIND_ADDRESS=0.0.0.0",
+                "NGINX_TLS_CERTIFICATE_FILENAME=certificate.pem",
+                "NGINX_TLS_REDIRECT_HTTP=true",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    docker_log = tmp_path / "docker.log"
+    _write_recording_docker(fakebin, docker_log)
+
+    result = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        unset BISQ_SUPPORT_COMPOSE_OVERRIDE_FILE
+        source "{COMMON_SH}"
+        run_docker_compose "{docker_dir}" docker-compose.yml up -d nginx
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode != 0
+    assert "conflicts with clearnet TLS settings" in result.stderr
+    assert not docker_log.exists()
+
+
+def test_production_compose_actions_use_persisted_override_helper() -> None:
+    scripts = (
+        DOCKER_UTILS_SH,
+        UPDATE_SH,
+        DEPLOY_SH,
+        START_SH,
+        STOP_SH,
+        CHECK_HEALTH_SH,
+        ROLLBACK_TOR_SH,
+        VERIFY_FEEDBACK_SH,
+    )
+
+    for script in scripts:
+        for line in script.read_text(encoding="utf-8").splitlines():
+            if "docker compose" not in line:
+                continue
+            stripped = line.strip()
+            allowed = (
+                stripped.startswith("#")
+                or "docker compose version" in line
+                or stripped.startswith(("log_", "echo"))
+            )
+            assert allowed, f"{script.name} bypasses run_docker_compose: {stripped}"
+
+
+def _write_deploy_health_docker(
+    fakebin: Path,
+    log_path: Path,
+    *,
+    completion_state: str = "exited 0",
+) -> None:
+    docker = fakebin / "docker"
+    docker.write_text(
+        "#!/bin/bash\n"
+        f'printf \'%s\\n\' "$*" >> "{log_path}"\n'
+        'if [ "$1" = "inspect" ]; then\n'
+        f"  printf '%s\\n' \"{completion_state}\"\n"
+        "  exit 0\n"
+        "fi\n"
+        'case "$*" in\n'
+        '  *"config --services")\n'
+        "    printf '%s\\n' scheduler-secret-init api alertmanager-secret-init web\n"
+        "    ;;\n"
+        '  *"ps --all -q scheduler-secret-init")\n'
+        "    echo scheduler-init-container\n"
+        "    ;;\n"
+        '  *"ps --all -q alertmanager-secret-init")\n'
+        "    echo alertmanager-init-container\n"
+        "    ;;\n"
+        '  *"ps --filter health=healthy -q api web")\n'
+        "    printf '%s\\n' api-container web-container\n"
+        "    ;;\n"
+        "  *)\n"
+        "    exit 64\n"
+        "    ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+
+
+def test_deploy_health_excludes_successful_one_shots_from_denominator(
+    tmp_path: Path,
+) -> None:
+    docker_dir = tmp_path / "docker"
+    docker_dir.mkdir()
+    (docker_dir / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    (docker_dir / "docker-compose.tls.yml").write_text(
+        "services: {}\n", encoding="utf-8"
+    )
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    docker_log = tmp_path / "docker.log"
+    _write_deploy_health_docker(fakebin, docker_log)
+
+    result = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        export BISQ_SUPPORT_COMPOSE_OVERRIDE_FILE=docker-compose.tls.yml
+        source "{DOCKER_UTILS_SH}"
+        wait_for_compose_health \
+            "{docker_dir}" \
+            docker-compose.yml \
+            10 \
+            1 \
+            scheduler-secret-init \
+            alertmanager-secret-init
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "All 2 long-running Docker services are healthy" in result.stdout
+    commands = docker_log.read_text(encoding="utf-8").splitlines()
+    compose_commands = [
+        command for command in commands if command.startswith("compose ")
+    ]
+    assert compose_commands
+    assert all(
+        "-f docker-compose.yml -f docker-compose.tls.yml" in command
+        for command in compose_commands
+    )
+    health_command = next(
+        command for command in commands if "ps --filter health=healthy" in command
+    )
+    assert health_command.endswith("-q api web")
+    assert "secret-init" not in health_command
+
+
+def test_deploy_health_rejects_failed_one_shot(tmp_path: Path) -> None:
+    docker_dir = tmp_path / "docker"
+    docker_dir.mkdir()
+    (docker_dir / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    docker_log = tmp_path / "docker.log"
+    _write_deploy_health_docker(fakebin, docker_log, completion_state="exited 17")
+
+    result = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        source "{DOCKER_UTILS_SH}"
+        wait_for_compose_health \
+            "{docker_dir}" \
+            docker-compose.yml \
+            10 \
+            1 \
+            scheduler-secret-init \
+            alertmanager-secret-init
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode != 0
+    assert "scheduler-secret-init did not complete successfully" in result.stdout
+    commands = docker_log.read_text(encoding="utf-8").splitlines()
+    assert not any("ps --filter health=healthy" in command for command in commands)
+
+
+def test_deploy_invokes_health_check_for_both_secret_initializers() -> None:
+    deploy_script = DEPLOY_SH.read_text(encoding="utf-8")
+
+    health_call = re.search(
+        r"wait_for_compose_health .*?scheduler-secret-init .*?alertmanager-secret-init",
+        deploy_script.replace("\\\n", " "),
+    )
+    assert health_call is not None
+
+
+def test_full_rebuild_builds_api_image_once_and_recreates_relay(
+    tmp_path: Path,
+) -> None:
+    docker_dir = tmp_path / "docker"
+    docker_dir.mkdir()
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    docker_log = tmp_path / "docker.log"
+    _write_recording_docker(fakebin, docker_log)
+
+    result = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        source "{DOCKER_UTILS_SH}"
+        rebuild_services "{docker_dir}" docker-compose.yml
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    commands = docker_log.read_text(encoding="utf-8").splitlines()
+    build_command = next(command for command in commands if " build " in command)
+
+    assert build_command.endswith(" api web bisq2-api")
+    assert "matrix-alert-relay" not in build_command
+    assert any(
+        command.endswith("stop api matrix-alert-relay web bisq2-api")
+        for command in commands
+    )
+    assert any(
+        command.endswith("up -d qdrant api matrix-alert-relay web bisq2-api")
+        for command in commands
+    )
+
+
+def test_full_rebuild_builds_relay_for_legacy_compose_topology(
+    tmp_path: Path,
+) -> None:
+    docker_dir = tmp_path / "docker"
+    docker_dir.mkdir()
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    docker_log = tmp_path / "docker.log"
+    _write_recording_docker(fakebin, docker_log, relay_has_build=True)
+
+    result = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        source "{DOCKER_UTILS_SH}"
+        rebuild_services "{docker_dir}" docker-compose.yml
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    commands = docker_log.read_text(encoding="utf-8").splitlines()
+    build_command = next(command for command in commands if " build " in command)
+
+    assert build_command.endswith("api web bisq2-api matrix-alert-relay")
+
+
+def test_selective_api_update_recreates_shared_image_relay() -> None:
+    update_script = UPDATE_SH.read_text(encoding="utf-8")
+
+    assert (
+        'build --build-arg BUILD_ID="${BUILD_ID:-bisq-support-build}" api'
+        in update_script
+    )
+    assert "up -d --no-deps api matrix-alert-relay" in update_script
+    assert 'wait_for_healthy "matrix-alert-relay" 60' in update_script
 
 
 def commit_file(repo: Path, relative_path: str, content: str, message: str) -> str:

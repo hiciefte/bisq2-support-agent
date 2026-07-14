@@ -489,17 +489,23 @@ class SimplifiedRAGService:
         # Use configured MCP HTTP URL for AISuite MCP integration
         self.llm = self.llm_provider.initialize_llm(mcp_url=self.settings.MCP_HTTP_URL)
 
-    def _initialize_retriever(self) -> None:
-        """Initialize the Qdrant retriever (single backend)."""
+    def _create_qdrant_retriever(self, embeddings: Any) -> Any:
+        """Build and validate a Qdrant retriever without changing live state."""
         from app.services.rag.qdrant_hybrid_retriever import QdrantHybridRetriever
 
-        self.retriever = QdrantHybridRetriever(
+        retriever = QdrantHybridRetriever(
             settings=self.settings,
-            embeddings=self.embeddings,
+            embeddings=embeddings,
         )
 
-        if not self.retriever.health_check():
+        if not retriever.health_check():
             raise RuntimeError("Qdrant retriever health check failed")
+
+        return retriever
+
+    def _initialize_retriever(self) -> None:
+        """Initialize the Qdrant retriever (single backend)."""
+        self.retriever = self._create_qdrant_retriever(self.embeddings)
 
         # Optional ColBERT reranker initialization (lazy loading).
         if self.settings.ENABLE_COLBERT_RERANK:
@@ -556,6 +562,82 @@ class SimplifiedRAGService:
     ) -> Optional[str]:
         self._sync_language_handler()
         return self.language_handler.extract_prior_language_from_history(chat_history)
+
+    def _build_live_index(self, *, force_rebuild: bool) -> Optional[tuple[Any, Any]]:
+        """Build the next Qdrant index and retriever without replacing live state."""
+        logger.info("Loading documents for live Qdrant rebuild...")
+        self._refresh_source_weights_for_rebuild()
+
+        wiki_docs = self.wiki_service.load_wiki_data() if self.wiki_service else []
+        if not self.wiki_service:
+            logger.warning("WikiService not provided, skipping wiki data loading")
+
+        faq_docs = self.faq_service.load_faq_data() if self.faq_service else []
+        if not self.faq_service:
+            logger.warning("FAQService not provided, skipping FAQ data loading")
+
+        llm_wiki_docs = self.llm_wiki_loader.load_documents(
+            self.settings.LLM_WIKI_DIR_PATH
+        )
+        all_docs = wiki_docs + faq_docs + llm_wiki_docs
+        logger.info(
+            "Loaded %d wiki documents, %d FAQ documents, and %d LLM Wiki pages",
+            len(wiki_docs),
+            len(faq_docs),
+            len(llm_wiki_docs),
+        )
+        if not all_docs:
+            logger.warning("No documents loaded. Check your data paths.")
+            return None
+
+        splits = self.document_processor.split_documents(all_docs)
+        embeddings = self.embeddings or self.llm_provider.initialize_embeddings()
+        index_result = self.index_manager.rebuild_index(
+            documents=splits,
+            embeddings=embeddings,
+            force=force_rebuild,
+        )
+        logger.info("Qdrant live index ready: %s", index_result)
+
+        # The new retriever loads the vocabulary committed with the new physical
+        # collection. The stable Qdrant alias keeps the existing retriever usable
+        # until this replacement is ready.
+        retriever = self._create_qdrant_retriever(embeddings)
+        return embeddings, retriever
+
+    async def rebuild_live_index(self, force_rebuild: bool = True) -> bool:
+        """Rebuild Qdrant off the public event loop and atomically refresh reads."""
+        async with self._setup_lock:
+            try:
+                async with self.faq_index_sync.rebuild_guard():
+                    rebuilt = await asyncio.to_thread(
+                        self._build_live_index,
+                        force_rebuild=force_rebuild,
+                    )
+                if rebuilt is None:
+                    return False
+
+                embeddings, retriever = rebuilt
+                document_retriever = DocumentRetriever(
+                    retriever=retriever,
+                    reranker=self.colbert_reranker,
+                    rerank_top_n=self.settings.COLBERT_TOP_N,
+                )
+
+                # No await occurs during this state replacement, so requests see
+                # either the previous complete reader set or the new one.
+                self.embeddings = embeddings
+                self.retriever = retriever
+                self.document_retriever = document_retriever
+                logger.info("Live Qdrant reader state refreshed")
+                return True
+            except Exception as error:
+                logger.error(
+                    "Live Qdrant rebuild failed: %s",
+                    error,
+                    exc_info=True,
+                )
+                raise
 
     async def setup(self, force_rebuild: bool = False):
         """Set up the complete system.

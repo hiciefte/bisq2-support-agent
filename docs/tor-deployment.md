@@ -22,7 +22,7 @@ Internet (Tor Network)
     - Forwards HTTP to: 127.0.0.1:80
          ↓
     Nginx Container
-    - Binds to: 127.0.0.1:80:80
+    - HTTP host binding selected explicitly by the operator
     - Bridge network only (no host networking)
          ↓
     API/Web Containers
@@ -32,7 +32,8 @@ Internet (Tor Network)
 
 **Security Boundaries**:
 - Tor daemon runs on host (not in container)
-- Nginx binds to localhost only - **already configured in production**
+- Tor-only deployments must bind nginx to the Tor-facing loopback interface
+  and block direct clearnet ingress
 - Docker containers use bridge networking (secure isolation)
 
 ## Prerequisites
@@ -253,14 +254,15 @@ TOR_HIDDEN_SERVICE=abc123def456ghi789jkl.onion
 COOKIE_SECURE=false
 ```
 
-### Step 7: Update Docker Compose Configuration
+### Step 7: Select the Tor-Only Public Boundary
 
-The production docker-compose.yml is already configured correctly:
-- Nginx binds to `127.0.0.1:80:80` (localhost only)
-- Bridge networking (no `network_mode: host`)
-- Security headers enabled via `default.prod.conf`
-
-**No changes needed** - the configuration is already Tor-ready.
+Follow [Public Access: Clearnet TLS or Tor-Only](runbooks/public-access.md) and
+select the Tor-only option. The production bind is operator-configured; do not
+assume that it is loopback-only. Confirm that nginx publishes only its HTTP
+listener to the Tor-facing loopback interface and that the host firewall blocks
+direct clearnet ingress. Bridge networking remains required, and
+`default.prod.conf` supplies the Tor-compatible security headers after the
+operator selects the bind.
 
 ### Step 8: Restart Application Services
 
@@ -376,6 +378,7 @@ To advertise your .onion address to Tor Browser users, the application automatic
 - **MUST set `COOKIE_SECURE=false`** for .onion deployments
 - .onion addresses use HTTP (not HTTPS) - Tor provides encryption
 - Setting `Secure` flag would break authentication over .onion
+- Leave nginx TLS files absent and HTTP redirection disabled for Tor-only mode
 
 ### Rate Limiting
 
@@ -488,7 +491,7 @@ HiddenServiceVersion 3
 
 The production nginx config already includes Tor-compatible security headers:
 - CSP without `upgrade-insecure-requests` (no HTTPS on .onion)
-- No HSTS header (.onion doesn't need it)
+- HSTS is suppressed on HTTP and therefore is not sent by the onion service
 - Proper `Referrer-Policy` for privacy
 
 ## References

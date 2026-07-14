@@ -14,7 +14,12 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 NGINX_CONFIGS = [
     PROJECT_ROOT / "docker" / "nginx" / "conf.d" / "default.conf",
-    PROJECT_ROOT / "docker" / "nginx" / "conf.d" / "default.prod.conf",
+    PROJECT_ROOT
+    / "docker"
+    / "nginx"
+    / "conf.d"
+    / "snippets"
+    / "application-routes.prod.conf",
 ]
 
 # Regex that extracts the admin whitelist group from nginx config

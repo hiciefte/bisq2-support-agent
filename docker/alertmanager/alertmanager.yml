@@ -57,15 +57,27 @@ receivers:
     webhook_configs:
       - url: 'http://matrix-alert-relay:8000/alerts'
         send_resolved: true
+        http_config:
+          authorization:
+            type: Bearer
+            credentials_file: /run/bisq-secrets/alertmanager/alertmanager_webhook_secret
 
   # Critical alerts receiver
   - name: 'matrix-critical'
     webhook_configs:
       - url: 'http://matrix-alert-relay:8000/alerts'
         send_resolved: true
+        http_config:
+          authorization:
+            type: Bearer
+            credentials_file: /run/bisq-secrets/alertmanager/alertmanager_webhook_secret
 
   # Warning alerts receiver
   - name: 'matrix-warnings'
     webhook_configs:
       - url: 'http://matrix-alert-relay:8000/alerts'
         send_resolved: true
+        http_config:
+          authorization:
+            type: Bearer
+            credentials_file: /run/bisq-secrets/alertmanager/alertmanager_webhook_secret

@@ -8,14 +8,14 @@ set -euo pipefail
 #   docker/.env → full app config (but sometimes overridden by deploy.env)
 #
 # After:
-#   deploy.env  → ONLY deploy-path vars (repo URLs, install dirs)
+#   deploy.env  → ONLY allowlisted deploy settings
 #   docker/.env → ALL app config (sole source of truth for Docker Compose)
 #
 # This script:
 #   1. Backs up both files
 #   2. Merges any app config from deploy.env INTO docker/.env (deploy.env wins
 #      for conflicts, since that's what was actually running)
-#   3. Strips app config from deploy.env, keeping only path vars
+#   3. Strips app config from deploy.env, keeping only allowlisted settings
 #   4. Applies Matrix room fixes (the immediate config issue)
 #
 # Usage:
@@ -129,14 +129,14 @@ done
 log_success "Merged $merged_count var(s) into docker/.env"
 
 # --- Step 4: Strip app config from deploy.env ---
-log_info "Step 4: Reducing deploy.env to path vars only"
+log_info "Step 4: Reducing deploy.env to allowlisted settings only"
 
 if ! $DRY_RUN; then
     cat > "$DEPLOY_ENV" <<'DEPLOY_HEADER'
 # /etc/bisq-support/deploy.env
 #
-# Deploy-path variables ONLY. These are used by shell scripts (start.sh,
-# update.sh, etc.) for repo URLs and installation directories.
+# Allowlisted deployment settings ONLY. These are used by shell scripts for
+# repo URLs, installation directories, and the reviewed Compose override.
 #
 # ALL app config (secrets, room IDs, feature flags) belongs in
 # /opt/bisq-support/docker/.env — the single source of truth for

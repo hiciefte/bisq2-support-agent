@@ -16,7 +16,7 @@ set -euo pipefail
 
 LOG_PREFIX="[RAG Health Check]"
 PROMETHEUS_URL="${PROMETHEUS_URL:-http://prometheus:9090}"
-HEALTHCHECK_URL="${HEALTHCHECK_URL:-https://hc-ping.com/27867359-f4f3-4e22-8f46-8d18a73cf219}"
+HEALTHCHECK_URL="${HEALTHCHECK_URL:-}"
 
 # Alert thresholds (matching unified-monitoring-plan.md)
 MAX_ERROR_RATE=0.05          # 5% error rate
@@ -154,6 +154,11 @@ main() {
 
     # Ping healthchecks.io only if all checks passed
     if [ $checks_failed -eq 0 ]; then
+        if [ -z "$HEALTHCHECK_URL" ]; then
+            log "All checks passed - external heartbeat is disabled"
+            return 0
+        fi
+
         log "All checks passed - pinging healthchecks.io"
 
         if curl -fsS -m 10 --retry 3 "$HEALTHCHECK_URL" > /dev/null 2>&1; then

@@ -362,9 +362,14 @@ async def reconcile_reviewed_knowledge_coverage(
         )
         return report.to_response()
     except ValueError as exc:
+        logger.warning(
+            "Knowledge coverage reconciliation rejected invalid input: %s",
+            exc,
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
+            detail="Invalid coverage reconciliation request",
         ) from exc
     except Exception as exc:
         logger.exception("Failed to reconcile reviewed LLM Wiki coverage")
@@ -865,9 +870,14 @@ async def promote_code_evidence_to_knowledge_update(
             "proposal": service.to_response(result.proposal, result.candidate),
         }
     except ValueError as exc:
+        logger.warning(
+            "Code evidence promotion rejected invalid input: %s",
+            exc,
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
+            detail="Invalid code evidence proposal",
         ) from exc
     except Exception as exc:
         logger.exception("Failed to promote code evidence into knowledge update")
@@ -954,9 +964,15 @@ async def update_knowledge_update_document(
             )
         )
     except ValueError as exc:
+        logger.warning(
+            "Knowledge update document rejected invalid input for candidate %s: %s",
+            candidate_id,
+            exc,
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
+            detail="Invalid knowledge update document",
         ) from exc
     return service.to_response(proposal, candidate)
 
@@ -1047,9 +1063,15 @@ async def approve_knowledge_update(
         )
         return KnowledgeUpdateApproveResponse(success=True, page_id=page_id)
     except ValueError as exc:
+        logger.warning(
+            "Knowledge update approval rejected invalid input for candidate %s: %s",
+            candidate_id,
+            exc,
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
+            detail="Invalid knowledge update approval",
         ) from exc
     except Exception as exc:
         logger.exception("Failed to approve knowledge update %s", candidate_id)

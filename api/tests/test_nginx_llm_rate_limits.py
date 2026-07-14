@@ -8,7 +8,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 NGINX_HTTP_CONFIG = PROJECT_ROOT / "docker" / "nginx" / "nginx.conf"
 SITE_CONFIGS = [
     PROJECT_ROOT / "docker" / "nginx" / "conf.d" / "default.conf",
-    PROJECT_ROOT / "docker" / "nginx" / "conf.d" / "default.prod.conf",
+    PROJECT_ROOT
+    / "docker"
+    / "nginx"
+    / "conf.d"
+    / "snippets"
+    / "application-routes.prod.conf",
 ]
 
 

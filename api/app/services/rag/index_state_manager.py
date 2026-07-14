@@ -124,7 +124,7 @@ class IndexStateManager:
             logger.error(f"Index rebuild failed: {e}", exc_info=True)
             return {
                 "success": False,
-                "error": str(e),
+                "error": "Index rebuild failed",
                 "changes_pending": len(self._pending_changes),
             }
         finally:

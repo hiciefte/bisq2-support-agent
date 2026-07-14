@@ -535,12 +535,10 @@ async def export_faqs_to_csv(
                         ]
                     )
                     yield (row + "\n").encode("utf-8")
-                except Exception as e:
+                except Exception:
                     # Log error but continue processing remaining FAQs
                     logger.exception("Error formatting FAQ row")
-                    error_row = sanitize_csv_field(
-                        f"ERROR: Failed to export FAQ - {str(e)}"
-                    )
+                    error_row = sanitize_csv_field("ERROR: Failed to export FAQ")
                     yield (error_row + "\n").encode("utf-8")
 
             logger.info(f"CSV export completed: {len(faqs)} FAQs exported")

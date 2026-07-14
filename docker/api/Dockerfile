@@ -113,6 +113,7 @@ RUN chown -R bisq-support:bisq-support /app
 
 # Copy and set up entrypoint script
 COPY docker/api/entrypoint.sh /entrypoint.sh
+COPY docker/scripts/lib/runtime-secret.sh /runtime-secret.sh
 RUN chmod +x /entrypoint.sh
 
 # Set build arguments

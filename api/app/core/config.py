@@ -171,6 +171,7 @@ class Settings(BaseSettings):
     MATRIX_ALERT_PASSWORD: str = ""  # Required when MATRIX_ALERT_ROOM is set
     MATRIX_ALERT_ROOM: str = ""  # Room ID for Alertmanager notifications
     MATRIX_ALERT_SESSION_FILE: str = "matrix_alert_session.json"
+    ALERTMANAGER_WEBHOOK_SECRET: str = ""
 
     # Trust monitoring settings
     TRUST_MONITOR_ENABLED: bool = True
@@ -406,6 +407,7 @@ class Settings(BaseSettings):
     # Admin settings
     MAX_UNIQUE_ISSUES: int = 15  # Maximum number of unique issues to track in analytics
     ADMIN_API_KEY: str = ""  # Required in production, empty allowed for testing/mypy
+    SCHEDULER_API_TOKEN: str = ""
     GRAFANA_DATASOURCE_API_KEY: str = (
         ""  # Read-only key for Grafana Infinity datasource
     )

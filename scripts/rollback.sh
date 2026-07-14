@@ -102,6 +102,10 @@ validate_environment() {
         exit 1
     fi
 
+    if ! validate_compose_override_file "$DOCKER_DIR"; then
+        exit 1
+    fi
+
     # Check if running as root
     if ! check_root; then
         log_warning "This script may need root privileges for some operations"
