@@ -66,6 +66,7 @@ from fastapi.openapi.utils import get_openapi
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from prometheus_fastapi_instrumentator import Instrumentator
 from prometheus_fastapi_instrumentator import metrics as instrumentator_metrics
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 try:
     import aisuite
@@ -830,7 +831,7 @@ async def healthcheck():
 # Register exception handlers
 # Register specific application exceptions first
 app.add_exception_handler(BaseAppException, base_exception_handler)  # type: ignore[arg-type]
-app.add_exception_handler(HTTPException, http_exception_handler)
+app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 # Then register generic exception handler as fallback
 app.add_exception_handler(Exception, unhandled_exception_handler)
 

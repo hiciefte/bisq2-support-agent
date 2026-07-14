@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import sys
 from pathlib import Path
 from secrets import compare_digest
@@ -106,11 +107,32 @@ def test_alert_webhook_uses_constant_time_secret_comparison(
     service.send_alert_message.assert_awaited_once()
 
 
-def test_main_api_does_not_mount_alertmanager_compatibility_routes() -> None:
+def test_main_api_does_not_import_or_mount_alertmanager_routes() -> None:
     main_source = (PROJECT_ROOT / "api" / "app" / "main.py").read_text(encoding="utf-8")
+    tree = ast.parse(main_source)
 
-    assert "alertmanager.router" not in main_source
-    assert "    alertmanager," not in main_source
+    imported_modules: set[str] = set()
+    mounted_routers: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported_modules.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            imported_modules.update(f"{module}.{alias.name}" for alias in node.names)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "include_router"
+            and node.args
+        ):
+            mounted_routers.append(ast.unparse(node.args[0]))
+
+    assert not any(
+        module == "app.routes.alertmanager"
+        or module.startswith("app.routes.alertmanager.")
+        for module in imported_modules
+    )
+    assert not any("alertmanager" in router.lower() for router in mounted_routers)
 
 
 def test_alertmanager_webhooks_load_bearer_secret_from_file() -> None:

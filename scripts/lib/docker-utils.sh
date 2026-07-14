@@ -472,7 +472,7 @@ rebuild_services() {
     }
 
     local build_services=("api" "web" "bisq2-api")
-    local rebuild_services=("api" "matrix-alert-relay" "web" "bisq2-api")
+    local rebuild_service_names=("api" "matrix-alert-relay" "web" "bisq2-api")
     local relay_build_status
 
     # Current deployments share the API image with the relay, while older
@@ -489,7 +489,7 @@ rebuild_services() {
     fi
 
     log_info "Stopping backend services (nginx stays running for maintenance page)..."
-    if ! run_docker_compose "$docker_dir" "$compose_file" stop "${rebuild_services[@]}"; then
+    if ! run_docker_compose "$docker_dir" "$compose_file" stop "${rebuild_service_names[@]}"; then
         log_error "Failed to stop backend services"
         return 1
     fi
@@ -503,7 +503,7 @@ rebuild_services() {
     fi
 
     log_info "Starting rebuilt backend containers..."
-    local runtime_services=("${rebuild_services[@]}")
+    local runtime_services=("${rebuild_service_names[@]}")
     if uses_qdrant_runtime; then
         runtime_services=("qdrant" "${runtime_services[@]}")
     fi

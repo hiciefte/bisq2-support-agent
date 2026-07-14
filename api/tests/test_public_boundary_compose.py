@@ -26,7 +26,15 @@ def _environment(service: dict[str, Any]) -> list[str]:
 def test_scheduler_has_only_its_scoped_api_credential() -> None:
     scheduler = _load_compose()["services"]["scheduler"]
     serialized = yaml.safe_dump(scheduler)
-    mounted_sources = {str(volume).split(":", 1)[0] for volume in scheduler["volumes"]}
+    mounted_volumes = {str(volume) for volume in scheduler["volumes"]}
+    mounted_sources = {volume.split(":", 1)[0] for volume in mounted_volumes}
+    required_helper_mounts = {
+        "./scripts/lib/runtime-secret.sh:/scripts/lib/runtime-secret.sh:ro",
+        "./scripts/lib/scheduler-api.sh:/scripts/lib/scheduler-api.sh:ro",
+    }
+    required_helper_sources = {
+        mount.split(":", 1)[0] for mount in required_helper_mounts
+    }
 
     assert "SCHEDULER_API_TOKEN=" not in serialized
     assert ". /scripts/lib/scheduler-api.sh" in scheduler["command"]
@@ -36,8 +44,9 @@ def test_scheduler_has_only_its_scoped_api_credential() -> None:
     assert "docker-compose" not in serialized
     assert "./scripts" not in mounted_sources
     assert "./scripts/maintenance" not in serialized
+    assert required_helper_mounts <= mounted_volumes
     assert {
-        "./scripts/lib",
+        *required_helper_sources,
         "./scripts/bisq-readiness-check.sh",
         "./scripts/poll-matrix.sh",
         "./scripts/process-feedback.sh",
@@ -45,6 +54,9 @@ def test_scheduler_has_only_its_scoped_api_credential() -> None:
         "./scripts/reconcile-llm-wiki-coverage.sh",
         "./scripts/update-wiki.sh",
     } <= mounted_sources
+    assert all(
+        (COMPOSE_PATH.parent / source).is_file() for source in required_helper_sources
+    )
 
 
 def test_scheduler_external_heartbeat_has_no_embedded_destination() -> None:
@@ -162,6 +174,10 @@ def test_base_nginx_requires_an_operator_selected_http_bind() -> None:
     serialized = yaml.safe_dump(nginx)
 
     assert any("NGINX_HTTP_BIND_ADDRESS" in port for port in nginx["ports"])
+    assert (
+        "./nginx/conf.d/default.prod.conf:/etc/nginx/conf.d/default.conf:ro"
+        in nginx["volumes"]
+    )
     assert "40-enable-tls.sh" in serialized
     assert "/etc/nginx/runtime" in serialized
     assert "/etc/nginx/runtime" in nginx["tmpfs"]

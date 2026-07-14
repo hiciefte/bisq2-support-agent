@@ -245,6 +245,8 @@ class SimplifiedRAGService:
         self.embeddings = None
         self.retriever = None
         self.document_retriever = None  # Will be initialized after retriever
+        self._retriever_lease_counts: dict[int, int] = {}
+        self._retriever_idle_events: dict[int, asyncio.Event] = {}
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self._context_llm_executor: Optional[ThreadPoolExecutor] = ThreadPoolExecutor(
             max_workers=_CONTEXT_LLM_FALLBACK_WORKERS,
@@ -501,9 +503,120 @@ class SimplifiedRAGService:
         )
 
         if not retriever.health_check():
+            self._close_retriever(retriever)
             raise RuntimeError("Qdrant retriever health check failed")
 
         return retriever
+
+    @staticmethod
+    def _close_retriever(retriever: Any) -> None:
+        """Best-effort release of a retriever that is no longer live."""
+        if retriever is None:
+            return
+        close = getattr(retriever, "close", None)
+        if not callable(close):
+            return
+        try:
+            close()
+        except Exception:
+            logger.exception("Failed to close outgoing Qdrant retriever")
+
+    def _start_retriever_call(
+        self,
+        retriever: Any,
+        func: Callable[..., Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> asyncio.Future[Any]:
+        """Run a blocking retrieval while keeping its backend leased."""
+        loop = asyncio.get_running_loop()
+        retriever_key = id(retriever)
+        idle_event = self._retriever_idle_events.setdefault(
+            retriever_key, asyncio.Event()
+        )
+        idle_event.clear()
+        self._retriever_lease_counts[retriever_key] = (
+            self._retriever_lease_counts.get(retriever_key, 0) + 1
+        )
+        operation = partial(func, *args, **kwargs)
+
+        def run() -> Any:
+            try:
+                return operation()
+            finally:
+                loop.call_soon_threadsafe(self._release_retriever_lease, retriever_key)
+
+        try:
+            future = loop.run_in_executor(None, run)
+        except Exception:
+            self._release_retriever_lease(retriever_key)
+            raise
+        future.add_done_callback(self._consume_future_exception)
+        return future
+
+    async def _run_retriever_call(
+        self,
+        retriever: Any,
+        func: Callable[..., Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Await a leased call without cancellation stranding its lease."""
+        future = self._start_retriever_call(retriever, func, *args, **kwargs)
+        return await asyncio.shield(future)
+
+    def _release_retriever_lease(self, retriever_key: int) -> None:
+        """Release a completed blocking retrieval on the event-loop thread."""
+        remaining = self._retriever_lease_counts.get(retriever_key, 0) - 1
+        if remaining > 0:
+            self._retriever_lease_counts[retriever_key] = remaining
+            return
+
+        self._retriever_lease_counts.pop(retriever_key, None)
+        idle_event = self._retriever_idle_events.get(retriever_key)
+        if idle_event is not None:
+            idle_event.set()
+
+    @staticmethod
+    def _consume_future_exception(future: asyncio.Future[Any]) -> None:
+        """Retrieve a detached future exception to avoid an event-loop warning."""
+        if not future.cancelled():
+            future.exception()
+
+    async def _close_retriever_when_idle(self, retriever: Any) -> None:
+        """Close a retired retriever after its captured calls finish."""
+        if retriever is None:
+            return
+
+        retriever_key = id(retriever)
+        idle_event = self._retriever_idle_events.get(retriever_key)
+        if self._retriever_lease_counts.get(retriever_key, 0) > 0:
+            if idle_event is None:  # pragma: no cover - defensive invariant
+                raise RuntimeError("Active retriever lease has no idle event")
+            await idle_event.wait()
+
+        self._retriever_idle_events.pop(retriever_key, None)
+        await asyncio.to_thread(self._close_retriever, retriever)
+
+    def _forget_background_task(self, task: asyncio.Task[Any]) -> None:
+        """Drop a completed owned task after observing its result."""
+        self._background_tasks.discard(task)
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            logger.error("Background retriever retirement failed: %s", error)
+
+    async def _retire_retriever(self, retriever: Any) -> None:
+        """Own retriever retirement so caller cancellation cannot abandon it."""
+        if retriever is None:
+            return
+        retirement_task = asyncio.create_task(
+            self._close_retriever_when_idle(retriever)
+        )
+        self._background_tasks.add(retirement_task)
+        retirement_task.add_done_callback(self._forget_background_task)
+        await asyncio.shield(retirement_task)
 
     def _initialize_retriever(self) -> None:
         """Initialize the Qdrant retriever (single backend)."""
@@ -620,17 +733,24 @@ class SimplifiedRAGService:
                     return False
 
                 embeddings, retriever = rebuilt
-                document_retriever = DocumentRetriever(
-                    retriever=retriever,
-                    reranker=self.colbert_reranker,
-                    rerank_top_n=self.settings.COLBERT_TOP_N,
-                )
+                try:
+                    document_retriever = DocumentRetriever(
+                        retriever=retriever,
+                        reranker=self.colbert_reranker,
+                        rerank_top_n=self.settings.COLBERT_TOP_N,
+                    )
+                except Exception:
+                    self._close_retriever(retriever)
+                    raise
 
                 # No await occurs during this state replacement, so requests see
                 # either the previous complete reader set or the new one.
+                outgoing_retriever = self.retriever
                 self.embeddings = embeddings
                 self.retriever = retriever
                 self.document_retriever = document_retriever
+                if outgoing_retriever is not retriever:
+                    await self._retire_retriever(outgoing_retriever)
                 logger.info("Live Qdrant reader state refreshed")
                 return True
             except Exception as error:
@@ -754,10 +874,12 @@ class SimplifiedRAGService:
         self._context_llm_executor = None
         if context_llm_executor is not None:
             context_llm_executor.shutdown(wait=False, cancel_futures=True)
+        retriever = self.retriever
         self.retriever = None
         self.document_retriever = None
         self.rag_chain = None
         self.llm = None
+        await self._retire_retriever(retriever)
         logger.info("Simplified RAG service cleanup complete")
 
     async def manual_rebuild(self) -> Dict[str, Any]:
@@ -1293,8 +1415,10 @@ class SimplifiedRAGService:
 
             # Get relevant documents with version priority and similarity scores
             # Pass detected_version to ensure correct version-specific retrieval
-            docs, doc_scores = await asyncio.to_thread(
-                self.document_retriever.retrieve_with_scores,
+            document_retriever = self.document_retriever
+            docs, doc_scores = await self._run_retriever_call(
+                document_retriever.retriever,
+                document_retriever.retrieve_with_scores,
                 preprocessed_question,
                 detected_version,
             )
@@ -1890,7 +2014,8 @@ class SimplifiedRAGService:
             - Over-fetches to ensure enough results after filtering/deduplication
             - Returns empty list on errors (graceful degradation)
         """
-        if self.retriever is None:
+        retriever = self.retriever
+        if retriever is None:
             logger.warning("Retriever not initialized, cannot search for similar FAQs")
             return []
 
@@ -1899,15 +2024,16 @@ class SimplifiedRAGService:
             k = max(10, limit * 4)
 
             # The retriever is synchronous; run it in a thread pool with timeout.
-            loop = asyncio.get_event_loop()
+            retrieval_future = self._start_retriever_call(
+                retriever,
+                retriever.retrieve_semantic_with_scores,
+                question,
+                k=k,
+                filter_dict={"type": "faq"},
+            )
             try:
                 retrieved = await asyncio.wait_for(
-                    loop.run_in_executor(
-                        None,
-                        lambda: self.retriever.retrieve_semantic_with_scores(
-                            question, k=k, filter_dict={"type": "faq"}
-                        ),
-                    ),
+                    asyncio.shield(retrieval_future),
                     timeout=timeout,
                 )
             except asyncio.TimeoutError:

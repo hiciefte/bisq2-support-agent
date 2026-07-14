@@ -639,7 +639,8 @@ services:
       - BISQ_READINESS_CURRENCY=${BISQ_READINESS_CURRENCY:-EUR}
       - BISQ_READINESS_DIRECTION=${BISQ_READINESS_DIRECTION:-SELL}
     volumes:
-      - ./scripts/lib:/scripts/lib:ro
+      - ./scripts/lib/runtime-secret.sh:/scripts/lib/runtime-secret.sh:ro
+      - ./scripts/lib/scheduler-api.sh:/scripts/lib/scheduler-api.sh:ro
       - ./scripts/bisq-readiness-check.sh:/scripts/bisq-readiness-check.sh:ro
       - ./scripts/poll-matrix.sh:/scripts/poll-matrix.sh:ro
       - ./scripts/process-feedback.sh:/scripts/process-feedback.sh:ro

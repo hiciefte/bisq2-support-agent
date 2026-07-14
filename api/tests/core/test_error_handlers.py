@@ -8,6 +8,7 @@ import pytest
 from app.core.error_handlers import base_exception_handler, http_exception_handler
 from app.core.exceptions import BaseAppException, ValidationError
 from fastapi import HTTPException
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
@@ -50,7 +51,7 @@ async def test_client_exception_detail_remains_actionable() -> None:
 @pytest.mark.asyncio
 async def test_http_server_exception_detail_is_logged_but_not_returned(caplog) -> None:
     private_detail = "private-route-failure"
-    exception = HTTPException(status_code=500, detail=private_detail)
+    exception = StarletteHTTPException(status_code=500, detail=private_detail)
 
     with caplog.at_level("ERROR"):
         response = await http_exception_handler(_request(), exception)
@@ -74,6 +75,12 @@ async def test_http_client_exception_detail_and_headers_remain_actionable() -> N
     assert response.status_code == 401
     assert b'"detail":"Authentication required"' in response.body
     assert response.headers["WWW-Authenticate"] == "Bearer"
+
+
+def test_main_registers_handler_for_starlette_http_exceptions() -> None:
+    from app.main import app
+
+    assert app.exception_handlers[StarletteHTTPException] is http_exception_handler
 
 
 def test_training_sync_failures_do_not_serialize_exception_details() -> None:

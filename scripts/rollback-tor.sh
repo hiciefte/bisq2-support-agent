@@ -24,6 +24,7 @@ validate_clearnet_tls_material() {
     local private_key_filename
     local certificate_path
     local private_key_path
+    local private_key_mode
     local certificate_public_key
     local private_key_public_key
 
@@ -67,6 +68,22 @@ validate_clearnet_tls_material() {
     if ! openssl x509 -in "$certificate_path" -checkend 0 \
         -noout >/dev/null 2>&1; then
         log_error "The selected TLS certificate is expired"
+        return 1
+    fi
+    if ! private_key_mode=$(_secret_file_mode "$private_key_path"); then
+        log_error "The TLS private key permissions could not be inspected"
+        return 1
+    fi
+    case "$private_key_mode" in
+        [0-7][0-7][0-7]|[0-7][0-7][0-7][0-7])
+            ;;
+        *)
+            log_error "The TLS private key has an invalid file mode"
+            return 1
+            ;;
+    esac
+    if [ "${private_key_mode: -2}" != "00" ]; then
+        log_error "The TLS private key must not be accessible by group or other users"
         return 1
     fi
     if ! openssl pkey -in "$private_key_path" -passin pass: \

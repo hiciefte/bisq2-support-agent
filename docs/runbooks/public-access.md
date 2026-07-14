@@ -105,7 +105,9 @@ the live boundary without writing either value to the repository:
 
 ```bash
 curl --fail --silent --show-error --head "$PUBLIC_HTTPS_URL"
-curl --silent --show-error --head "$PUBLIC_HTTP_URL"
+http_headers="$(curl --silent --show-error --head "$PUBLIC_HTTP_URL")"
+printf '%s\n' "$http_headers" | grep -Eq '^HTTP/[0-9.]+ (301|308)( |$)'
+printf '%s\n' "$http_headers" | grep -Eiq '^Location:[[:space:]]*https://'
 curl --fail --silent --show-error --head "$PUBLIC_HTTPS_URL" \
   | grep -i '^Strict-Transport-Security:'
 ```

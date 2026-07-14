@@ -232,18 +232,25 @@ class TestChainUsesPreRetrievedDocs:
     async def test_query_offloads_retrieval_and_generation(self, service, monkeypatch):
         """F8: sync retriever and LLM chain calls must not block the event loop."""
         offloaded = []
+        leased_calls = []
         retrieve_func = service.document_retriever.retrieve_with_scores
         rag_chain_func = service.rag_chain
+        run_retriever_call = service._run_retriever_call
+
+        async def track_retriever_call(retriever, func, *args, **kwargs):
+            leased_calls.append(func)
+            return await run_retriever_call(retriever, func, *args, **kwargs)
 
         async def fake_to_thread(func, /, *args, **kwargs):
             offloaded.append(func)
             return func(*args, **kwargs)
 
+        monkeypatch.setattr(service, "_run_retriever_call", track_retriever_call)
         monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
 
         await service.query("How does reputation work in Bisq 2?", chat_history=[])
 
-        assert any(func is retrieve_func for func in offloaded)
+        assert any(func is retrieve_func for func in leased_calls)
         assert any(func is rag_chain_func for func in offloaded)
 
     @pytest.mark.asyncio

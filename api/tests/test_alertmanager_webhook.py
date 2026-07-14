@@ -3,7 +3,6 @@
 Phase 9: Replace token-based Matrix auth with password-based auth.
 """
 
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -379,14 +378,6 @@ class TestMatrixServiceIntegration:
 
 class TestRouterRegistration:
     """Test that alertmanager router is properly registered."""
-
-    def test_alertmanager_router_is_not_registered_in_main_api(self):
-        """The compatibility router must not be mounted in the main API."""
-        main_path = Path(__file__).resolve().parents[1] / "app" / "main.py"
-        main_source = main_path.read_text(encoding="utf-8")
-
-        assert "alertmanager.router" not in main_source
-        assert "    alertmanager," not in main_source
 
     def test_alertmanager_routes_remain_available_to_isolated_relay(
         self, alertmanager_app

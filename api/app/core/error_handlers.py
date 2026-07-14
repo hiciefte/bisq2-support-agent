@@ -6,17 +6,19 @@ for all application exceptions.
 """
 
 import logging
+from typing import cast
 
 from app.core.exceptions import BaseAppException
-from fastapi import HTTPException, Request, status
+from fastapi import Request, status
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException
 
 logger = logging.getLogger(__name__)
 
 
 async def http_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Keep client errors actionable while hiding server-side details."""
-    assert isinstance(exc, HTTPException)
+    exc = cast(HTTPException, exc)
 
     if exc.status_code < status.HTTP_500_INTERNAL_SERVER_ERROR:
         return JSONResponse(

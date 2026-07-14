@@ -3,8 +3,65 @@
 import subprocess
 from pathlib import Path
 
+import pytest
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ROLLBACK_SCRIPT = PROJECT_ROOT / "scripts" / "rollback-tor.sh"
+
+
+def _run_tls_material_validation(
+    tmp_path: Path, private_key_mode: int
+) -> subprocess.CompletedProcess[str]:
+    certificate_dir = tmp_path / "tls"
+    certificate_dir.mkdir()
+    (certificate_dir / "certificate.pem").write_text(
+        "test certificate\n", encoding="utf-8"
+    )
+    private_key = certificate_dir / "private-key.pem"
+    private_key.write_text("test private key\n", encoding="utf-8")
+    private_key.chmod(private_key_mode)
+
+    env_file = tmp_path / "tls.env"
+    env_file.write_text(
+        "\n".join(
+            (
+                f"NGINX_TLS_CERTIFICATE_DIR={certificate_dir}",
+                "NGINX_TLS_CERTIFICATE_FILENAME=certificate.pem",
+                "NGINX_TLS_PRIVATE_KEY_FILENAME=private-key.pem",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    fake_openssl = fakebin / "openssl"
+    fake_openssl.write_text(
+        "#!/bin/bash\n"
+        'if [[ " $* " == *" -pubkey "* ]] || '
+        '[[ " $* " == *" -pubout "* ]]; then\n'
+        "    printf 'test-public-key\\n'\n"
+        "fi\n",
+        encoding="utf-8",
+    )
+    fake_openssl.chmod(0o755)
+
+    return subprocess.run(
+        [
+            "bash",
+            "-c",
+            f"""
+            export PATH="{fakebin}:$PATH"
+            source "{ROLLBACK_SCRIPT}"
+            validate_clearnet_tls_material "{env_file}"
+            """,
+        ],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 def test_tor_rollback_requires_explicit_tls_selection_before_mutation() -> None:
@@ -54,9 +111,9 @@ def test_tor_rollback_rejects_invalid_certificate_before_docker_preflight(
     (certificate_dir / "certificate.pem").write_text(
         "not a certificate\n", encoding="utf-8"
     )
-    (certificate_dir / "private-key.pem").write_text(
-        "not a private key\n", encoding="utf-8"
-    )
+    private_key = certificate_dir / "private-key.pem"
+    private_key.write_text("not a private key\n", encoding="utf-8")
+    private_key.chmod(0o600)
     (docker_dir / ".env").write_text(
         "\n".join(
             (
@@ -105,3 +162,22 @@ def test_tor_rollback_rejects_invalid_certificate_before_docker_preflight(
     assert result.returncode != 0
     assert "not valid X.509 material" in result.stdout
     assert not docker_log.exists()
+
+
+@pytest.mark.parametrize("private_key_mode", [0o400, 0o600])
+def test_tor_rollback_accepts_owner_only_private_key_permissions(
+    tmp_path: Path, private_key_mode: int
+) -> None:
+    result = _run_tls_material_validation(tmp_path, private_key_mode)
+
+    assert result.returncode == 0, result.stdout
+
+
+@pytest.mark.parametrize("private_key_mode", [0o640, 0o604])
+def test_tor_rollback_rejects_non_owner_private_key_access(
+    tmp_path: Path, private_key_mode: int
+) -> None:
+    result = _run_tls_material_validation(tmp_path, private_key_mode)
+
+    assert result.returncode != 0
+    assert "must not be accessible by group or other users" in result.stdout
