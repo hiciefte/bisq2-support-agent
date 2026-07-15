@@ -777,7 +777,10 @@ class EscalationService:
 
     async def purge_retention(self) -> int:
         """Delete old closed/responded escalations."""
-        days = getattr(self.settings, "ESCALATION_RETENTION_DAYS", 90)
+        days = min(
+            getattr(self.settings, "ESCALATION_RETENTION_DAYS", 30),
+            getattr(self.settings, "DATA_RETENTION_DAYS", 30),
+        )
         threshold = datetime.now(timezone.utc) - timedelta(days=days)
         count = await self.repository.purge_old(threshold)
         if count:

@@ -1027,13 +1027,14 @@ async def trigger_bisq_sync(
     logger.info("Admin request to trigger Bisq sync")
 
     try:
+        from app.core.config import get_settings
+
+        settings = get_settings()
         # Get or create Bisq API client
         bisq_api = getattr(request.app.state, "bisq_api", None)
         if not bisq_api:
             from app.channels.plugins.bisq2.client.api import Bisq2API
-            from app.core.config import get_settings
 
-            settings = get_settings()
             bisq_api = Bisq2API(settings)
             request.app.state.bisq_api = bisq_api
 
@@ -1044,7 +1045,9 @@ async def trigger_bisq_sync(
                 BisqSyncStateManager,
             )
 
-            state_manager = BisqSyncStateManager()
+            state_manager = BisqSyncStateManager(
+                retention_days=int(getattr(settings, "DATA_RETENTION_DAYS", 30) or 30)
+            )
             request.app.state.bisq_sync_state = state_manager
 
         # Run sync
@@ -1124,7 +1127,8 @@ async def trigger_matrix_sync(
 
             # Create polling state manager for Matrix
             polling_state = PollingStateManager(
-                state_file=settings.get_data_path("matrix_polling_state.json")
+                state_file=settings.get_data_path("matrix_polling_state.json"),
+                retention_days=int(getattr(settings, "DATA_RETENTION_DAYS", 30) or 30),
             )
 
             matrix_sync = MatrixSyncService(

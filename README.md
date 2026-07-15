@@ -194,21 +194,19 @@ chmod +x /opt/bisq-support/scripts/*.sh
 
 #### Automated Data Cleanup (Privacy Compliance)
 
-To automatically clean up personal data on production servers, set up a cron job:
+The unprivileged scheduler runs row-level privacy retention at container start
+and daily. Do not install a second host cron for application records. Preview
+the exact scheduled job with `scripts/cleanup_old_data.sh --dry-run`.
 
-```bash
-# Edit root crontab
-sudo crontab -e
-
-# Add this line to run cleanup daily at 2 AM
-0 2 * * * /opt/bisq-support/scripts/cleanup_old_data.sh >> /var/log/bisq-data-cleanup.log 2>&1
-```
-
-The cleanup script:
-- Removes raw chat data older than `DATA_RETENTION_DAYS` (default: 30 days)
-- Preserves anonymized FAQs permanently
-- Respects the `ENABLE_PRIVACY_MODE` setting
-- Can be run manually with `--dry-run` flag to preview deletions
+The job deletes or anonymizes out-of-window local records, compacts changed
+SQLite databases, rotates Matrix session generations, rewrites structured
+legacy exports, and ages bind-mounted logs. Docker runtime logs require the
+human-installed host policy described in
+`docs/runbooks/privacy-retention.md`. Reviewed FAQ/support-playbook text and
+aggregate metrics may remain; the knowledge stores omit structured source
+identifiers and links after their retention boundary. Legacy or corrupted rows
+without a provable timestamp are retained for operator migration rather than
+deleted on an assumed age; the runbook documents this exception.
 
 ### Updating the Application
 

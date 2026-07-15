@@ -3,6 +3,7 @@
 import json
 import os
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -114,6 +115,7 @@ class TestSessionManagerLogin:
         assert saved_data["access_token"] == mock_login_response.access_token
         assert saved_data["device_id"] == mock_login_response.device_id
         assert saved_data["user_id"] == mock_login_response.user_id
+        assert datetime.fromisoformat(saved_data["created_at"]).tzinfo is not None
 
         # Verify file permissions (Unix only)
         if os.name != "nt":  # Skip on Windows

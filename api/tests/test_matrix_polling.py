@@ -9,7 +9,7 @@ Tests cover:
 """
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -70,6 +70,60 @@ class TestSessionPersistence:
         permissions = stat_info.st_mode & 0o777
 
         assert permissions == 0o600, f"Expected 0600, got {oct(permissions)}"
+
+    def test_live_save_does_not_restore_expired_processed_ids(self, polling_state_file):
+        manager = PollingStateManager(str(polling_state_file), retention_days=1)
+        manager.mark_processed(
+            "expired-event",
+            processed_at=datetime(2000, 1, 1, tzinfo=UTC),
+        )
+
+        manager.save_state()
+
+        persisted = json.loads(polling_state_file.read_text(encoding="utf-8"))
+        assert persisted["processed_ids"] == []
+        assert manager.is_processed("expired-event") is False
+
+    def test_legacy_ids_without_valid_timestamps_expire_fail_closed(
+        self, polling_state_file
+    ):
+        now = datetime.now(UTC)
+        polling_state_file.write_text(
+            json.dumps(
+                {
+                    "processed_ids": ["valid", "missing", "invalid"],
+                    "processed_id_timestamps": {
+                        "valid": now.isoformat(),
+                        "invalid": "not-a-timestamp",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        manager = PollingStateManager(str(polling_state_file))
+
+        assert manager.processed_ids == {"valid"}
+        cutoff = now - timedelta(days=1)
+        assert manager.prune_before(cutoff, dry_run=True) == 2
+        assert manager.prune_before(cutoff) == 2
+        persisted = json.loads(polling_state_file.read_text(encoding="utf-8"))
+        assert persisted["processed_ids"] == ["valid"]
+
+    def test_save_applies_processed_id_cap_to_memory(self, polling_state_file):
+        manager = PollingStateManager(str(polling_state_file))
+        timestamp = datetime.now(UTC)
+        for index in range(10001):
+            manager.mark_processed(
+                f"event-{index}",
+                processed_at=timestamp + timedelta(microseconds=index),
+            )
+
+        manager.save_state()
+
+        assert len(manager.processed_ids) == 10000
+        assert len(manager._processed_at) == 10000
+        assert "event-0" not in manager.processed_ids
 
 
 class TestDatabaseDuplicateCheck:

@@ -96,7 +96,8 @@ def mock_settings():
     settings.ESCALATION_CLAIM_TTL_MINUTES = 30
     settings.ESCALATION_DELIVERY_MAX_RETRIES = 3
     settings.ESCALATION_AUTO_CLOSE_HOURS = 72
-    settings.ESCALATION_RETENTION_DAYS = 90
+    settings.ESCALATION_RETENTION_DAYS = 30
+    settings.DATA_RETENTION_DAYS = 30
     return settings
 
 

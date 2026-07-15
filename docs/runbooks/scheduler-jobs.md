@@ -21,6 +21,8 @@ recovery, and deliberate rotation procedures.
 | Container start and weekly | Feedback processing | Read stored feedback and update learning weights | `POST /internal/scheduler/process-feedback` |
 | Weekly | Wiki refresh | Download/process wiki data and rebuild the live index | `POST /internal/scheduler/update-wiki`; writes under configured `DATA_DIR` and runs the forced build in a bounded worker thread behind the live-index locks |
 | Daily | LLM-Wiki reconciliation | Read and update the unified training repository | `POST /internal/scheduler/reconcile-llm-wiki-coverage` |
+| Container start and daily | Privacy retention | Delete or anonymize out-of-window records and compact changed SQLite databases | `POST /internal/scheduler/privacy-retention`; supports `dry_run=true` |
+| Daily | Bind-mounted log retention | Rotate and age scheduler/nginx logs | Allowlisted bind mounts only; no Docker access |
 | Every 12 hours | Bisq and Matrix training sync | Invoke one ingestion source at a time | Separate `training-sync/bisq` and `training-sync/matrix` endpoints |
 | Every 10 minutes and container start | Bisq readiness | Read-only MCP probe | Direct private-network MCP request; no privileged token |
 | Every 15 minutes | RAG health | Read Prometheus metrics; optionally send an operator-configured heartbeat | Direct private-network Prometheus request; blank `HEALTHCHECK_URL` disables the external heartbeat |
@@ -39,6 +41,11 @@ event loop; the stable Qdrant alias keeps the previous reader live until the
 replacement reader is ready. Docker cleanup remains a separately documented,
 human-installed host maintenance task under `docker/scripts/maintenance/`; it
 is not mounted into or invoked by the scheduler.
+
+Docker runtime-log age retention is likewise host-managed. Use
+`scripts/configure-runtime-log-retention.sh --check` and follow
+[Privacy Retention](privacy-retention.md); do not give the scheduler access to
+the Docker API.
 
 ## Verification
 

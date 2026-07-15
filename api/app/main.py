@@ -49,6 +49,7 @@ from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
 from app.services.mcp.mcp_http_server import router as mcp_router
 from app.services.mcp.mcp_http_server import set_bisq_service
+from app.services.privacy_retention_service import PrivacyRetentionService
 from app.services.public_faq_service import PublicFAQService
 from app.services.rag.embeddings_provider import OpenAIEmbeddingsProvider
 from app.services.rag.learning_engine import LearningEngine
@@ -280,6 +281,7 @@ async def lifespan(app: FastAPI):
     app.state.unified_repository = unified_repo
     learning_engine = LearningEngine(repository=unified_repo)
     app.state.learning_engine = learning_engine
+    app.state.privacy_retention_service = PrivacyRetentionService(settings)
 
     # Embeddings are a startup requirement because AnswerComparisonEngine depends on them.
     embeddings_model = OpenAIEmbeddingsProvider.from_settings(settings)

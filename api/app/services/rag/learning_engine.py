@@ -506,6 +506,46 @@ class LearningEngine:
         """Get history of threshold changes."""
         return self._threshold_history.copy()
 
+    def prune_review_history_before(
+        self,
+        cutoff: datetime,
+        *,
+        dry_run: bool = False,
+    ) -> int:
+        """Remove review records older than ``cutoff`` without touching aggregates.
+
+        Records with missing or malformed timestamps are retained for operator
+        review because their age cannot be proven. A record exactly at the cutoff
+        is retained.
+        """
+        effective_cutoff = (
+            cutoff.replace(tzinfo=timezone.utc)
+            if cutoff.tzinfo is None
+            else cutoff.astimezone(timezone.utc)
+        )
+
+        def is_retained(review: Dict[str, Any]) -> bool:
+            raw_timestamp = review.get("timestamp")
+            if not isinstance(raw_timestamp, str):
+                return True
+            try:
+                timestamp = datetime.fromisoformat(raw_timestamp.replace("Z", "+00:00"))
+            except ValueError:
+                return True
+            timestamp = (
+                timestamp.replace(tzinfo=timezone.utc)
+                if timestamp.tzinfo is None
+                else timestamp.astimezone(timezone.utc)
+            )
+            return timestamp >= effective_cutoff
+
+        retained = [review for review in self._review_history if is_retained(review)]
+        deleted = len(self._review_history) - len(retained)
+        if deleted and not dry_run:
+            self._review_history = retained
+            self._auto_persist()
+        return deleted
+
     def reset_learning(self) -> None:
         """Reset learning data and restore default thresholds."""
         self._review_history = []

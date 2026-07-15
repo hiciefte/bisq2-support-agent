@@ -533,6 +533,23 @@ class TestSyncEndpoints:
         assert data["processed"] == 5
         assert "Bisq" in data.get("message", "")
 
+    def test_trigger_bisq_sync_builds_state_with_cached_api(
+        self, client, mock_pipeline_service
+    ):
+        mock_pipeline_service.sync_bisq_conversations = AsyncMock(return_value=1)
+        cached_api = MagicMock()
+        client.app.state.bisq_api = cached_api
+        if hasattr(client.app.state, "bisq_sync_state"):
+            delattr(client.app.state, "bisq_sync_state")
+
+        response = client.post("/admin/training/sync/bisq")
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "completed"
+        kwargs = mock_pipeline_service.sync_bisq_conversations.call_args.kwargs
+        assert kwargs["bisq_api"] is cached_api
+        assert kwargs["state_manager"].retention_days >= 1
+
 
 # =============================================================================
 # Error Handling

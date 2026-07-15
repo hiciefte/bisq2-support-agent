@@ -66,7 +66,8 @@ def service(mock_repository):
     mock_settings.ESCALATION_CLAIM_TTL_MINUTES = 30
     mock_settings.ESCALATION_DELIVERY_MAX_RETRIES = 3
     mock_settings.ESCALATION_AUTO_CLOSE_HOURS = 72
-    mock_settings.ESCALATION_RETENTION_DAYS = 90
+    mock_settings.ESCALATION_RETENTION_DAYS = 30
+    mock_settings.DATA_RETENTION_DAYS = 30
 
     return EscalationService(
         repository=mock_repository,

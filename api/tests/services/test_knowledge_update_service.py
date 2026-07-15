@@ -145,8 +145,9 @@ def test_approve_writes_reviewed_llm_wiki_markdown(tmp_path: Path) -> None:
 
     written = page.read_text(encoding="utf-8")
     assert approved.status == "approved"
+    assert approved.reviewed_by == "admin"
     assert "status: reviewed" in written
-    assert "reviewed_by: admin" in written
+    assert "reviewed_by: support-admin" in written
     assert "Buyers can start in Bisq Easy without reputation." in written
     assert "support:matrix:$event" not in written
     reloaded = service._load_page_by_id("bisq2-reputation-basics")
@@ -266,7 +267,7 @@ def test_approve_writes_full_document_override(tmp_path: Path) -> None:
     written = page.read_text(encoding="utf-8")
     assert updated.document_markdown_override is not None
     assert approved.status == "approved"
-    assert "reviewed_by: admin" in written
+    assert "reviewed_by: support-admin" in written
     assert "buyers do not need their own reputation to start" in written
     assert "wiki:Reputation" in written
     assert "support:matrix:$event" not in written
@@ -338,7 +339,7 @@ def test_approve_stores_review_feedback_sections(tmp_path: Path) -> None:
     written = page.read_text(encoding="utf-8")
     assert approved.generated_markdown == proposal.preview_markdown
     assert approved.approved_markdown == written
-    assert "reviewed_by: admin" in approved.approved_markdown
+    assert "reviewed_by: support-admin" in approved.approved_markdown
     assert approved.review_notes == "\n".join(
         [
             "- Reviewer correction: Narrowed the generated reputation guidance.",

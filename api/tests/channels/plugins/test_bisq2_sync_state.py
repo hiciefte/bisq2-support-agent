@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from app.channels.plugins.bisq2.client.sync_state import BisqSyncStateManager
@@ -71,6 +72,21 @@ def test_non_ascii_message_ids_round_trip_as_utf8(tmp_path) -> None:
     assert restarted.is_processed("nachricht-λ-漢字") is True
 
 
+def test_live_save_does_not_restore_expired_processed_ids(tmp_path) -> None:
+    state_path = tmp_path / "bisq-sync-state.json"
+    manager = BisqSyncStateManager(str(state_path), retention_days=1)
+    manager.mark_processed(
+        "expired-message",
+        processed_at=datetime(2000, 1, 1, tzinfo=UTC),
+    )
+
+    manager.save_state()
+
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    assert persisted["processed_message_ids"] == []
+    assert manager.is_processed("expired-message") is False
+
+
 def test_invalid_utf8_state_falls_back_to_fresh_state(tmp_path) -> None:
     state_path = tmp_path / "bisq-sync-state.json"
     state_path.write_bytes(b'{"processed_message_ids":["\xff"]}')
@@ -92,6 +108,32 @@ def test_invalid_timestamp_state_falls_back_to_fresh_state(tmp_path) -> None:
 
     assert manager.last_sync_timestamp is None
     assert manager.processed_message_ids == set()
+
+
+def test_legacy_ids_without_valid_timestamps_expire_fail_closed(tmp_path) -> None:
+    state_path = tmp_path / "bisq-sync-state.json"
+    now = datetime.now(UTC)
+    state_path.write_text(
+        json.dumps(
+            {
+                "processed_message_ids": ["valid", "missing", "invalid"],
+                "processed_message_timestamps": {
+                    "valid": now.isoformat(),
+                    "invalid": "not-a-timestamp",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    manager = BisqSyncStateManager(str(state_path))
+
+    assert manager.processed_message_ids == {"valid"}
+    cutoff = now - timedelta(days=1)
+    assert manager.prune_before(cutoff, dry_run=True) == 2
+    assert manager.prune_before(cutoff) == 2
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    assert persisted["processed_message_ids"] == ["valid"]
 
 
 @pytest.mark.parametrize("content", ["[]", "null", '"scalar"', "42"])

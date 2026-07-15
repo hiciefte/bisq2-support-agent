@@ -96,6 +96,15 @@ isolated persistent volumes and their consumers load them at runtime.
 *   **`DATA_DIR`**
     *   Description: The path *inside the API container* where persistent API data (wiki, FAQs, feedback, BM25 vocabulary, index metadata) is stored/mounted. **IMPORTANT**: This must match the volume mount destination in `docker-compose.yml` to ensure data persistence across container restarts.
     *   Default: `/data` (maps to `$BISQ_SUPPORT_INSTALL_DIR/api/data` on the host via Docker volume mounts in `docker-compose.yml`)
+*   **`DATA_RETENTION_DAYS`**
+    *   Description: Maximum age for local personal-data records, session
+        generations, structured exports, and application logs. The scheduler
+        enforces this daily and the public privacy surfaces render it at
+        runtime. Untimestamped legacy rows require operator migration because
+        the automated job does not guess their age.
+    *   Valid range: `1` through `30`
+    *   Default: `30`
+    *   Runbook: `docs/runbooks/privacy-retention.md`
 
 ### Bisq2 API Authorization Variables
 

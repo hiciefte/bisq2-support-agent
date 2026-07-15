@@ -1,5 +1,8 @@
 """Tests for idempotent learning-review updates."""
 
+from datetime import UTC, datetime, timedelta
+from unittest.mock import MagicMock
+
 from app.services.rag.learning_engine import LearningEngine
 
 
@@ -97,3 +100,36 @@ def test_weighted_percentile_uses_review_weights() -> None:
     assert engine._weighted_percentile(
         [0.2, 0.4, 0.8], 75
     ) == engine._weighted_percentile([0.2, 0.4, 0.8], 75, [1.0, 1.0, 1.0])
+
+
+def test_review_history_retention_is_per_entry_and_preserves_aggregates() -> None:
+    engine = LearningEngine()
+    repository = MagicMock()
+    engine._repository = repository
+    cutoff = datetime(2026, 1, 1, tzinfo=UTC)
+    engine._review_history = [
+        {
+            "question_id": "old",
+            "timestamp": (cutoff - timedelta(seconds=1)).isoformat(),
+        },
+        {"question_id": "exact", "timestamp": cutoff.isoformat()},
+        {
+            "question_id": "new",
+            "timestamp": (cutoff + timedelta(seconds=1)).isoformat(),
+        },
+        {"question_id": "unknown", "timestamp": "invalid"},
+    ]
+    threshold_history = engine._threshold_history.copy()
+
+    assert engine.prune_review_history_before(cutoff, dry_run=True) == 1
+    assert len(engine._review_history) == 4
+    repository.save_learning_state.assert_not_called()
+
+    assert engine.prune_review_history_before(cutoff) == 1
+    assert [row["question_id"] for row in engine._review_history] == [
+        "exact",
+        "new",
+        "unknown",
+    ]
+    assert engine._threshold_history == threshold_history
+    repository.save_learning_state.assert_called_once()

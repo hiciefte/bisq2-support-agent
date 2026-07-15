@@ -29,6 +29,10 @@ interface PendingEscalation {
     localMessageId: string
 }
 
+interface ChatInterfaceProps {
+    retentionDays: number
+}
+
 interface EscalationResolutionWatcherProps {
     pending: PendingEscalation
     setMessages: Dispatch<SetStateAction<Message[]>>
@@ -116,7 +120,7 @@ function EscalationResolutionWatcher({
     return null
 }
 
-const ChatInterface = () => {
+const ChatInterface = ({ retentionDays }: ChatInterfaceProps) => {
     // Chat messages and API communication
     const {
         messages,
@@ -238,7 +242,7 @@ const ChatInterface = () => {
                     setMessages={setMessages}
                 />
             ))}
-            <PrivacyWarningModal />
+            <PrivacyWarningModal retentionDays={retentionDays} />
             <div className="flex flex-col h-full overflow-hidden">
                 <div role="log" aria-live="polite" aria-label="Chat conversation" className="flex-1 min-h-0 flex flex-col">
                     <MessageList

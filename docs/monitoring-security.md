@@ -160,25 +160,37 @@ reused as an admin key.
 
 ### User Data Handling
 
-The Bisq Support Agent collects minimal user data for service improvement:
+The Bisq Support Agent stores local support data needed to answer, review, and
+improve responses:
 
 **What We Collect:**
 - Chat questions and AI responses
 - User feedback ratings (thumbs up/down)
 - Optional feedback explanations
 - Timestamps and message IDs
+- Channel user/room identifiers, escalation records, and reviewer identifiers
 
-**What We DON'T Collect:**
-- Personal identifiers (names, emails)
-- IP addresses (beyond standard server logs)
-- User accounts or authentication data
+Standard application access logs can contain network and request metadata.
+Matrix session credentials and local crypto state are operational artifacts and
+are rotated as a complete generation at the configured retention boundary.
 
 ### Data Retention
 
 **Automated Cleanup:**
-- Personal data is automatically deleted after **30 days** (configurable via `DATA_RETENTION_DAYS`)
-- Only anonymized FAQs are kept permanently for the knowledge base
-- See `scripts/cleanup_old_data.sh` for implementation
+- `DATA_RETENTION_DAYS` is validated between 1 and 30 days and rendered in the
+  public privacy surfaces at runtime.
+- SQLite records, translation entries, processed identifiers, structured
+  exports, local sessions, and bind-mounted logs are handled by the scheduled
+  retention job. Old parents are anonymized only when a newer child still
+  requires their key.
+- Malformed or untimestamped legacy rows are preserved for manual migration;
+  their store-age metric exposes overdue artifacts instead of silently
+  deleting data whose age cannot be proven.
+- Reviewed FAQ/support-playbook text and aggregate operational metrics may
+  remain; the knowledge stores omit structured source identifiers and links.
+- Docker runtime-log age retention is installed and verified by a human using
+  the checked-in host script.
+- See `docs/runbooks/privacy-retention.md` for the complete store inventory.
 
 **Privacy Compliance:**
 - Data minimization: Only collect what's necessary

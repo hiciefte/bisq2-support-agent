@@ -8,6 +8,7 @@ PRIVILEGED_JOB_SCRIPTS = (
     "update-wiki.sh",
     "reconcile-llm-wiki-coverage.sh",
     "poll-matrix.sh",
+    "privacy-retention.sh",
 )
 
 

@@ -26,6 +26,13 @@ def scheduler_client(test_settings, monkeypatch) -> TestClient:
     app.state.unified_pipeline_service = SimpleNamespace(
         repository=SimpleNamespace(db_path="test-unified-training.db")
     )
+    app.state.translation_service = SimpleNamespace(cache=MagicMock())
+    app.state.feedback_service = MagicMock()
+    app.state.learning_engine = MagicMock()
+    app.state.privacy_retention_service = MagicMock()
+    app.state.privacy_retention_service.settings = test_settings
+    app.state.channel_runtime = None
+    app.state.matrix_channel = None
     return TestClient(app)
 
 
@@ -142,6 +149,154 @@ def test_update_wiki_reports_an_incomplete_rebuild_as_failure(
 
     assert response.status_code == 500
     assert response.json() == {"detail": "Scheduled task failed"}
+
+
+def test_privacy_retention_propagates_dry_run_and_returns_safe_summary(
+    scheduler_client: TestClient,
+) -> None:
+    report = MagicMock()
+    report.as_dict.return_value = {
+        "status": "dry_run",
+        "dry_run": True,
+        "deleted_rows": 7,
+        "stores": {
+            "feedback": {
+                "deleted_rows": 3,
+                "anonymized_rows": 1,
+                "oldest_age_seconds": 60.0,
+                "window_seconds": 2592000.0,
+            }
+        },
+    }
+    scheduler_client.app.state.privacy_retention_service.run.return_value = report
+
+    response = scheduler_client.post(
+        "/internal/scheduler/privacy-retention?dry_run=true",
+        headers=_scheduler_headers(),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == report.as_dict.return_value
+    scheduler_client.app.state.privacy_retention_service.run.assert_called_once_with(
+        dry_run=True,
+        translation_cache=scheduler_client.app.state.translation_service.cache,
+        feedback_service=scheduler_client.app.state.feedback_service,
+        learning_engine=scheduler_client.app.state.learning_engine,
+        processed_state_managers=(),
+        matrix_session_results={},
+    )
+
+
+def test_privacy_retention_failure_is_generic(
+    scheduler_client: TestClient,
+    monkeypatch,
+) -> None:
+    private_detail = "private retention failure"
+    scheduler_client.app.state.privacy_retention_service.run.side_effect = RuntimeError(
+        private_detail
+    )
+    record_failure = MagicMock()
+    monkeypatch.setattr(
+        scheduler,
+        "record_privacy_retention_failure",
+        record_failure,
+    )
+
+    response = scheduler_client.post(
+        "/internal/scheduler/privacy-retention",
+        headers=_scheduler_headers(),
+    )
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Scheduled task failed"}
+    assert private_detail not in response.text
+    record_failure.assert_called_once_with(
+        failed_store_groups=scheduler.RETENTION_STORE_GROUPS
+    )
+
+
+def test_privacy_retention_accounts_for_runtime_resolution_failure(
+    scheduler_client: TestClient,
+    monkeypatch,
+) -> None:
+    runtime = MagicMock()
+    runtime.resolve_optional.side_effect = RuntimeError("private resolver failure")
+    scheduler_client.app.state.channel_runtime = runtime
+    record_failure = MagicMock()
+    monkeypatch.setattr(
+        scheduler,
+        "record_privacy_retention_failure",
+        record_failure,
+    )
+
+    response = scheduler_client.post(
+        "/internal/scheduler/privacy-retention",
+        headers=_scheduler_headers(),
+    )
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Scheduled task failed"}
+    assert "private resolver failure" not in response.text
+    scheduler_client.app.state.privacy_retention_service.run.assert_not_called()
+    record_failure.assert_called_once_with(
+        failed_store_groups=scheduler.RETENTION_STORE_GROUPS
+    )
+
+
+def test_privacy_retention_coordinates_live_state_and_matrix_session(
+    scheduler_client: TestClient,
+    tmp_path,
+) -> None:
+    live_bisq = SimpleNamespace(state_file=tmp_path / "live-bisq.json")
+    training_bisq = SimpleNamespace(state_file=tmp_path / "training-bisq.json")
+    matrix_polling = SimpleNamespace(state_file=tmp_path / "matrix-polling.json")
+    events: list[str] = []
+
+    async def close_training_client() -> None:
+        events.append("training-closed")
+
+    async def rotate_live_session(**_kwargs):
+        events.append("live-rotated")
+        return session_result
+
+    runtime = MagicMock()
+    runtime.resolve_optional.return_value = live_bisq
+    scheduler_client.app.state.channel_runtime = runtime
+    scheduler_client.app.state.bisq_sync_state = training_bisq
+    scheduler_client.app.state.matrix_sync_service = SimpleNamespace(
+        polling_state=matrix_polling,
+        close=AsyncMock(side_effect=close_training_client),
+    )
+    session_path = tmp_path / "matrix-session.json"
+    session_result = SimpleNamespace(deleted_rows=2)
+    matrix_channel = SimpleNamespace(
+        rotate_expired_session=AsyncMock(side_effect=rotate_live_session)
+    )
+    scheduler_client.app.state.matrix_channel = matrix_channel
+    scheduler_client.app.state.privacy_retention_service.settings = SimpleNamespace(
+        MATRIX_SYNC_SESSION_PATH=str(session_path)
+    )
+    report = MagicMock()
+    report.as_dict.return_value = {"status": "completed"}
+    scheduler_client.app.state.privacy_retention_service.run.return_value = report
+
+    response = scheduler_client.post(
+        "/internal/scheduler/privacy-retention",
+        headers=_scheduler_headers(),
+    )
+
+    assert response.status_code == 200
+    matrix_channel.rotate_expired_session.assert_awaited_once_with(dry_run=False)
+    assert events == ["training-closed", "live-rotated"]
+    call = scheduler_client.app.state.privacy_retention_service.run.call_args
+    assert call.kwargs["processed_state_managers"] == (
+        live_bisq,
+        training_bisq,
+        matrix_polling,
+    )
+    assert call.kwargs["matrix_session_results"] == {
+        session_path.resolve(): session_result
+    }
 
 
 def test_reconciliation_uses_the_live_training_repository(

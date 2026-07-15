@@ -22,6 +22,7 @@ class TestBisqSyncIntegration:
         settings = MagicMock()
         settings.BISQ_API_URL = "http://localhost:8090"
         settings.BISQ_STAFF_USERS = ["staff1", "staff2"]
+        settings.DATA_RETENTION_DAYS = 7
         return settings
 
     @pytest.fixture
@@ -50,7 +51,7 @@ class TestBisqSyncIntegration:
             "app.services.training.unified_pipeline_service.Bisq2API"
         ), patch(
             "app.services.training.unified_pipeline_service.BisqSyncStateManager"
-        ):
+        ) as mock_state_class:
             mock_sync_instance = AsyncMock()
             mock_sync_instance.sync_conversations = AsyncMock(return_value=5)
             mock_sync_class.return_value = mock_sync_instance
@@ -62,6 +63,7 @@ class TestBisqSyncIntegration:
 
             # Verify sync_conversations was called
             mock_sync_instance.sync_conversations.assert_called_once()
+            mock_state_class.assert_called_once_with(retention_days=7)
 
             assert result == 5
 
@@ -139,6 +141,7 @@ class TestMatrixSyncIntegration:
         settings = MagicMock()
         settings.MATRIX_ROOM_IDS = ["!room:matrix.org"]
         settings.MATRIX_STAFF_IDS = ["@staff:matrix.org"]
+        settings.DATA_RETENTION_DAYS = 7
         return settings
 
     @pytest.fixture
@@ -165,7 +168,7 @@ class TestMatrixSyncIntegration:
             "app.services.training.unified_pipeline_service.MatrixSyncService"
         ) as mock_sync_class, patch(
             "app.services.training.unified_pipeline_service.PollingStateManager"
-        ):
+        ) as mock_state_class:
             mock_sync_instance = AsyncMock()
             mock_sync_instance.sync_rooms = AsyncMock(return_value=3)
             mock_sync_class.return_value = mock_sync_instance
@@ -174,6 +177,7 @@ class TestMatrixSyncIntegration:
 
             mock_sync_class.assert_called_once()
             mock_sync_instance.sync_rooms.assert_called_once()
+            assert mock_state_class.call_args.kwargs["retention_days"] == 7
 
             assert result == 3
 

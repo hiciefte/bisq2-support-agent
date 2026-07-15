@@ -11,28 +11,37 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
-import { AlertTriangle, Send, Database, Trash2, FileText } from "lucide-react"
+import { AlertTriangle, Send, Database, Trash2, FileText, KeyRound } from "lucide-react"
 
-const STORAGE_KEY = "bisq-privacy-warning-acknowledged"
+const STORAGE_KEY_PREFIX = "bisq-privacy-warning-acknowledged-v3"
 
-export function PrivacyWarningModal() {
+interface PrivacyWarningModalProps {
+  retentionDays: number
+}
+
+export function PrivacyWarningModal({ retentionDays }: PrivacyWarningModalProps) {
   const [showModal, setShowModal] = useState(false)
+  const storageKey = `${STORAGE_KEY_PREFIX}-${retentionDays}-days`
 
   useEffect(() => {
-    const acknowledged = localStorage.getItem(STORAGE_KEY)
+    const acknowledged = localStorage.getItem(storageKey)
     if (!acknowledged) {
       setShowModal(true)
     }
-  }, [])
+  }, [storageKey])
 
   const handleAcknowledge = () => {
-    localStorage.setItem(STORAGE_KEY, "true")
+    localStorage.setItem(storageKey, "true")
     setShowModal(false)
   }
 
   return (
     <Dialog open={showModal} onOpenChange={() => {}}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" onPointerDownOutside={(e) => e.preventDefault()} showClose={false}>
+      <DialogContent
+        className="max-w-2xl max-h-[90vh] overflow-y-auto"
+        onPointerDownOutside={(e) => e.preventDefault()}
+        showClose={false}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-xl">
             <AlertTriangle className="h-6 w-6 text-yellow-500" />
@@ -76,44 +85,60 @@ export function PrivacyWarningModal() {
             <div className="flex items-start gap-3">
               <Send className="h-5 w-5 text-muted-foreground flex-shrink-0 mt-0.5" />
               <p>
-                <strong>Your questions are sent to OpenAI</strong> for AI processing
-              </p>
-            </div>
-            <div className="flex items-start gap-3">
-              <Database className="h-5 w-5 text-muted-foreground flex-shrink-0 mt-0.5" />
-              <p>
-                <strong>We collect questions, answers, and feedback</strong> to improve our service
+                <strong>
+                  Questions and conversation context may be sent to external providers
+                </strong>{" "}
+                for AI or translation processing
               </p>
             </div>
             <div className="flex items-start gap-3">
               <Trash2 className="h-5 w-5 text-muted-foreground flex-shrink-0 mt-0.5" />
               <p>
-                <strong>All personal data is automatically deleted after 30 days</strong>
+                <strong>
+                  Qualifying local support records older than {retentionDays} days are deleted or
+                  anonymized
+                </strong>
+                , including questions, answers, feedback, escalations, channel identifiers, and
+                bind-mounted logs; legacy rows with no provable timestamp can remain pending manual
+                review, and container runtime logs require a separately verified host policy
+              </p>
+            </div>
+            <div className="flex items-start gap-3">
+              <Database className="h-5 w-5 text-muted-foreground flex-shrink-0 mt-0.5" />
+              <p>
+                <strong>Reviewed knowledge text and aggregate metrics may be retained</strong>{" "}
+                indefinitely; FAQs and support playbooks can keep reviewed question and answer text
+                without structured source identifiers or conversation links, while aggregates
+                exclude message text
               </p>
             </div>
             <div className="flex items-start gap-3">
               <FileText className="h-5 w-5 text-muted-foreground flex-shrink-0 mt-0.5" />
               <p>
-                <strong>Only anonymized FAQs are kept permanently</strong>
+                <strong>Matrix, Bisq, and provider-held copies are outside local deletion</strong>{" "}
+                and follow those systems&apos; policies
+              </p>
+            </div>
+            <div className="flex items-start gap-3">
+              <KeyRound className="h-5 w-5 text-muted-foreground flex-shrink-0 mt-0.5" />
+              <p>
+                <strong>
+                  Matrix session and local encryption state rotate on the {retentionDays}-day
+                  cadence
+                </strong>
+                ; the integration reauthenticates, while current Matrix and Bisq sync cursors can
+                remain as operational checkpoints
               </p>
             </div>
           </div>
 
           <p className="text-xs text-muted-foreground">
             By using this service, you agree to our{" "}
-            <Link
-              href="/terms"
-              target="_blank"
-              className="text-primary hover:underline"
-            >
+            <Link href="/terms" target="_blank" className="text-primary hover:underline">
               Terms of Service
-            </Link>
-            {" "}and{" "}
-            <Link
-              href="/privacy"
-              target="_blank"
-              className="text-primary hover:underline"
-            >
+            </Link>{" "}
+            and{" "}
+            <Link href="/privacy" target="_blank" className="text-primary hover:underline">
               Privacy Policy
             </Link>
             .
@@ -121,28 +146,17 @@ export function PrivacyWarningModal() {
         </div>
 
         <DialogFooter className="flex-col sm:flex-row gap-2">
-          <Button
-            variant="outline"
-            asChild
-            className="w-full sm:w-auto"
-          >
+          <Button variant="outline" asChild className="w-full sm:w-auto">
             <Link href="/terms" target="_blank">
               Terms of Service
             </Link>
           </Button>
-          <Button
-            variant="outline"
-            asChild
-            className="w-full sm:w-auto"
-          >
+          <Button variant="outline" asChild className="w-full sm:w-auto">
             <Link href="/privacy" target="_blank">
               Privacy Policy
             </Link>
           </Button>
-          <Button
-            onClick={handleAcknowledge}
-            className="w-full sm:w-auto"
-          >
+          <Button onClick={handleAcknowledge} className="w-full sm:w-auto">
             I Understand
           </Button>
         </DialogFooter>

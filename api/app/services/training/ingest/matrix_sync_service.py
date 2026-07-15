@@ -80,6 +80,7 @@ class MatrixSyncService:
         # Matrix client (created lazily)
         self._client: Optional["AsyncClient"] = None
         self._client_lock = asyncio.Lock()
+        self._sync_lock = asyncio.Lock()
         self._connection_manager: Optional[Any] = None
         self._session_manager: Optional[Any] = None
         self._error_handler: Optional[Any] = None
@@ -134,6 +135,11 @@ class MatrixSyncService:
         return bool(homeserver) and bool(rooms)
 
     async def sync_rooms(self) -> int:
+        """Serialize room sync with session-retention maintenance."""
+        async with self._sync_lock:
+            return await self._sync_rooms_locked()
+
+    async def _sync_rooms_locked(self) -> int:
         """Poll all configured rooms and process Q&A pairs.
 
         Returns:
@@ -359,9 +365,16 @@ class MatrixSyncService:
 
     async def close(self) -> None:
         """Close Matrix client connection."""
-        if self._connection_manager:
-            await self._connection_manager.disconnect()
-        self._client = None
+        async with self._sync_lock:
+            if self._connection_manager:
+                await self._connection_manager.disconnect()
+            if self._client is not None:
+                self._client.access_token = None
+                self._client.device_id = None
+            self._client = None
+            self._connection_manager = None
+            self._session_manager = None
+            self._error_handler = None
 
 
 __all__ = [

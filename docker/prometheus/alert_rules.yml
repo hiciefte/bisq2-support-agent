@@ -245,6 +245,121 @@ groups:
           summary: "Training review queue backlog: {{ $value }} items"
           description: "The FULL_REVIEW queue has {{ $value }} items pending. Consider reviewing and clearing the backlog."
 
+  - name: privacy_retention_alerts
+    interval: 30s
+    rules:
+      - alert: PrivacyRetentionWindowExceeded
+        expr: max by (store) (privacy_retention_oldest_age_seconds) > on (store) max by (store) (privacy_retention_window_seconds)
+        for: 15m
+        labels:
+          severity: critical
+          component: privacy
+        annotations:
+          summary: "Privacy-retention window exceeded for {{ $labels.store }}"
+          description: "The oldest retained local personal-data record is older than its configured window."
+          runbook_url: "docs/runbooks/privacy-retention.md"
+
+      - alert: PrivacyRetentionMetricsMissing
+        expr: |
+          absent(privacy_retention_last_success_timestamp_seconds{job="api",store="feedback"})
+          or absent(privacy_retention_last_success_timestamp_seconds{job="api",store="escalations"})
+          or absent(privacy_retention_last_success_timestamp_seconds{job="api",store="training"})
+          or absent(privacy_retention_last_success_timestamp_seconds{job="api",store="translations"})
+          or absent(privacy_retention_last_success_timestamp_seconds{job="api",store="processed_ids"})
+          or absent(privacy_retention_last_success_timestamp_seconds{job="api",store="file_artifacts"})
+          or absent(privacy_retention_oldest_age_seconds{job="api"})
+          or absent(privacy_retention_window_seconds{job="api"})
+          or (
+            privacy_retention_oldest_age_seconds{job="api"}
+            unless on (job, instance, store)
+            privacy_retention_window_seconds{job="api"}
+          )
+          or (
+            privacy_retention_window_seconds{job="api"}
+            unless on (job, instance, store)
+            privacy_retention_oldest_age_seconds{job="api"}
+          )
+        for: 15m
+        labels:
+          severity: critical
+          component: privacy
+        annotations:
+          summary: "Privacy-retention metrics are missing"
+          description: "At least one required store-group success or per-store age/window series is absent."
+          runbook_url: "docs/runbooks/privacy-retention.md"
+
+      - alert: PrivacyRetentionJobStale
+        expr: (time() - privacy_retention_last_success_timestamp_seconds{job="api"}) > 90000
+        for: 15m
+        labels:
+          severity: critical
+          component: privacy
+        annotations:
+          summary: "Privacy-retention store group {{ $labels.store }} is stale"
+          description: "No successful run for this store group has been observed within the daily schedule allowance."
+          runbook_url: "docs/runbooks/privacy-retention.md"
+
+      - alert: PrivacyRetentionLogMetricsMissing
+        expr: |
+          absent(privacy_retention_log_last_success_timestamp_seconds{job="node-exporter"})
+          or absent(privacy_retention_oldest_age_seconds{job="node-exporter",store="application_logs"})
+          or absent(privacy_retention_window_seconds{job="node-exporter",store="application_logs"})
+        for: 15m
+        labels:
+          severity: critical
+          component: privacy
+        annotations:
+          summary: "Bind-mounted log-retention metrics are missing"
+          description: "The log-retention success or age/window telemetry is absent."
+          runbook_url: "docs/runbooks/privacy-retention.md"
+
+      - alert: PrivacyRetentionLogJobStale
+        expr: (time() - privacy_retention_log_last_success_timestamp_seconds{job="node-exporter"}) > 90000
+        for: 15m
+        labels:
+          severity: critical
+          component: privacy
+        annotations:
+          summary: "Bind-mounted log-retention job is stale"
+          description: "No successful bind-mounted log-retention run has been observed within the daily schedule allowance."
+          runbook_url: "docs/runbooks/privacy-retention.md"
+
+      - alert: MatrixAlertRelayRetentionMetricsMissing
+        expr: |
+          absent(privacy_retention_last_success_timestamp_seconds{job="matrix-alert-relay",store="matrix_alert_relay_session"})
+          or absent(privacy_retention_oldest_age_seconds{job="matrix-alert-relay",store="matrix_alert_relay_session"})
+          or absent(privacy_retention_window_seconds{job="matrix-alert-relay",store="matrix_alert_relay_session"})
+        for: 15m
+        labels:
+          severity: critical
+          component: privacy
+        annotations:
+          summary: "Matrix alert-relay retention metrics are missing"
+          description: "The isolated Matrix alert relay is missing success or age/window telemetry."
+          runbook_url: "docs/runbooks/privacy-retention.md"
+
+      - alert: MatrixAlertRelayRetentionStale
+        expr: (time() - privacy_retention_last_success_timestamp_seconds{job="matrix-alert-relay",store="matrix_alert_relay_session"}) > 7500
+        for: 15m
+        labels:
+          severity: critical
+          component: privacy
+        annotations:
+          summary: "Matrix alert-relay retention is stale"
+          description: "The isolated Matrix alert relay has not reported a successful session-retention check within its hourly schedule allowance."
+          runbook_url: "docs/runbooks/privacy-retention.md"
+
+      - alert: PrivacyRetentionFailures
+        expr: increase(privacy_retention_failures_total[1h]) > 0
+        for: 5m
+        labels:
+          severity: critical
+          component: privacy
+        annotations:
+          summary: "Privacy-retention store group {{ $labels.store }} failed"
+          description: "A local personal-data store group failed retention processing."
+          runbook_url: "docs/runbooks/privacy-retention.md"
+
   - name: operator_security_alerts
     interval: 30s
     rules:

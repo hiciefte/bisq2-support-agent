@@ -568,7 +568,6 @@ class KnowledgeUpdateService:
             candidate=candidate,
             proposal=proposal,
             target=target,
-            reviewer=reviewer,
         )
         review_notes = _section_text_from_markdown(final_markdown, "Review Notes")
         last_change_summary = _section_text_from_markdown(
@@ -1400,7 +1399,6 @@ class KnowledgeUpdateService:
         target: Optional[LLMWikiPageRecord],
         operations: List[Dict[str, Any]],
         source_refs: List[str],
-        reviewer: Optional[str] = None,
     ) -> str:
         source_refs = _durable_source_refs(source_refs)
         operations = _sanitize_operations(operations)
@@ -1408,7 +1406,7 @@ class KnowledgeUpdateService:
             frontmatter = dict(target.frontmatter)
             body = target.body
         else:
-            frontmatter = self._new_page_frontmatter(candidate, source_refs, reviewer)
+            frontmatter = self._new_page_frontmatter(candidate, source_refs)
             body = _empty_playbook_body()
 
         merged_refs = _durable_source_refs(
@@ -1421,9 +1419,7 @@ class KnowledgeUpdateService:
                 "status": REVIEWED_STATUS,
                 "protocol": frontmatter.get("protocol") or candidate.protocol or "all",
                 "source_refs": merged_refs,
-                "reviewed_by": reviewer
-                or frontmatter.get("reviewed_by")
-                or "support-admin",
+                "reviewed_by": "support-admin",
                 "reviewed_at": datetime.now(timezone.utc).date().isoformat(),
                 "risk_level": frontmatter.get("risk_level") or _risk_level(candidate),
             }
@@ -1437,7 +1433,6 @@ class KnowledgeUpdateService:
         candidate: UnifiedFAQCandidate,
         proposal: KnowledgeUpdateProposal,
         target: Optional[LLMWikiPageRecord],
-        reviewer: Optional[str] = None,
     ) -> str:
         page_id = proposal.target_page_id or self._new_page_id(candidate)
         if proposal.document_markdown_override:
@@ -1446,7 +1441,6 @@ class KnowledgeUpdateService:
                 candidate=candidate,
                 source_refs=proposal.source_refs,
                 page_id=page_id,
-                reviewer=reviewer,
             )
 
         return self._render_preview(
@@ -1454,7 +1448,6 @@ class KnowledgeUpdateService:
             target=target,
             operations=proposal.operations,
             source_refs=proposal.source_refs,
-            reviewer=reviewer,
         )
 
     def _normalize_document_markdown(
@@ -1464,7 +1457,6 @@ class KnowledgeUpdateService:
         candidate: UnifiedFAQCandidate,
         source_refs: List[str],
         page_id: str,
-        reviewer: Optional[str] = None,
     ) -> str:
         parsed = _read_markdown_text(markdown)
         if parsed is None:
@@ -1483,9 +1475,7 @@ class KnowledgeUpdateService:
                 "status": REVIEWED_STATUS,
                 "protocol": frontmatter.get("protocol") or candidate.protocol or "all",
                 "source_refs": merged_refs,
-                "reviewed_by": reviewer
-                or frontmatter.get("reviewed_by")
-                or "support-admin",
+                "reviewed_by": "support-admin",
                 "reviewed_at": datetime.now(timezone.utc).date().isoformat(),
                 "risk_level": frontmatter.get("risk_level") or _risk_level(candidate),
             }
@@ -1798,7 +1788,6 @@ class KnowledgeUpdateService:
         self,
         candidate: UnifiedFAQCandidate,
         source_refs: List[str],
-        reviewer: Optional[str],
     ) -> Dict[str, Any]:
         return {
             "id": self._new_page_id(candidate),
@@ -1807,7 +1796,7 @@ class KnowledgeUpdateService:
             "page_type": "support_playbook",
             "status": REVIEWED_STATUS,
             "protocol": candidate.protocol or "all",
-            "reviewed_by": reviewer or "support-admin",
+            "reviewed_by": "support-admin",
             "reviewed_at": datetime.now(timezone.utc).date().isoformat(),
             "risk_level": _risk_level(candidate),
             "source_refs": source_refs,
