@@ -37,16 +37,27 @@ def nginx_conf(request):
 class TestNginxHealthRoutes:
     """Ensure health routing matches frontend and operational expectations."""
 
-    def test_api_health_proxy_is_publicly_routed(self, nginx_conf):
-        """The web proxy health path must reach FastAPI, not nginx 403."""
-        block = _location_block(nginx_conf, "location ~ ^/api/health(/ready|/live)?$ {")
+    def test_api_health_and_liveness_are_publicly_routed(self, nginx_conf):
+        """Legacy health paths must continue to reach FastAPI."""
+        block = _location_block(nginx_conf, "location ~ ^/api/health(/live)?$ {")
 
         assert "deny all;" not in block
         assert "allow 127.0.0.1;" not in block
         assert "allow 172.16.0.0/12;" not in block
-        assert "rewrite ^/api/health(/ready|/live)?$ /health$1 break;" in block
+        assert "rewrite ^/api/health(/live)?$ /health$1 break;" in block
         assert "proxy_pass http://api:8000;" in block
         assert "proxy_pass http://api:8000/health$1;" not in block
+
+    @pytest.mark.parametrize(
+        "path",
+        ["/api/health/ready", "/api/health/ready/"],
+    )
+    def test_api_readiness_is_not_publicly_proxied(self, nginx_conf, path):
+        """Dependency probes must remain on the internal service path."""
+        block = _location_block(nginx_conf, f"location = {path} {{")
+
+        assert "return 404;" in block
+        assert "proxy_pass" not in block
 
     def test_api_metrics_remains_internal_only(self, nginx_conf):
         """Prometheus metrics should stay restricted even though health is public."""

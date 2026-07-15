@@ -522,9 +522,18 @@ rebuild_services() {
     log_info "Ensuring monitoring services are running..."
     # Start all monitoring services (if defined in compose file)
     # These services enhance observability; graceful degradation if unavailable
-    local monitoring_services=("prometheus" "grafana" "node-exporter" "alertmanager" "cadvisor" "scheduler")
+    local monitoring_services=("prometheus" "blackbox-exporter" "grafana" "node-exporter" "alertmanager" "cadvisor" "scheduler")
+    local compose_services=""
+    local compose_services_known=0
+    if compose_services=$(run_docker_compose "$docker_dir" "$compose_file" config --services 2>/dev/null); then
+        compose_services_known=1
+    fi
     local monitoring_failed=0
     for svc in "${monitoring_services[@]}"; do
+        if [ "$compose_services_known" -eq 1 ] && \
+            ! compose_service_is_listed "$compose_services" "$svc"; then
+            continue
+        fi
         if run_docker_compose "$docker_dir" "$compose_file" up -d "$svc" 2>/dev/null; then
             log_success "Monitoring service $svc started"
         else
@@ -753,14 +762,27 @@ show_service_status() {
     echo ""
 }
 
+compose_service_is_listed() {
+    local compose_services="$1"
+    local expected_service="$2"
+    local defined_service
+
+    while IFS= read -r defined_service; do
+        if [ "$defined_service" = "$expected_service" ]; then
+            return 0
+        fi
+    done <<< "$compose_services"
+    return 1
+}
+
 # Function to check all services and auto-restart failed ones
 check_and_repair_services() {
     local docker_dir="${1:-$DOCKER_DIR}"
     local compose_file="${2:-docker-compose.yml}"
     local failed_services=()
     # All core and monitoring services are critical for production operation
-    local critical_services=("api" "matrix-alert-relay" "web" "nginx" "prometheus" "grafana" "node-exporter" "scheduler" "alertmanager")
-    local all_services=("nginx" "web" "api" "matrix-alert-relay" "bisq2-api" "prometheus" "grafana" "node-exporter" "scheduler" "alertmanager" "cadvisor")
+    local critical_services=("api" "matrix-alert-relay" "web" "nginx" "prometheus" "blackbox-exporter" "grafana" "node-exporter" "scheduler" "alertmanager")
+    local all_services=("nginx" "web" "api" "matrix-alert-relay" "bisq2-api" "prometheus" "blackbox-exporter" "grafana" "node-exporter" "scheduler" "alertmanager" "cadvisor")
 
     if uses_qdrant_runtime; then
         critical_services=("qdrant" "${critical_services[@]}")
@@ -770,19 +792,17 @@ check_and_repair_services() {
     cd "$docker_dir" || return 1
 
     # The currently loaded helpers can outlive a rollback's git reset. Keep the
-    # relay critical when the checked-out Compose file defines it, but do not
-    # try to repair a service that does not exist in an older revision.
+    # newly added services critical when the checked-out Compose file defines
+    # them, but do not repair services that do not exist in older revisions.
     local compose_services
-    local relay_service_defined=1
+    local undefined_optional_services=""
     if compose_services=$(run_docker_compose "$docker_dir" "$compose_file" config --services 2>/dev/null); then
-        relay_service_defined=0
-        local defined_service
-        while IFS= read -r defined_service; do
-            if [ "$defined_service" = "matrix-alert-relay" ]; then
-                relay_service_defined=1
-                break
+        local optional_service
+        for optional_service in "matrix-alert-relay" "blackbox-exporter"; do
+            if ! compose_service_is_listed "$compose_services" "$optional_service"; then
+                undefined_optional_services="$undefined_optional_services $optional_service"
             fi
-        done <<< "$compose_services"
+        done
     fi
 
     log_info "Checking all services..."
@@ -791,9 +811,9 @@ check_and_repair_services() {
     # Check all services and separate critical from non-critical failures
     local failed_critical=()
     for service in "${all_services[@]}"; do
-        if [ "$service" = "matrix-alert-relay" ] && [ "$relay_service_defined" -eq 0 ]; then
-            continue
-        fi
+        case " $undefined_optional_services " in
+            *" $service "*) continue ;;
+        esac
         if ! check_service "$service" "$docker_dir" "$compose_file"; then
             failed_services+=("$service")
             # Check if this is a critical service
@@ -889,4 +909,5 @@ export -f test_chat_endpoint
 export -f is_mcp_live_data_enabled
 export -f test_live_data_chat_endpoint
 export -f show_service_status
+export -f compose_service_is_listed
 export -f check_and_repair_services

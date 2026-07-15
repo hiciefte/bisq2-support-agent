@@ -128,8 +128,8 @@ wait_for_healthy() {
 # Main health check logic
 main() {
     local failed_services=()
-    local critical_services=("qdrant" "api" "matrix-alert-relay" "web" "nginx" "prometheus" "grafana" "node-exporter" "scheduler" "alertmanager")
-    local all_services=("qdrant" "nginx" "web" "api" "matrix-alert-relay" "bisq2-api" "prometheus" "grafana" "node-exporter" "scheduler" "alertmanager" "cadvisor")
+    local critical_services=("qdrant" "api" "matrix-alert-relay" "web" "nginx" "prometheus" "blackbox-exporter" "grafana" "node-exporter" "scheduler" "alertmanager")
+    local all_services=("qdrant" "nginx" "web" "api" "matrix-alert-relay" "bisq2-api" "prometheus" "blackbox-exporter" "grafana" "node-exporter" "scheduler" "alertmanager" "cadvisor")
 
     echo -e "${BLUE}Checking all services...${NC}"
     echo ""

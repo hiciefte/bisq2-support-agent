@@ -70,7 +70,7 @@ services:
       - "8000:8000"
     healthcheck:
       # Extend the startup period to allow for slow initial setup (e.g., embedding downloads)
-      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+      test: [ "CMD", "curl", "-fsS", "--max-time", "5", "http://localhost:8000/health/ready" ]
       interval: 30s
       timeout: 10s
       retries: 5

@@ -20,6 +20,14 @@ route:
 
   # Routes for different severity levels
   routes:
+    # Operator-run end-to-end alert delivery drill
+    - match:
+        alertname: 'AlertDeliveryDrill'
+      receiver: 'matrix-drill'
+      group_wait: 0s
+      group_interval: 5s
+      repeat_interval: 1h
+
     # Critical alerts - immediate notification
     - match:
         severity: critical
@@ -52,6 +60,16 @@ inhibit_rules:
 
 # Receivers configuration
 receivers:
+  # Dedicated receiver lets the drill verify its receiver-scoped counters.
+  - name: 'matrix-drill'
+    webhook_configs:
+      - url: 'http://matrix-alert-relay:8000/alerts'
+        send_resolved: true
+        http_config:
+          authorization:
+            type: Bearer
+            credentials_file: /run/bisq-secrets/alertmanager/alertmanager_webhook_secret
+
   # Default Matrix receiver (all alerts)
   - name: 'matrix-notifications'
     webhook_configs:

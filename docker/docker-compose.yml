@@ -266,9 +266,10 @@ services:
     depends_on:
       scheduler-secret-init:
         condition: service_completed_successfully
+      qdrant:
+        condition: service_healthy
     healthcheck:
-      # Use localhost for more reliable health checking during startup
-      test: [ "CMD", "curl", "-fsS", "--max-time", "5", "http://localhost:8000/health" ]
+      test: [ "CMD", "curl", "-fsS", "--max-time", "5", "http://localhost:8000/health/ready" ]
       interval: 15s
       timeout: 10s
       retries: 5
@@ -378,8 +379,36 @@ services:
           memory: 512M
 
   # Monitoring - Prometheus
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.25.0
+    restart: always
+    command:
+      - '--config.file=/etc/blackbox_exporter/config.yml'
+    volumes:
+      - ./prometheus/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    expose:
+      - "9115"
+    networks:
+      - bisq-support-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9115/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 128M
+
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.9.1
     restart: always
     volumes:
       - ./prometheus:/etc/prometheus
@@ -396,6 +425,9 @@ services:
       - "9090"
     networks:
       - bisq-support-network
+    depends_on:
+      blackbox-exporter:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
       interval: 30s
@@ -479,11 +511,13 @@ services:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/rootfs:ro
+      - scheduler-metrics:/var/lib/node_exporter/textfile_collector:ro
     command:
       - '--path.procfs=/host/proc'
       - '--path.sysfs=/host/sys'
       - '--path.rootfs=/rootfs'
       - '--collector.filesystem.ignored-mount-points=^/(sys|proc|dev|host|etc)($$|/)'
+      - '--collector.textfile.directory=/var/lib/node_exporter/textfile_collector'
     expose:
       - "9100"
     networks:
@@ -592,7 +626,7 @@ services:
 
   # Alertmanager for alert routing and notification
   alertmanager:
-    image: prom/alertmanager:v0.26.0
+    image: prom/alertmanager:v0.27.0
     restart: always
     volumes:
       - ./alertmanager:/etc/alertmanager:ro
@@ -601,6 +635,7 @@ services:
     command:
       - '--config.file=/etc/alertmanager/alertmanager.yml'
       - '--storage.path=/alertmanager'
+      - '--enable-feature=receiver-name-in-metrics'
     expose:
       - "9093"
     networks:
@@ -641,6 +676,7 @@ services:
     volumes:
       - ./scripts/lib/runtime-secret.sh:/scripts/lib/runtime-secret.sh:ro
       - ./scripts/lib/scheduler-api.sh:/scripts/lib/scheduler-api.sh:ro
+      - ./scripts/scheduler-heartbeat.sh:/scripts/scheduler-heartbeat.sh:ro
       - ./scripts/bisq-readiness-check.sh:/scripts/bisq-readiness-check.sh:ro
       - ./scripts/poll-matrix.sh:/scripts/poll-matrix.sh:ro
       - ./scripts/process-feedback.sh:/scripts/process-feedback.sh:ro
@@ -649,11 +685,13 @@ services:
       - ./scripts/update-wiki.sh:/scripts/update-wiki.sh:ro
       - ./logs/cron:/var/log/cron
       - scheduler-api-secret:/run/bisq-secrets/scheduler:ro
+      - scheduler-metrics:/var/lib/node_exporter/textfile_collector
     command: >
       sh -c "
         apk add --no-cache bash coreutils curl jq bc &&
         . /scripts/lib/scheduler-api.sh &&
         mkdir -p /var/log/cron &&
+        mkdir -p /var/lib/node_exporter/textfile_collector &&
         # Add @reboot entries to run scripts once when crond starts
         echo '@reboot /scripts/process-feedback.sh >> /var/log/cron/feedback.log 2>&1' > /etc/crontabs/root &&
         echo '@reboot /scripts/bisq-readiness-check.sh >> /var/log/cron/bisq-readiness.log 2>&1' >> /etc/crontabs/root &&
@@ -666,8 +704,8 @@ services:
         echo '*/10 * * * * /scripts/bisq-readiness-check.sh >> /var/log/cron/bisq-readiness.log 2>&1' >> /etc/crontabs/root &&
         echo '0 */12 * * * /scripts/poll-matrix.sh >> /var/log/cron/matrix-poll.log 2>&1' >> /etc/crontabs/root &&
         # The heartbeat proves crond is executing jobs, not merely running.
-        echo '* * * * * touch /tmp/scheduler-heartbeat' >> /etc/crontabs/root &&
-        touch /tmp/scheduler-heartbeat &&
+        echo '* * * * * /scripts/scheduler-heartbeat.sh' >> /etc/crontabs/root &&
+        /scripts/scheduler-heartbeat.sh &&
         # Start cron daemon in foreground, logging verbosely to stderr (which goes to docker logs)
         crond -f -l 8 -d 8
       "
@@ -708,6 +746,7 @@ volumes:
   alertmanager-webhook-secret:
   matrix-alert-relay-data:
   scheduler-api-secret:
+  scheduler-metrics:
   qdrant-data:
     name: bisq2-qdrant-data
   web_node_modules:
