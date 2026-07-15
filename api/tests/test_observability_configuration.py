@@ -298,7 +298,7 @@ def test_alert_delivery_drill_uses_a_dedicated_verified_receiver() -> None:
 
     assert drill_route["group_wait"] == "0s"
     assert receiver["webhook_configs"]
-    assert alertmanager_service["image"] == "prom/alertmanager:v0.27.0"
+    assert alertmanager_service["image"].startswith("prom/alertmanager:v0.27.0@sha256:")
     assert (
         "--enable-feature=receiver-name-in-metrics" in alertmanager_service["command"]
     )

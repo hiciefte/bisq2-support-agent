@@ -1,8 +1,8 @@
 # ---- Builder Stage ----
-FROM eclipse-temurin:21-jdk AS builder
+FROM eclipse-temurin:21-jdk@sha256:1eeacc8c295ed4805f6ffead2417b1936aad296b02ea9e56b457230befc9e98d AS builder
 
 # Define build arguments with defaults
-ARG BISQ2_BRANCH=add-support-api
+ARG BISQ2_COMMIT=e1b45babafa45b5f4dbaabdf4dedec4b6de4d6ac
 ARG BISQ2_REPO_URL=https://github.com/hiciefte/bisq2.git
 
 WORKDIR /opt/bisq2
@@ -13,9 +13,13 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Clone repository (shallow clone)
-# Using ARG values for branch and repo URL
-RUN git clone --depth 1 --recurse-submodules -b ${BISQ2_BRANCH} ${BISQ2_REPO_URL} .
+# Fetch only the configured commit and verify that the server returned it.
+RUN git init . && \
+    git remote add origin "${BISQ2_REPO_URL}" && \
+    git fetch --depth 1 origin "${BISQ2_COMMIT}" && \
+    test "$(git rev-parse FETCH_HEAD)" = "${BISQ2_COMMIT}" && \
+    git checkout --detach FETCH_HEAD && \
+    git submodule update --init --recursive --depth 1
 
 # Attempt to download dependencies using files cloned inside the container.
 # Continue even if it fails (e.g., project structure changed).
@@ -27,7 +31,7 @@ RUN ./gradlew :apps:api-app:installDist --no-daemon
 
 # ---- Final Stage ----
 # Use a smaller JRE image for the runtime environment
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:21-jre@sha256:d2b9f8f12212cadcfdf889461531784e8fd097feade954d65b31ee7a71c473ec
 
 WORKDIR /opt/bisq2
 

@@ -1,5 +1,5 @@
 # --- Builder Stage ---
-FROM python:3.11-slim AS builder
+FROM python:3.11-slim@sha256:baf89808ec37adeaab83cec287adb4a2afa4a11c1d51e961c7ec737877e61af6 AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -28,9 +28,13 @@ RUN PIP_DEFAULT_TIMEOUT="${PIP_DEFAULT_TIMEOUT}" pip install --no-cache-dir \
 # hadolint ignore=DL3013,DL3059
 RUN PIP_DEFAULT_TIMEOUT="${PIP_DEFAULT_TIMEOUT}" pip install --no-cache-dir -r requirements.txt
 
+# Override the packaging tool bundled with the base image after all dependencies.
+# hadolint ignore=DL3013,DL3059
+RUN pip install --no-cache-dir setuptools==83.0.0
+
 
 # --- Development Stage ---
-FROM python:3.11-slim AS development
+FROM python:3.11-slim@sha256:baf89808ec37adeaab83cec287adb4a2afa4a11c1d51e961c7ec737877e61af6 AS development
 
 # Install build dependencies and tools for development
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -78,7 +82,7 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload
 
 
 # --- Final Stage ---
-FROM python:3.11-slim AS final
+FROM python:3.11-slim@sha256:baf89808ec37adeaab83cec287adb4a2afa4a11c1d51e961c7ec737877e61af6 AS final
 
 # Install curl for health checks and gosu for privilege dropping
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -97,6 +101,9 @@ RUN groupadd -g "${APP_GID}" bisq-support && \
 
 # Set up work directory
 WORKDIR /app
+
+# Remove the base image's older package before overlaying the pinned builder copy.
+RUN pip uninstall --yes setuptools
 
 # Copy dependencies from builder
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
