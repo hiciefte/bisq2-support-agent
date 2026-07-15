@@ -117,9 +117,9 @@ def _prepare_empty_extraction_destination(destination: Path) -> Path:
             continue
         try:
             current.mkdir(mode=0o700)
-        except FileExistsError:
+        except FileExistsError as exc:
             if current.is_symlink() or not current.is_dir():
-                raise RecoveryError("Extraction destination path is unsafe")
+                raise RecoveryError("Extraction destination path is unsafe") from exc
 
     destination_stat = destination.stat()
     if destination_existed and (
@@ -813,7 +813,9 @@ def _matrix_roots_from_manifest(
     return matrix_files, matrix_store_roots
 
 
-def _load_application_manifest(root: Path) -> dict[str, Any]:
+def _load_application_manifest(
+    root: Path,
+) -> tuple[dict[str, Any], set[Path], set[Path]]:
     path = root / "manifest/application.json"
     try:
         manifest = json.loads(path.read_text(encoding="utf-8"))
@@ -823,8 +825,8 @@ def _load_application_manifest(root: Path) -> dict[str, Any]:
         raise RecoveryError("Unsupported application snapshot format")
     if not isinstance(manifest.get("entries"), list):
         raise RecoveryError("Application snapshot entries are invalid")
-    _matrix_roots_from_manifest(manifest)
-    return manifest
+    matrix_state_files, matrix_store_roots = _matrix_roots_from_manifest(manifest)
+    return manifest, matrix_state_files, matrix_store_roots
 
 
 def _entry_is_selected(entry: dict[str, Any], selected: set[str]) -> bool:
@@ -947,7 +949,9 @@ def _remove_restored_data_file(destination: Path, sqlite_file: bool) -> None:
 def _verify_application_restore(
     root: Path, scratch: Path, selected: set[str]
 ) -> tuple[int, int]:
-    manifest = _load_application_manifest(root)
+    manifest, _matrix_state_files, _matrix_store_roots = _load_application_manifest(
+        root
+    )
     restored_count = 0
     sqlite_count = 0
     for entry in manifest["entries"]:
@@ -1177,8 +1181,9 @@ def restore_data(
     rollback_dir = rollback_dir.resolve()
     if rollback_dir == data_dir or data_dir in rollback_dir.parents:
         raise RecoveryError("Rollback directory must be outside application data")
-    manifest = _load_application_manifest(snapshot_root)
-    matrix_state_files, matrix_store_roots = _matrix_roots_from_manifest(manifest)
+    manifest, matrix_state_files, matrix_store_roots = _load_application_manifest(
+        snapshot_root
+    )
     for configured in matrix_state_paths or set():
         relative = _safe_relative(configured.as_posix())
         represented = (

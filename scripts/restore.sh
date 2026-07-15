@@ -32,6 +32,7 @@ SCRATCH_QDRANT_VOLUME=""
 APPLICATION_RESTORE_STARTED=false
 QDRANT_ROLLBACK_AVAILABLE=false
 RESTORE_COMMITTED=false
+RESTORE_FAILURE_CAUSE=""
 declare -a COMPONENTS=()
 declare -a STOPPED_SERVICES=()
 declare -a RESTORED_VOLUME_COMPONENTS=()
@@ -577,11 +578,15 @@ start_stopped_services() {
 
 cleanup() {
     local exit_code=$?
+    local initial_exit_code=$exit_code
+    local independent_cleanup_failure=false
+    local guard_release_recovered=false
     local preserve_work_dir=false
     local rollback_completed=false
     local services_restarted=false
     set +e
-    if ! cleanup_scratch_qdrant && [ "$exit_code" -eq 0 ]; then
+    if ! cleanup_scratch_qdrant; then
+        independent_cleanup_failure=true
         exit_code=1
     fi
     if [ "$exit_code" -ne 0 ] \
@@ -589,12 +594,14 @@ cleanup() {
         && [ "$RESTORE_COMMITTED" != true ]; then
         log_warning "Restore failed; rolling back every component already changed"
         if ! requiesce_services_for_rollback; then
+            independent_cleanup_failure=true
             preserve_work_dir=true
             log_error "Services could not be quiesced safely; rollback was not attempted"
         elif rollback_applied_components; then
             rollback_completed=true
             log_warning "Restore rollback completed"
         else
+            independent_cleanup_failure=true
             preserve_work_dir=true
             log_error "Automatic rollback was incomplete"
         fi
@@ -603,6 +610,7 @@ cleanup() {
         if start_stopped_services; then
             services_restarted=true
         else
+            independent_cleanup_failure=true
             exit_code=1
             preserve_work_dir=true
         fi
@@ -613,17 +621,26 @@ cleanup() {
             && { [ "$RESTORE_COMMITTED" = true ] \
                 || [ "$rollback_completed" = true ]; }; then
             if ! release_recovery_guard; then
+                independent_cleanup_failure=true
                 exit_code=1
                 preserve_work_dir=true
+            elif [ "$initial_exit_code" -ne 0 ] \
+                && [ "$RESTORE_FAILURE_CAUSE" = guard-release-after-commit ]; then
+                guard_release_recovered=true
+                RESTORE_FAILURE_CAUSE=""
             fi
         else
+            independent_cleanup_failure=true
             preserve_work_dir=true
             exit_code=1
         fi
     fi
     if [ "$RECOVERY_GUARD_ACTIVE" = true ] \
         && [ "$preserve_work_dir" = true ]; then
-        ensure_persistent_recovery_block || exit_code=1
+        if ! ensure_persistent_recovery_block; then
+            independent_cleanup_failure=true
+            exit_code=1
+        fi
     fi
     if [ "$preserve_work_dir" = true ] && [ "${#STOPPED_SERVICES[@]}" -gt 0 ]; then
         log_error "Services remain stopped until a human completes rollback"
@@ -637,6 +654,10 @@ cleanup() {
     fi
     if [ -n "$LOCK_FD" ]; then
         flock -u "$LOCK_FD"
+    fi
+    if [ "$guard_release_recovered" = true ] \
+        && [ "$independent_cleanup_failure" = false ]; then
+        exit_code=0
     fi
     exit "$exit_code"
 }
@@ -1114,7 +1135,10 @@ apply_restore() {
         return 1
     fi
     RESTORE_COMMITTED=true
-    release_recovery_guard || return 1
+    if ! release_recovery_guard; then
+        RESTORE_FAILURE_CAUSE=guard-release-after-commit
+        return 1
+    fi
 }
 
 main() {

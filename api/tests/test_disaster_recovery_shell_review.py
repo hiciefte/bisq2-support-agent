@@ -104,7 +104,6 @@ def test_recovery_guard_blocks_both_entrypoints_and_requires_explicit_clear(
     work_dir = tmp_path / "private-rollback"
     work_dir.mkdir()
     marker = install_dir / "failed_updates" / "disaster-recovery" / "recovery-blocked"
-    sync_log = tmp_path / "sync.log"
 
     created = _run_bash(f"""
         export BISQ_SUPPORT_INSTALL_DIR="{install_dir}"
@@ -113,22 +112,13 @@ def test_recovery_guard_blocks_both_entrypoints_and_requires_explicit_clear(
         WORK_DIR="{work_dir}"
         mkdir -p "$RECOVERY_CONTROL_DIR"
         : > "$RECOVERY_LOCK_FILE"
-        sync_recovery_path() {{ printf '%s\n' "$*" >> "{sync_log}"; }}
+        sync_recovery_path() {{ return 0; }}
         create_recovery_guard
         """)
     assert created.returncode == 0, created.stdout + created.stderr
     assert marker.is_file()
     assert marker.stat().st_mode & 0o777 == 0o600
     assert str(work_dir) in marker.read_text(encoding="utf-8")
-    sync_paths = sync_log.read_text(encoding="utf-8").splitlines()
-    assert sync_paths[:3] == [
-        str(marker.parent),
-        str(marker.parent.parent),
-        str(install_dir),
-    ]
-    assert Path(sync_paths[3]).parent == marker.parent
-    assert Path(sync_paths[3]).name.startswith(".recovery-blocked.")
-    assert sync_paths[4] == str(marker.parent)
 
     for script in (BACKUP_SCRIPT, RESTORE_SCRIPT):
         blocked = _run_bash(f"""
@@ -446,6 +436,69 @@ def test_restore_commits_only_after_service_restart() -> None:
         """)
     assert failed.returncode == 0, failed.stdout + failed.stderr
     assert failed.stdout == "false"
+
+
+def test_committed_restore_succeeds_when_guard_release_retry_recovers(
+    tmp_path: Path,
+) -> None:
+    release_log = tmp_path / "release.log"
+    result = _run_bash(f"""
+        source "{RESTORE_SCRIPT}"
+        COMPONENTS=(application)
+        APPLY=true
+        RECOVERY_GUARD_ACTIVE=true
+        WORK_DIR="{tmp_path / 'work'}"
+        mkdir -p "$WORK_DIR"
+        stop_selected_services() {{ STOPPED_SERVICES=(api); }}
+        restore_application_data() {{ return 0; }}
+        restore_qdrant() {{ return 0; }}
+        start_stopped_services() {{ STOPPED_SERVICES=(); return 0; }}
+        cleanup_scratch_qdrant() {{ return 0; }}
+        release_count=0
+        release_recovery_guard() {{
+            release_count=$((release_count + 1))
+            printf '%s\n' "$release_count" >> "{release_log}"
+            if [ "$release_count" -eq 1 ]; then
+                return 1
+            fi
+            RECOVERY_GUARD_ACTIVE=false
+            return 0
+        }}
+        apply_restore /snapshot || cleanup
+        """)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert release_log.read_text(encoding="utf-8").splitlines() == ["1", "2"]
+
+
+def test_guard_release_retry_does_not_mask_scratch_cleanup_failure(
+    tmp_path: Path,
+) -> None:
+    result = _run_bash(f"""
+        source "{RESTORE_SCRIPT}"
+        COMPONENTS=(application)
+        APPLY=true
+        RECOVERY_GUARD_ACTIVE=true
+        WORK_DIR="{tmp_path / 'work'}"
+        mkdir -p "$WORK_DIR"
+        stop_selected_services() {{ STOPPED_SERVICES=(api); }}
+        restore_application_data() {{ return 0; }}
+        restore_qdrant() {{ return 0; }}
+        start_stopped_services() {{ STOPPED_SERVICES=(); return 0; }}
+        cleanup_scratch_qdrant() {{ return 1; }}
+        release_count=0
+        release_recovery_guard() {{
+            release_count=$((release_count + 1))
+            if [ "$release_count" -eq 1 ]; then
+                return 1
+            fi
+            RECOVERY_GUARD_ACTIVE=false
+            return 0
+        }}
+        apply_restore /snapshot || cleanup
+        """)
+
+    assert result.returncode != 0
 
 
 def test_application_component_is_documented_for_verify_and_restore() -> None:

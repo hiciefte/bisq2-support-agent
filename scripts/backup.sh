@@ -55,7 +55,7 @@ Required:
 
 Encryption:
   --encryption age|gpg     Encryption implementation (default: age)
-  --recipient RECIPIENT    Public age or GPG recipient
+  --recipient RECIPIENT    Public age recipient or full GPG fingerprint
 
 Retention:
   --retention-days DAYS    Remove completed sets older than DAYS (default: 30)
@@ -445,6 +445,55 @@ snapshot_volume() {
     tar -tzf "$destination" >/dev/null
 }
 
+validate_gpg_recipient_fingerprint() {
+    local normalized_recipient
+    local key_listing
+    local fingerprint
+    local normalized_fingerprint
+    local exact_match_count=0
+    local -a key_fields=()
+
+    if [[ ! "$RECIPIENT" =~ ^[0-9A-Fa-f]{40}$ ]] \
+        && [[ ! "$RECIPIENT" =~ ^[0-9A-Fa-f]{64}$ ]]; then
+        log_error "The GPG recipient must be a full 40- or 64-character fingerprint"
+        return 2
+    fi
+
+    normalized_recipient="$(
+        printf '%s' "$RECIPIENT" | LC_ALL=C tr '[:lower:]' '[:upper:]'
+    )"
+    if ! key_listing="$(
+        gpg --batch --with-colons --fingerprint --list-keys \
+            -- "$normalized_recipient" 2>/dev/null
+    )"; then
+        log_error "The GPG recipient fingerprint is not present in the public keyring"
+        return 2
+    fi
+
+    while IFS=: read -r -a key_fields; do
+        if [ "${key_fields[0]:-}" != fpr ]; then
+            continue
+        fi
+        fingerprint="${key_fields[9]:-}"
+        normalized_fingerprint="$(
+            printf '%s' "$fingerprint" | LC_ALL=C tr '[:lower:]' '[:upper:]'
+        )"
+        if [ "$normalized_fingerprint" = "$normalized_recipient" ]; then
+            exact_match_count=$((exact_match_count + 1))
+        fi
+    done <<< "$key_listing"
+
+    if [ "$exact_match_count" -eq 0 ]; then
+        log_error "The GPG recipient fingerprint has no exact public-key match"
+        return 2
+    fi
+    if [ "$exact_match_count" -ne 1 ]; then
+        log_error "The GPG recipient fingerprint resolves ambiguously"
+        return 2
+    fi
+    RECIPIENT="$normalized_recipient"
+}
+
 validate_configuration() {
     [ -n "$TARGET_DIR" ] || { log_error "An off-host backup target is required"; return 2; }
     [ -n "$MOUNT_ROOT" ] || { log_error "An off-host mount root is required"; return 2; }
@@ -465,7 +514,8 @@ validate_configuration() {
         gpg)
             RECIPIENT="${RECIPIENT:-${BACKUP_GPG_RECIPIENT:-}}"
             [ -n "$RECIPIENT" ] || { log_error "A GPG recipient is required"; return 2; }
-            check_required_commands gpg || return 1
+            check_required_commands gpg tr || return 1
+            validate_gpg_recipient_fingerprint || return $?
             ;;
         *)
             log_error "Encryption must be age or gpg"
@@ -532,7 +582,7 @@ encrypt_backup() {
         fi
     else
         if ! tar -C "$STAGING_DIR" -czf - . | \
-            gpg --batch --yes --trust-model always \
+            gpg --batch --yes \
                 --recipient "$RECIPIENT" --output "$PARTIAL_OUTPUT" --encrypt; then
             return 1
         fi
