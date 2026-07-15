@@ -74,6 +74,7 @@ logger = logging.getLogger(__name__)
 
 _GROUP_CHANNEL_MAX_ANSWER_LENGTH = 500
 _CONTEXT_LLM_FALLBACK_WORKERS = 4
+_READINESS_CACHE_TTL_SECONDS = 5.0
 _DEFINITION_QUESTION_PATTERNS = (
     r"^\s*what\s+is\b",
     r"^\s*what'?s\b",
@@ -248,6 +249,11 @@ class SimplifiedRAGService:
         self._retriever_lease_counts: dict[int, int] = {}
         self._retriever_idle_events: dict[int, asyncio.Event] = {}
         self._background_tasks: set[asyncio.Task[Any]] = set()
+        self._readiness_probe_task: Optional[asyncio.Task[bool]] = None
+        self._readiness_probe_retriever: Any = None
+        self._readiness_cached_retriever: Any = None
+        self._readiness_cached_result = False
+        self._readiness_checked_at = 0.0
         self._context_llm_executor: Optional[ThreadPoolExecutor] = ThreadPoolExecutor(
             max_workers=_CONTEXT_LLM_FALLBACK_WORKERS,
             thread_name_prefix="context-llm-fallback",
@@ -564,6 +570,65 @@ class SimplifiedRAGService:
         """Await a leased call without cancellation stranding its lease."""
         future = self._start_retriever_call(retriever, func, *args, **kwargs)
         return await asyncio.shield(future)
+
+    async def _probe_retriever_readiness(self, retriever: Any) -> bool:
+        """Run one leased backend probe and contain dependency failures."""
+        try:
+            return bool(
+                await self._run_retriever_call(
+                    retriever,
+                    retriever.health_check,
+                )
+            )
+        except Exception:
+            logger.warning("RAG vector-store readiness check failed", exc_info=True)
+            return False
+
+    def _finish_readiness_probe(
+        self,
+        retriever: Any,
+        task: asyncio.Task[bool],
+    ) -> None:
+        """Cache a completed single-flight probe without leaking exceptions."""
+        if self._readiness_probe_task is not task:
+            return
+
+        self._readiness_probe_task = None
+        self._readiness_probe_retriever = None
+        self._readiness_cached_retriever = retriever
+        self._readiness_checked_at = time.monotonic()
+        try:
+            self._readiness_cached_result = bool(task.result())
+        except (asyncio.CancelledError, Exception):
+            self._readiness_cached_result = False
+
+    async def check_readiness(self) -> bool:
+        """Check live reader state with a cached, single-flight backend probe."""
+        retriever = self.retriever
+        if (
+            self.rag_chain is None
+            or self.document_retriever is None
+            or retriever is None
+        ):
+            return False
+
+        if (
+            self._readiness_cached_retriever is retriever
+            and time.monotonic() - self._readiness_checked_at
+            < _READINESS_CACHE_TTL_SECONDS
+        ):
+            return self._readiness_cached_result
+
+        task = self._readiness_probe_task
+        if task is None or self._readiness_probe_retriever is not retriever:
+            task = asyncio.create_task(self._probe_retriever_readiness(retriever))
+            self._readiness_probe_task = task
+            self._readiness_probe_retriever = retriever
+            task.add_done_callback(
+                lambda completed: self._finish_readiness_probe(retriever, completed)
+            )
+
+        return bool(await asyncio.shield(task))
 
     def _release_retriever_lease(self, retriever_key: int) -> None:
         """Release a completed blocking retrieval on the event-loop thread."""

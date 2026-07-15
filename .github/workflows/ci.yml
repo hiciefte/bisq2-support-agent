@@ -127,10 +127,15 @@ jobs:
           persist-credentials: false
 
       - name: Lint shell scripts
-        run: shellcheck scripts/*.sh scripts/lib/*.sh scripts/tests/*.sh
+        run: >-
+          shellcheck scripts/*.sh scripts/lib/*.sh scripts/tests/*.sh
+          docker/scripts/scheduler-heartbeat.sh
 
       - name: Test environment configuration helpers
         run: bash scripts/tests/test_env_config.sh
+
+      - name: Validate monitoring configuration
+        run: bash scripts/validate-monitoring-config.sh
 
   security:
     name: Security Scan

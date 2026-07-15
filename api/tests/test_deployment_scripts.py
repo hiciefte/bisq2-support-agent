@@ -957,7 +957,8 @@ def test_health_repair_keeps_relay_critical_when_compose_defines_it(
         "#!/bin/bash\n"
         'if [ "$*" = "compose -f docker-compose.yml config --services" ]; then\n'
         "    printf '%s\\n' qdrant nginx web api matrix-alert-relay bisq2-api "
-        "prometheus grafana node-exporter scheduler alertmanager cadvisor\n"
+        "prometheus blackbox-exporter grafana node-exporter scheduler "
+        "alertmanager cadvisor\n"
         "    exit 0\n"
         "fi\n"
         "exit 64\n",
@@ -985,8 +986,48 @@ def test_health_repair_keeps_relay_critical_when_compose_defines_it(
     assert result.returncode != 0
     checked_services = checked_log.read_text(encoding="utf-8").splitlines()
     assert "matrix-alert-relay" in checked_services
+    assert "blackbox-exporter" in checked_services
     assert restarted_log.read_text(encoding="utf-8").splitlines() == [
         "matrix-alert-relay"
+    ]
+
+
+def test_health_repair_keeps_blackbox_exporter_critical(tmp_path: Path) -> None:
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    restarted_log = tmp_path / "restarted.log"
+    docker = fakebin / "docker"
+    docker.write_text(
+        "#!/bin/bash\n"
+        'if [ "$*" = "compose -f docker-compose.yml config --services" ]; then\n'
+        "    printf '%s\\n' nginx web api matrix-alert-relay bisq2-api "
+        "prometheus blackbox-exporter grafana node-exporter scheduler "
+        "alertmanager cadvisor\n"
+        "    exit 0\n"
+        "fi\n"
+        "exit 64\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+
+    result = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        source "{DOCKER_UTILS_SH}"
+        uses_qdrant_runtime() {{ return 1; }}
+        check_service() {{ [ "$1" != "blackbox-exporter" ]; }}
+        restart_service_with_deps() {{
+            printf '%s\n' "$1" >> "{restarted_log}"
+            return 1
+        }}
+        check_and_repair_services "{tmp_path}" "docker-compose.yml"
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode != 0
+    assert restarted_log.read_text(encoding="utf-8").splitlines() == [
+        "blackbox-exporter"
     ]
 
 
