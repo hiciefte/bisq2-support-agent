@@ -116,11 +116,11 @@ export BACKUP_AGE_IDENTITY_FILE='<protected-age-identity-file>'
 ./scripts/restore.sh --backup "$BACKUP_FILE" --verify
 ```
 
-Use `--component sqlite`, `--component matrix`, `--component bisq2`,
-`--component qdrant`, `--component prometheus`, `--component grafana`, or
-`--component alertmanager` to verify a subset. Artifact checksums for the
-complete set are always checked. For GPG backups, the operator's protected GPG
-keyring is used and no identity option is needed.
+Use `--component application`, `--component sqlite`, `--component matrix`,
+`--component bisq2`, `--component qdrant`, `--component prometheus`,
+`--component grafana`, or `--component alertmanager` to verify a subset.
+Artifact checksums for the complete set are always checked. For GPG backups,
+the operator's protected GPG keyring is used and no identity option is needed.
 
 Run scratch verification after every backup. Scratch verification proves that
 the set is internally recoverable; it is not a substitute for the periodic
@@ -143,7 +143,9 @@ application data before services restart. Qdrant rollback uses native pre-restor
 snapshots and removes collections that were absent before the restore. If any
 automatic rollback step fails, the script leaves the private recovery workspace
 in place, prints its path, leaves the affected services stopped, and keeps the
-command failed so a human can complete recovery from those preimages.
+command failed so a human can complete recovery from those preimages. A
+persistent block under the installation's protected `failed_updates` control
+directory prevents every new backup or restore until the incident is resolved.
 
 A full Qdrant restore removes collections that are absent from the selected
 backup so the recovered inventory matches that point in time. A single-
@@ -168,6 +170,7 @@ if this topology check fails; do not bypass it.
 Restore one component at a time unless the incident requires a full restore:
 
 ```bash
+./scripts/restore.sh --backup "$BACKUP_FILE" --apply --yes --component application
 ./scripts/restore.sh --backup "$BACKUP_FILE" --apply --yes --component sqlite
 ./scripts/restore.sh --backup "$BACKUP_FILE" --apply --yes --component matrix
 ./scripts/restore.sh --backup "$BACKUP_FILE" --apply --yes --component qdrant
@@ -178,6 +181,20 @@ To restore one Qdrant collection, add
 The restore never writes `docker/.env`; recreate protected configuration from
 the separate credential escrow, then compare its variable names with the
 encrypted inventory.
+
+If a recovery command reports an incomplete rollback or preserves private
+preimages, do not clear the persistent block merely to retry. First reconcile
+the live state from the preserved workspace, re-quiesce affected services, and
+complete the post-restore checks below. After the incident owner records that
+the state is safe, clear the block explicitly while no recovery command is
+running:
+
+```bash
+./scripts/restore.sh --clear-recovery-failure --yes
+```
+
+The clear command takes the same recovery lock and rejects symlinked control
+paths. It does not repair data or restart services.
 
 After a restore:
 

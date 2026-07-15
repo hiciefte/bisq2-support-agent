@@ -5,6 +5,7 @@ import io
 import json
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
 import tarfile
@@ -54,7 +55,7 @@ def _write_qdrant_archive(path: Path) -> None:
             }
         ],
         "created_at": "2026-01-01T00:00:00+00:00",
-        "format_version": 1,
+        "format_version": dr.FORMAT_VERSION,
     }
     _write_tar(
         path,
@@ -281,6 +282,15 @@ def test_application_restore_can_roll_back_after_a_later_component_failure(
     assert dr.restore_data(snapshot_root, data_dir, rollback_dir, ["matrix"]) == 2
     assert _row_count(data_dir / "matrix_session_store" / "store.db") == 1
 
+    rollback_manifest = json.loads(
+        (rollback_dir / "rollback-manifest.json").read_text(encoding="utf-8")
+    )
+    for entry in rollback_manifest["entries"]:
+        assert entry["size_bytes"] >= 0
+        assert len(entry["sha256"]) == 64
+        if entry["sqlite"]:
+            assert entry["sqlite_summary"]["integrity_check"] == "ok"
+
     assert dr.rollback_data(data_dir, rollback_dir) == 2
 
     assert (data_dir / "matrix_session.json").read_text(
@@ -288,6 +298,73 @@ def test_application_restore_can_roll_back_after_a_later_component_failure(
     ) == '{"session":"live"}\n'
     assert _row_count(data_dir / "matrix_session_store" / "store.db") == 2
     assert not (rollback_dir / "rollback-manifest.json").exists()
+
+
+def test_rollback_rejects_tampered_preimage_before_replacing_live_file(
+    tmp_path: Path,
+) -> None:
+    data_dir, snapshot_root, _env_file = _prepare_bundle(tmp_path)
+    conversations = data_dir / "conversations.jsonl"
+    conversations.write_text("live conversation\n", encoding="utf-8")
+    rollback_dir = tmp_path / "rollback"
+    assert dr.restore_data(snapshot_root, data_dir, rollback_dir, ["application"]) == 1
+    manifest = json.loads(
+        (rollback_dir / "rollback-manifest.json").read_text(encoding="utf-8")
+    )
+    entry = manifest["entries"][0]
+    preimage = rollback_dir / entry["rollback_path"]
+    preimage.write_bytes(b"tampered")
+
+    with pytest.raises(dr.RecoveryError, match="preimage mismatch"):
+        dr.rollback_data(data_dir, rollback_dir)
+
+    assert conversations.read_text(encoding="utf-8") == "old conversation\n"
+    assert (rollback_dir / "rollback-manifest.json").is_file()
+
+
+def test_rollback_validates_temporary_copy_before_replace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir, snapshot_root, _env_file = _prepare_bundle(tmp_path)
+    conversations = data_dir / "conversations.jsonl"
+    conversations.write_text("live conversation\n", encoding="utf-8")
+    rollback_dir = tmp_path / "rollback"
+    assert dr.restore_data(snapshot_root, data_dir, rollback_dir, ["application"]) == 1
+    original_copy = shutil.copy2
+
+    def corrupt_temporary_copy(source: Path, destination: Path) -> str:
+        result = original_copy(source, destination)
+        if str(destination).endswith(".rollback"):
+            Path(destination).write_bytes(b"tampered")
+        return str(result)
+
+    monkeypatch.setattr(dr.shutil, "copy2", corrupt_temporary_copy)
+
+    with pytest.raises(dr.RecoveryError, match="preimage mismatch"):
+        dr.rollback_data(data_dir, rollback_dir)
+
+    assert conversations.read_text(encoding="utf-8") == "old conversation\n"
+
+
+def test_rollback_rejects_tampered_sqlite_summary(tmp_path: Path) -> None:
+    data_dir, snapshot_root, _env_file = _prepare_bundle(tmp_path)
+    with sqlite3.connect(data_dir / "faqs.db") as connection:
+        connection.execute("INSERT INTO records (value) VALUES ('live')")
+    rollback_dir = tmp_path / "rollback"
+    assert dr.restore_data(snapshot_root, data_dir, rollback_dir, ["sqlite"]) == 2
+    manifest_path = rollback_dir / "rollback-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    faq_entry = next(
+        entry for entry in manifest["entries"] if entry["relative_path"] == "faqs.db"
+    )
+    faq_entry["sqlite_summary"]["row_counts"]["records"] = -1
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(dr.RecoveryError, match="SQLite mismatch"):
+        dr.rollback_data(data_dir, rollback_dir)
+
+    assert _row_count(data_dir / "faqs.db") == 2
 
 
 def test_selected_restore_removes_absent_files_and_rolls_them_back(
@@ -366,6 +443,9 @@ def test_custom_matrix_session_and_store_are_tagged_from_env(tmp_path: Path) -> 
 
     assert by_path["sync.json"]["components"] == ["matrix"]
     assert by_path["sync_store/crypto.db"]["components"] == ["sqlite", "matrix"]
+    assert "sync.json" in manifest["matrix_state_files"]
+    assert "sync_store" in manifest["matrix_store_roots"]
+    assert "sync_store/crypto.db" not in manifest["matrix_state_files"]
 
     (data_dir / "sync.json").write_text('{"session":"live"}\n', encoding="utf-8")
     (data_dir / "sync_store" / "new-state.bin").write_bytes(b"live state")
@@ -382,6 +462,70 @@ def test_custom_matrix_session_and_store_are_tagged_from_env(tmp_path: Path) -> 
         '{"session":"live"}\n'
     )
     assert (data_dir / "sync_store" / "new-state.bin").read_bytes() == b"live state"
+
+
+def test_matrix_manifest_does_not_infer_generic_parent_as_store_root(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    _create_database(data_dir / "faqs.db", ["faq"])
+    session = data_dir / "sessions" / "current.json"
+    session.parent.mkdir()
+    session.write_text("{}\n", encoding="utf-8")
+    matrix_paths = dr.matrix_state_paths_from_values(["/data/sessions/current.json"])
+    snapshot_root = tmp_path / "snapshot"
+    manifest = dr.snapshot_data(
+        data_dir,
+        snapshot_root,
+        matrix_state_paths=matrix_paths,
+    )
+    unrelated = data_dir / "sessions" / "unrelated.json"
+    unrelated.write_text("later\n", encoding="utf-8")
+    session.write_text("live\n", encoding="utf-8")
+
+    assert "sessions/current.json" in manifest["matrix_state_files"]
+    assert "sessions/current_store" in manifest["matrix_store_roots"]
+    assert "sessions" not in manifest["matrix_store_roots"]
+    assert (
+        dr.restore_data(
+            snapshot_root,
+            data_dir,
+            tmp_path / "rollback",
+            ["matrix"],
+            matrix_state_paths=matrix_paths,
+        )
+        == 1
+    )
+    assert session.read_text(encoding="utf-8") == "{}\n"
+    assert unrelated.read_text(encoding="utf-8") == "later\n"
+
+
+@pytest.mark.parametrize("manifest_change", ["missing-roots", "legacy-version"])
+def test_restore_rejects_manifest_without_versioned_matrix_roots(
+    tmp_path: Path,
+    manifest_change: str,
+) -> None:
+    data_dir, snapshot_root, _env_file = _prepare_bundle(tmp_path)
+    conversations = data_dir / "conversations.jsonl"
+    conversations.write_text("live\n", encoding="utf-8")
+    manifest_path = snapshot_root / "manifest" / "application.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest_change == "missing-roots":
+        manifest.pop("matrix_store_roots")
+    else:
+        manifest["format_version"] = dr.FORMAT_VERSION - 1
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(dr.RecoveryError):
+        dr.restore_data(
+            snapshot_root,
+            data_dir,
+            tmp_path / "rollback",
+            ["application"],
+        )
+
+    assert conversations.read_text(encoding="utf-8") == "live\n"
 
 
 def test_restore_data_rejects_symlinked_destination_parent(tmp_path: Path) -> None:
@@ -451,6 +595,106 @@ def test_safe_extract_accepts_standard_tar_root_member(tmp_path: Path) -> None:
     assert (tmp_path / "scratch" / "state.txt").read_bytes() == b"state"
 
 
+def test_safe_extract_accepts_nested_stream_into_existing_empty_directory(
+    tmp_path: Path,
+) -> None:
+    archive_path = tmp_path / "nested.tar.gz"
+    _write_tar(archive_path, {"one/two/state.txt": b"state"})
+    destination = tmp_path / "scratch"
+    destination.mkdir()
+    destination.chmod(0o700)
+
+    with tarfile.open(archive_path, mode="r:gz") as archive:
+        dr._safe_extract_archive(archive, destination)
+
+    extracted = destination / "one" / "two" / "state.txt"
+    assert extracted.read_bytes() == b"state"
+    assert stat.S_IMODE(extracted.stat().st_mode) & 0o077 == 0
+    assert stat.S_IMODE(extracted.parent.stat().st_mode) & 0o077 == 0
+
+
+def test_safe_extract_rejects_nonempty_destination_without_overwrite(
+    tmp_path: Path,
+) -> None:
+    archive_path = tmp_path / "backup.tar.gz"
+    _write_tar(archive_path, {"new.txt": b"new"})
+    destination = tmp_path / "scratch"
+    destination.mkdir()
+    destination.chmod(0o700)
+    existing = destination / "existing.txt"
+    existing.write_bytes(b"keep")
+
+    with tarfile.open(archive_path, mode="r:gz") as archive:
+        with pytest.raises(dr.RecoveryError, match="must be empty"):
+            dr._safe_extract_archive(archive, destination)
+
+    assert existing.read_bytes() == b"keep"
+    assert not (destination / "new.txt").exists()
+
+
+@pytest.mark.parametrize("symlink_position", ["destination", "parent"])
+def test_safe_extract_rejects_preexisting_symlink_path(
+    tmp_path: Path,
+    symlink_position: str,
+) -> None:
+    archive_path = tmp_path / "backup.tar.gz"
+    _write_tar(archive_path, {"state.txt": b"state"})
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    link = tmp_path / "linked"
+    link.symlink_to(outside, target_is_directory=True)
+    destination = link if symlink_position == "destination" else link / "scratch"
+
+    with tarfile.open(archive_path, mode="r:gz") as archive:
+        with pytest.raises(dr.RecoveryError, match="symlink"):
+            dr._safe_extract_archive(archive, destination)
+
+    assert not (outside / "state.txt").exists()
+    assert not (outside / "scratch").exists()
+
+
+def test_safe_extract_rejects_target_parent_symlink_added_during_stream(
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "scratch"
+    destination.mkdir()
+    destination.chmod(0o700)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    member = tarfile.TarInfo("nested/state.txt")
+    member.size = len(b"state")
+
+    class SymlinkRaceArchive:
+        def __iter__(self):
+            (destination / "nested").symlink_to(outside, target_is_directory=True)
+            yield member
+
+        def extractfile(self, _member: tarfile.TarInfo) -> io.BytesIO:
+            return io.BytesIO(b"state")
+
+    with pytest.raises(dr.RecoveryError, match="symlink"):
+        dr._safe_extract_archive(  # type: ignore[arg-type]
+            SymlinkRaceArchive(),
+            destination,
+        )
+
+    assert not (outside / "state.txt").exists()
+
+
+def test_safe_extract_rejects_existing_nonprivate_destination(tmp_path: Path) -> None:
+    archive_path = tmp_path / "backup.tar.gz"
+    _write_tar(archive_path, {"state.txt": b"state"})
+    destination = tmp_path / "scratch"
+    destination.mkdir(mode=0o755)
+    destination.chmod(0o755)
+
+    with tarfile.open(archive_path, mode="r:gz") as archive:
+        with pytest.raises(dr.RecoveryError, match="must be private"):
+            dr._safe_extract_archive(archive, destination)
+
+    assert not (destination / "state.txt").exists()
+
+
 def test_extract_stream_cli_accepts_backup_tar_layout(tmp_path: Path) -> None:
     _data_dir, snapshot_root, _env_file = _prepare_bundle(tmp_path)
     archive = subprocess.run(
@@ -512,6 +756,39 @@ def test_qdrant_export_and_import_use_native_snapshot_flow(
 
     assert restored == ["documents"]
     assert uploads == [("documents", b"native qdrant snapshot")]
+
+
+def test_qdrant_import_rejects_selected_delete_absent_before_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mutations: list[str] = []
+    monkeypatch.setattr(
+        dr,
+        "_upload_qdrant_snapshot",
+        lambda *_args, **_kwargs: mutations.append("upload"),
+    )
+    monkeypatch.setattr(
+        dr,
+        "_qdrant_collections",
+        lambda **_kwargs: mutations.append("list") or [],
+    )
+    monkeypatch.setattr(
+        dr,
+        "_qdrant_json",
+        lambda *_args, **_kwargs: mutations.append("request") or {"result": True},
+    )
+
+    with pytest.raises(
+        dr.RecoveryError,
+        match="selected Qdrant collection cannot be combined with delete-absent",
+    ):
+        dr.import_qdrant(
+            io.BytesIO(b"not an archive"),
+            "documents",
+            delete_absent=True,
+        )
+
+    assert mutations == []
 
 
 def test_qdrant_rollback_removes_collections_absent_from_preimage(

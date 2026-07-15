@@ -13,6 +13,7 @@ AGE_IDENTITY_FILE="${BACKUP_AGE_IDENTITY_FILE:-}"
 VERIFY_ONLY=false
 APPLY=false
 CONFIRMED=false
+CLEAR_RECOVERY_FAILURE=false
 QDRANT_COLLECTION=""
 INSTALL_DIR=""
 DOCKER_DIR=""
@@ -21,6 +22,10 @@ COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
 DR_HELPER=""
 WORK_DIR=""
 LOCK_FD=""
+RECOVERY_CONTROL_DIR=""
+RECOVERY_FAILURE_MARKER=""
+RECOVERY_LOCK_FILE=""
+RECOVERY_GUARD_ACTIVE=false
 SCRATCH_QDRANT_CONTAINER=""
 SCRATCH_QDRANT_NETWORK=""
 SCRATCH_QDRANT_VOLUME=""
@@ -40,6 +45,9 @@ initialize_paths() {
     DOCKER_DIR="$INSTALL_DIR/docker"
     DATA_DIR="$INSTALL_DIR/api/data"
     DR_HELPER="$INSTALL_DIR/api/app/scripts/disaster_recovery.py"
+    RECOVERY_CONTROL_DIR="$INSTALL_DIR/failed_updates/disaster-recovery"
+    RECOVERY_FAILURE_MARKER="$RECOVERY_CONTROL_DIR/recovery-blocked"
+    RECOVERY_LOCK_FILE="$RECOVERY_CONTROL_DIR/recovery.lock"
 }
 
 usage() {
@@ -47,10 +55,12 @@ usage() {
 Usage:
   restore.sh --backup FILE --verify [--component NAME ...]
   restore.sh --backup FILE --apply --yes [--component NAME ...]
+  restore.sh --clear-recovery-failure --yes
 
 Modes:
   --verify                 Decrypt, restore into scratch, and run sanity checks
   --apply --yes            Restore selected live components after verification
+  --clear-recovery-failure Clear the persistent block after manual recovery
 
 Selection (repeatable; default: all):
   --component NAME         application, sqlite, matrix, qdrant, prometheus,
@@ -86,6 +96,10 @@ parse_args() {
                 CONFIRMED=true
                 shift
                 ;;
+            --clear-recovery-failure)
+                CLEAR_RECOVERY_FAILURE=true
+                shift
+                ;;
             --component)
                 [ "$#" -ge 2 ] || { log_error "--component requires a value"; return 2; }
                 COMPONENTS+=("$2")
@@ -117,6 +131,293 @@ parse_args() {
                 ;;
         esac
     done
+}
+
+recovery_control_path_is_safe() {
+    if [ -L "$INSTALL_DIR/failed_updates" ] \
+        || [ -L "$RECOVERY_CONTROL_DIR" ] \
+        || [ -L "$RECOVERY_FAILURE_MARKER" ] \
+        || [ -L "$RECOVERY_LOCK_FILE" ]; then
+        log_error "Disaster-recovery control path is unsafe"
+        return 1
+    fi
+    if [ -e "$RECOVERY_LOCK_FILE" ] && [ ! -f "$RECOVERY_LOCK_FILE" ]; then
+        log_error "Disaster-recovery lock path is unsafe"
+        return 1
+    fi
+}
+
+prepare_recovery_control_dir() {
+    recovery_control_path_is_safe || return 1
+    mkdir -p -- "$RECOVERY_CONTROL_DIR" || {
+        log_error "Could not create the disaster-recovery control directory"
+        return 1
+    }
+    recovery_control_path_is_safe || return 1
+    if [ ! -d "$RECOVERY_CONTROL_DIR" ]; then
+        log_error "Disaster-recovery control directory is unavailable"
+        return 1
+    fi
+    chmod 700 "$RECOVERY_CONTROL_DIR" || {
+        log_error "Could not protect the disaster-recovery control directory"
+        return 1
+    }
+    sync_recovery_path "$RECOVERY_CONTROL_DIR" || return 1
+    sync_recovery_path "$INSTALL_DIR/failed_updates" || return 1
+    sync_recovery_path "$INSTALL_DIR" || return 1
+}
+
+sync_recovery_path() {
+    python3 - "$1" <<'PY'
+import os
+import sys
+
+path = sys.argv[1]
+flags = os.O_RDONLY
+if os.path.isdir(path):
+    flags |= getattr(os, "O_DIRECTORY", 0)
+descriptor = os.open(path, flags)
+try:
+    os.fsync(descriptor)
+finally:
+    os.close(descriptor)
+PY
+}
+
+restore_marker_after_clear_failure() {
+    local temporary_marker
+
+    if [ -L "$INSTALL_DIR/failed_updates" ] || [ -L "$RECOVERY_CONTROL_DIR" ]; then
+        return 1
+    fi
+    if [ -L "$RECOVERY_FAILURE_MARKER" ]; then
+        rm -- "$RECOVERY_FAILURE_MARKER" || return 1
+    elif [ -e "$RECOVERY_FAILURE_MARKER" ] \
+        && [ ! -f "$RECOVERY_FAILURE_MARKER" ]; then
+        return 1
+    fi
+    temporary_marker="$RECOVERY_CONTROL_DIR/.recovery-blocked-repair.$$.tmp"
+    if ! printf '%s\n' \
+        "Recovery marker clearance was not durable." \
+        "Rollback workspace: $WORK_DIR" \
+        "Inspect recovery state before operator clearance." \
+        > "$temporary_marker"; then
+        return 1
+    fi
+    chmod 600 "$temporary_marker" || {
+        rm -f -- "$temporary_marker"
+        return 1
+    }
+    sync_recovery_path "$temporary_marker" || {
+        rm -f -- "$temporary_marker"
+        return 1
+    }
+    mv -- "$temporary_marker" "$RECOVERY_FAILURE_MARKER" || {
+        rm -f -- "$temporary_marker"
+        return 1
+    }
+    sync_recovery_path "$RECOVERY_CONTROL_DIR" || return 1
+    [ -f "$RECOVERY_FAILURE_MARKER" ] && [ ! -L "$RECOVERY_FAILURE_MARKER" ]
+}
+
+set_recovery_lock_state() {
+    python3 - "$RECOVERY_LOCK_FILE" "$1" <<'PY'
+import os
+import sys
+
+path, state = sys.argv[1:]
+flags = os.O_WRONLY | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+descriptor = os.open(path, flags)
+try:
+    if state:
+        os.write(descriptor, f"{state}\n".encode("ascii"))
+    os.fsync(descriptor)
+finally:
+    os.close(descriptor)
+PY
+}
+
+recovery_lock_is_blocked() {
+    local lock_state=""
+    if [ -f "$RECOVERY_LOCK_FILE" ]; then
+        IFS= read -r lock_state < "$RECOVERY_LOCK_FILE" || true
+    fi
+    [ "$lock_state" = blocked ]
+}
+
+ensure_persistent_recovery_block() {
+    local lock_blocked=false
+    local marker_blocked=false
+
+    if recovery_lock_is_blocked || set_recovery_lock_state blocked; then
+        lock_blocked=true
+    else
+        log_error "Could not persist the protected recovery lock state"
+    fi
+
+    if [ -f "$RECOVERY_FAILURE_MARKER" ] \
+        && [ ! -L "$RECOVERY_FAILURE_MARKER" ]; then
+        marker_blocked=true
+    elif restore_marker_after_clear_failure; then
+        marker_blocked=true
+        log_error "Recreated the missing or unsafe persistent recovery marker"
+    else
+        log_error "Could not recreate a regular persistent recovery marker"
+    fi
+
+    if [ "$lock_blocked" != true ] && [ "$marker_blocked" != true ]; then
+        log_error "No durable recovery block could be guaranteed"
+        return 1
+    fi
+}
+
+clear_recovery_block_durably() {
+    if ! set_recovery_lock_state ""; then
+        log_error "Could not clear the protected recovery lock state"
+        return 1
+    fi
+    if [ -e "$RECOVERY_FAILURE_MARKER" ] \
+        && ! remove_recovery_marker_durably; then
+        ensure_persistent_recovery_block || true
+        return 1
+    fi
+}
+
+remove_recovery_marker_durably() {
+    sync_recovery_path "$RECOVERY_FAILURE_MARKER" || {
+        log_error "Could not sync the disaster-recovery failure marker"
+        return 1
+    }
+    rm -- "$RECOVERY_FAILURE_MARKER" || {
+        log_error "Could not clear the disaster-recovery failure marker"
+        return 1
+    }
+    if ! sync_recovery_path "$RECOVERY_CONTROL_DIR"; then
+        restore_marker_after_clear_failure || true
+        log_error "Could not make disaster-recovery marker removal durable"
+        return 1
+    fi
+}
+
+ensure_recovery_not_blocked() {
+    recovery_control_path_is_safe || return 1
+    if [ -e "$RECOVERY_FAILURE_MARKER" ] || recovery_lock_is_blocked; then
+        log_error "Disaster recovery is blocked after an unresolved recovery failure"
+        log_error "Inspect the preserved recovery state before clearing the block"
+        return 1
+    fi
+}
+
+open_recovery_lock() {
+    prepare_recovery_control_dir || return 1
+    LOCK_FD=201
+    if ! exec 201<>"$RECOVERY_LOCK_FILE"; then
+        log_error "Could not open the protected disaster-recovery lock"
+        return 1
+    fi
+    chmod 600 "$RECOVERY_LOCK_FILE" || return 1
+    if ! flock -n "$LOCK_FD"; then
+        log_error "Another disaster-recovery operation is already running"
+        return 1
+    fi
+}
+
+acquire_recovery_lock() {
+    open_recovery_lock || return 1
+    ensure_recovery_not_blocked || return 1
+}
+
+create_recovery_guard() {
+    local temporary_marker
+
+    prepare_recovery_control_dir || return 1
+    if [ -e "$RECOVERY_FAILURE_MARKER" ]; then
+        log_error "A disaster-recovery failure marker already exists"
+        return 1
+    fi
+    temporary_marker="$RECOVERY_CONTROL_DIR/.recovery-blocked.$$.tmp"
+    if ! printf '%s\n' \
+        "Recovery operation in progress or incomplete." \
+        "Created at: $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        "Rollback workspace: $WORK_DIR" \
+        "Inspect preserved rollback state before operator clearance." \
+        > "$temporary_marker"; then
+        log_error "Could not create the disaster-recovery failure marker"
+        return 1
+    fi
+    chmod 600 "$temporary_marker" || {
+        rm -f -- "$temporary_marker"
+        log_error "Could not protect the disaster-recovery failure marker"
+        return 1
+    }
+    if ! sync_recovery_path "$temporary_marker"; then
+        rm -f -- "$temporary_marker"
+        log_error "Could not make the disaster-recovery failure marker durable"
+        return 1
+    fi
+    if ! mv -- "$temporary_marker" "$RECOVERY_FAILURE_MARKER"; then
+        rm -f -- "$temporary_marker"
+        log_error "Could not publish the disaster-recovery failure marker"
+        return 1
+    fi
+    if ! sync_recovery_path "$RECOVERY_CONTROL_DIR"; then
+        log_error "Could not make the disaster-recovery marker publication durable"
+        return 1
+    fi
+    if ! set_recovery_lock_state blocked; then
+        log_error "Could not persist the disaster-recovery lock state"
+        return 1
+    fi
+    RECOVERY_GUARD_ACTIVE=true
+}
+
+release_recovery_guard() {
+    if [ "$RECOVERY_GUARD_ACTIVE" != true ]; then
+        return 0
+    fi
+    recovery_control_path_is_safe || return 1
+    if [ ! -f "$RECOVERY_FAILURE_MARKER" ]; then
+        log_error "Disaster-recovery failure marker is missing or invalid"
+        return 1
+    fi
+    clear_recovery_block_durably || return 1
+    RECOVERY_GUARD_ACTIVE=false
+}
+
+clear_recovery_failure() {
+    if [ "$CONFIRMED" != true ]; then
+        log_error "Clearing a recovery failure requires --yes"
+        return 2
+    fi
+    if [ -n "$BACKUP_FILE" ] || [ "$VERIFY_ONLY" = true ] || [ "$APPLY" = true ] \
+        || [ "${#COMPONENTS[@]}" -gt 0 ] || [ -n "$QDRANT_COLLECTION" ]; then
+        log_error "--clear-recovery-failure cannot be combined with restore options"
+        return 2
+    fi
+    check_required_commands flock rm python3 || return 1
+    if [ ! -d "$DATA_DIR" ]; then
+        log_error "Application data directory is missing"
+        return 1
+    fi
+    recovery_control_path_is_safe || return 1
+    open_recovery_lock || return 1
+    if [ ! -e "$RECOVERY_FAILURE_MARKER" ] && ! recovery_lock_is_blocked; then
+        log_info "No disaster-recovery failure marker is present"
+        flock -u "$LOCK_FD"
+        LOCK_FD=""
+        return 0
+    fi
+    if [ -e "$RECOVERY_FAILURE_MARKER" ]; then
+        if [ ! -f "$RECOVERY_FAILURE_MARKER" ] \
+            || [ -L "$RECOVERY_FAILURE_MARKER" ]; then
+            log_error "Disaster-recovery failure marker is unsafe"
+            return 1
+        fi
+    fi
+    clear_recovery_block_durably || return 1
+    flock -u "$LOCK_FD"
+    LOCK_FD=""
+    log_success "Disaster-recovery failure block cleared by operator"
 }
 
 compose() {
@@ -203,7 +504,7 @@ validate_configuration() {
     fi
     validate_selection
     detect_encryption
-    check_required_commands python3 mktemp rm flock || return 1
+    check_required_commands python3 mktemp rm mv mkdir chmod date flock || return 1
     [ -f "$DR_HELPER" ] || { log_error "Disaster-recovery helper is missing"; return 1; }
 
     if [ "$APPLY" = true ] || component_selected qdrant; then
@@ -216,13 +517,59 @@ validate_configuration() {
     fi
 }
 
+requiesce_services_for_rollback() {
+    local service
+    local service_status
+    local status=0
+
+    for service in "${STOPPED_SERVICES[@]}"; do
+        if service_is_running "$service"; then
+            log_warning "Re-quiescing $service before rollback"
+            if ! compose stop --timeout 30 "$service" >/dev/null; then
+                log_error "Could not re-quiesce $service before rollback"
+                status=1
+            fi
+        else
+            service_status=$?
+            if [ "$service_status" -ne 1 ]; then
+                log_error "Could not determine whether $service restarted"
+                status=1
+            fi
+        fi
+    done
+    return "$status"
+}
+
 start_stopped_services() {
+    local service
+    local service_status
+    local restart_failed=false
+
     if [ "${#STOPPED_SERVICES[@]}" -eq 0 ]; then
         return 0
     fi
     log_info "Restarting services stopped for restore"
     if ! compose start "${STOPPED_SERVICES[@]}" >/dev/null; then
         log_error "Could not restart every service stopped for restore"
+        restart_failed=true
+    else
+        for service in "${STOPPED_SERVICES[@]}"; do
+            if service_is_running "$service"; then
+                continue
+            else
+                service_status=$?
+                log_error "Service did not remain running after restart: $service"
+                if [ "$service_status" -ne 1 ]; then
+                    log_error "Could not inspect restarted service: $service"
+                fi
+                restart_failed=true
+            fi
+        done
+    fi
+    if [ "$restart_failed" = true ]; then
+        if ! requiesce_services_for_rollback; then
+            log_error "Could not safely re-quiesce services after restart failure"
+        fi
         return 1
     fi
     STOPPED_SERVICES=()
@@ -231,6 +578,8 @@ start_stopped_services() {
 cleanup() {
     local exit_code=$?
     local preserve_work_dir=false
+    local rollback_completed=false
+    local services_restarted=false
     set +e
     if ! cleanup_scratch_qdrant && [ "$exit_code" -eq 0 ]; then
         exit_code=1
@@ -239,7 +588,11 @@ cleanup() {
         && [ "$APPLY" = true ] \
         && [ "$RESTORE_COMMITTED" != true ]; then
         log_warning "Restore failed; rolling back every component already changed"
-        if rollback_applied_components; then
+        if ! requiesce_services_for_rollback; then
+            preserve_work_dir=true
+            log_error "Services could not be quiesced safely; rollback was not attempted"
+        elif rollback_applied_components; then
+            rollback_completed=true
             log_warning "Restore rollback completed"
         else
             preserve_work_dir=true
@@ -247,10 +600,32 @@ cleanup() {
         fi
     fi
     if [ "$preserve_work_dir" = false ]; then
-        if ! start_stopped_services && [ "$exit_code" -eq 0 ]; then
+        if start_stopped_services; then
+            services_restarted=true
+        else
+            exit_code=1
+            preserve_work_dir=true
+        fi
+    fi
+    if [ "$RECOVERY_GUARD_ACTIVE" = true ]; then
+        if [ "$preserve_work_dir" = false ] \
+            && [ "$services_restarted" = true ] \
+            && { [ "$RESTORE_COMMITTED" = true ] \
+                || [ "$rollback_completed" = true ]; }; then
+            if ! release_recovery_guard; then
+                exit_code=1
+                preserve_work_dir=true
+            fi
+        else
+            preserve_work_dir=true
             exit_code=1
         fi
-    elif [ "${#STOPPED_SERVICES[@]}" -gt 0 ]; then
+    fi
+    if [ "$RECOVERY_GUARD_ACTIVE" = true ] \
+        && [ "$preserve_work_dir" = true ]; then
+        ensure_persistent_recovery_block || exit_code=1
+    fi
+    if [ "$preserve_work_dir" = true ] && [ "${#STOPPED_SERVICES[@]}" -gt 0 ]; then
         log_error "Services remain stopped until a human completes rollback"
     fi
     if [ "$preserve_work_dir" = false ] \
@@ -735,27 +1110,30 @@ apply_restore() {
         restore_volume_archive alertmanager "$alertmanager_volume" "$helper_image" "$snapshot_root"
     fi
     restore_qdrant "$snapshot_root"
+    if ! start_stopped_services; then
+        return 1
+    fi
     RESTORE_COMMITTED=true
-    start_stopped_services
+    release_recovery_guard || return 1
 }
 
 main() {
     parse_args "$@"
     initialize_paths
-    validate_configuration
     umask 077
+    if [ "$CLEAR_RECOVERY_FAILURE" = true ]; then
+        clear_recovery_failure
+        return
+    fi
+    ensure_recovery_not_blocked
+    validate_configuration
     WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/bisq-support-restore.XXXXXXXX")"
     trap cleanup EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
 
     if [ "$APPLY" = true ]; then
-        # shellcheck disable=SC3045
-        exec {LOCK_FD}>"$DATA_DIR/.disaster-recovery.lock"
-        if ! flock -n "$LOCK_FD"; then
-            log_error "Another disaster-recovery operation is already running"
-            return 1
-        fi
+        acquire_recovery_lock
         validate_api_data_mount
     fi
 
@@ -771,6 +1149,7 @@ main() {
         return 0
     fi
 
+    create_recovery_guard
     log_warning "Applying a human-approved restore of selected components"
     apply_restore "$snapshot_root"
     log_success "Selected components restored"

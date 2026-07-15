@@ -22,6 +22,12 @@ STAGING_DIR=""
 PARTIAL_OUTPUT=""
 COMPLETED_OUTPUT_NAME=""
 LOCK_FD=""
+RECOVERY_CONTROL_DIR=""
+RECOVERY_FAILURE_MARKER=""
+RECOVERY_LOCK_FILE=""
+EXPECTED_MOUNT_IDENTITY=""
+EXPECTED_TARGET_IDENTITY=""
+BACKUP_TARGET_IDENTITY_CAPTURED=false
 declare -a QUIESCED_SERVICES=()
 
 initialize_paths() {
@@ -31,6 +37,9 @@ initialize_paths() {
     DOCKER_DIR="$INSTALL_DIR/docker"
     DATA_DIR="$INSTALL_DIR/api/data"
     DR_HELPER="$INSTALL_DIR/api/app/scripts/disaster_recovery.py"
+    RECOVERY_CONTROL_DIR="$INSTALL_DIR/failed_updates/disaster-recovery"
+    RECOVERY_FAILURE_MARKER="$RECOVERY_CONTROL_DIR/recovery-blocked"
+    RECOVERY_LOCK_FILE="$RECOVERY_CONTROL_DIR/recovery.lock"
 }
 
 usage() {
@@ -130,7 +139,11 @@ cleanup() {
     set +e
     resume_services
     if [ -n "$PARTIAL_OUTPUT" ] && [ -e "$PARTIAL_OUTPUT" ]; then
-        rm -f -- "$PARTIAL_OUTPUT"
+        if revalidate_backup_target; then
+            rm -f -- "$PARTIAL_OUTPUT"
+        else
+            log_error "Backup target changed; refusing to remove the partial path"
+        fi
     fi
     if [ -n "$STAGING_DIR" ] && [ -d "$STAGING_DIR" ]; then
         rm -rf -- "$STAGING_DIR"
@@ -139,6 +152,155 @@ cleanup() {
         flock -u "$LOCK_FD"
     fi
     exit "$exit_code"
+}
+
+recovery_control_path_is_safe() {
+    if [ -L "$INSTALL_DIR/failed_updates" ] \
+        || [ -L "$RECOVERY_CONTROL_DIR" ] \
+        || [ -L "$RECOVERY_FAILURE_MARKER" ] \
+        || [ -L "$RECOVERY_LOCK_FILE" ]; then
+        log_error "Disaster-recovery control path is unsafe"
+        return 1
+    fi
+    if [ -e "$RECOVERY_LOCK_FILE" ] && [ ! -f "$RECOVERY_LOCK_FILE" ]; then
+        log_error "Disaster-recovery lock path is unsafe"
+        return 1
+    fi
+}
+
+sync_recovery_path() {
+    python3 - "$1" <<'PY'
+import os
+import sys
+
+path = sys.argv[1]
+flags = os.O_RDONLY
+if os.path.isdir(path):
+    flags |= getattr(os, "O_DIRECTORY", 0)
+descriptor = os.open(path, flags)
+try:
+    os.fsync(descriptor)
+finally:
+    os.close(descriptor)
+PY
+}
+
+prepare_recovery_control_dir() {
+    recovery_control_path_is_safe || return 1
+    mkdir -p -- "$RECOVERY_CONTROL_DIR" || {
+        log_error "Could not create the disaster-recovery control directory"
+        return 1
+    }
+    recovery_control_path_is_safe || return 1
+    if [ ! -d "$RECOVERY_CONTROL_DIR" ]; then
+        log_error "Disaster-recovery control directory is unavailable"
+        return 1
+    fi
+    chmod 700 "$RECOVERY_CONTROL_DIR" || {
+        log_error "Could not protect the disaster-recovery control directory"
+        return 1
+    }
+    sync_recovery_path "$RECOVERY_CONTROL_DIR" || return 1
+    sync_recovery_path "$INSTALL_DIR/failed_updates" || return 1
+    sync_recovery_path "$INSTALL_DIR" || return 1
+}
+
+ensure_recovery_not_blocked() {
+    recovery_control_path_is_safe || return 1
+    local lock_state=""
+    if [ -f "$RECOVERY_LOCK_FILE" ]; then
+        IFS= read -r lock_state < "$RECOVERY_LOCK_FILE" || true
+    fi
+    if [ -e "$RECOVERY_FAILURE_MARKER" ] || [ "$lock_state" = blocked ]; then
+        log_error "Disaster recovery is blocked after an unresolved recovery failure"
+        log_error "Inspect the preserved recovery state, then use restore.sh to clear the block"
+        return 1
+    fi
+}
+
+open_recovery_lock() {
+    prepare_recovery_control_dir || return 1
+    LOCK_FD=201
+    if ! exec 201<>"$RECOVERY_LOCK_FILE"; then
+        log_error "Could not open the protected disaster-recovery lock"
+        return 1
+    fi
+    chmod 600 "$RECOVERY_LOCK_FILE" || return 1
+    if ! flock -n "$LOCK_FD"; then
+        log_error "Another disaster-recovery operation is already running"
+        return 1
+    fi
+}
+
+acquire_recovery_lock() {
+    open_recovery_lock || return 1
+    ensure_recovery_not_blocked || return 1
+}
+
+path_identity() {
+    stat -Lc '%d:%i' -- "$1" 2>/dev/null \
+        || stat -Lf '%d:%i' -- "$1" 2>/dev/null
+}
+
+capture_backup_target_identity() {
+    EXPECTED_MOUNT_IDENTITY="$(mountpoint -d -- "$MOUNT_ROOT")" || {
+        log_error "Could not capture the off-host mount identity"
+        return 1
+    }
+    EXPECTED_TARGET_IDENTITY="$(path_identity "$TARGET_DIR")" || {
+        log_error "Could not capture the backup target identity"
+        return 1
+    }
+    if [ -z "$EXPECTED_MOUNT_IDENTITY" ] || [ -z "$EXPECTED_TARGET_IDENTITY" ]; then
+        log_error "Off-host backup identity is empty"
+        return 1
+    fi
+    BACKUP_TARGET_IDENTITY_CAPTURED=true
+}
+
+revalidate_backup_target() {
+    local current_mount_identity
+    local current_target_identity
+    local current_target
+
+    # Direct function-level tests may call encryption without the main entrypoint.
+    # The executable path always captures identities before snapshot work begins.
+    if [ "$BACKUP_TARGET_IDENTITY_CAPTURED" != true ]; then
+        return 0
+    fi
+    if [ ! -d "$MOUNT_ROOT" ] || [ -L "$MOUNT_ROOT" ] \
+        || ! mountpoint -q -- "$MOUNT_ROOT"; then
+        log_error "Off-host mount is no longer available"
+        return 1
+    fi
+    current_mount_identity="$(mountpoint -d -- "$MOUNT_ROOT")" || {
+        log_error "Could not revalidate the off-host mount identity"
+        return 1
+    }
+    if [ "$current_mount_identity" != "$EXPECTED_MOUNT_IDENTITY" ]; then
+        log_error "Off-host mount identity changed during backup"
+        return 1
+    fi
+    if [ ! -d "$TARGET_DIR" ] || [ -L "$TARGET_DIR" ]; then
+        log_error "Backup target is no longer available or safe"
+        return 1
+    fi
+    current_target="$(cd "$TARGET_DIR" && pwd -P)" || {
+        log_error "Could not revalidate the backup target path"
+        return 1
+    }
+    if [ "$current_target" != "$TARGET_DIR" ]; then
+        log_error "Backup target path changed during backup"
+        return 1
+    fi
+    current_target_identity="$(path_identity "$TARGET_DIR")" || {
+        log_error "Could not revalidate the backup target identity"
+        return 1
+    }
+    if [ "$current_target_identity" != "$EXPECTED_TARGET_IDENTITY" ]; then
+        log_error "Backup target identity changed during backup"
+        return 1
+    fi
 }
 
 quiesce_services() {
@@ -311,7 +473,7 @@ validate_configuration() {
             ;;
     esac
 
-    check_required_commands docker flock python3 tar find grep rm mktemp mountpoint || return 1
+    check_required_commands docker flock python3 tar find grep rm mv mktemp mountpoint stat || return 1
     check_docker_daemon || return 1
     check_docker_compose || return 1
     [ -f "$DR_HELPER" ] || { log_error "Disaster-recovery helper is missing"; return 1; }
@@ -359,24 +521,32 @@ encrypt_backup() {
         extension="gpg"
     fi
     filename="bisq-support-backup-$timestamp.tar.gz.$extension"
+    revalidate_backup_target || return 1
     PARTIAL_OUTPUT="$TARGET_DIR/.$filename.partial.$$"
 
     log_info "Encrypting backup set" >&2
     if [ "$ENCRYPTION" = age ]; then
-        tar -C "$STAGING_DIR" -czf - . | \
-            age --recipient "$RECIPIENT" --output "$PARTIAL_OUTPUT"
+        if ! tar -C "$STAGING_DIR" -czf - . | \
+            age --recipient "$RECIPIENT" --output "$PARTIAL_OUTPUT"; then
+            return 1
+        fi
     else
-        tar -C "$STAGING_DIR" -czf - . | \
+        if ! tar -C "$STAGING_DIR" -czf - . | \
             gpg --batch --yes --trust-model always \
-                --recipient "$RECIPIENT" --output "$PARTIAL_OUTPUT" --encrypt
+                --recipient "$RECIPIENT" --output "$PARTIAL_OUTPUT" --encrypt; then
+            return 1
+        fi
     fi
-    chmod 600 "$PARTIAL_OUTPUT"
-    mv -- "$PARTIAL_OUTPUT" "$TARGET_DIR/$filename"
+    revalidate_backup_target || return 1
+    chmod 600 "$PARTIAL_OUTPUT" || return 1
+    revalidate_backup_target || return 1
+    mv -- "$PARTIAL_OUTPUT" "$TARGET_DIR/$filename" || return 1
     PARTIAL_OUTPUT=""
     COMPLETED_OUTPUT_NAME="$filename"
 }
 
 apply_retention() {
+    revalidate_backup_target || return 1
     log_info "Applying backup retention"
     find "$TARGET_DIR" -maxdepth 1 -type f \
         \( -name 'bisq-support-backup-*.tar.gz.age' \
@@ -387,15 +557,12 @@ apply_retention() {
 main() {
     parse_args "$@"
     initialize_paths
-    validate_configuration
     umask 077
+    ensure_recovery_not_blocked
+    validate_configuration
+    capture_backup_target_identity
 
-    # shellcheck disable=SC3045
-    exec {LOCK_FD}>"$DATA_DIR/.disaster-recovery.lock"
-    if ! flock -n "$LOCK_FD"; then
-        log_error "Another disaster-recovery operation is already running"
-        return 1
-    fi
+    acquire_recovery_lock
     trap cleanup EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM

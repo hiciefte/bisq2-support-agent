@@ -757,6 +757,33 @@ def test_preserve_production_data_command_substitution_returns_empty_without_dat
     assert not list((repo / "api" / "data").glob(".backup_*"))
 
 
+def test_update_repository_aborts_before_git_work_when_preservation_fails(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "bisq-support-test"
+    repo.mkdir()
+    mutation_marker = tmp_path / "git-work-started"
+
+    result = run_bash(
+        f"""
+        source "{GIT_UTILS_SH}"
+        validate_git_repo() {{ return 0; }}
+        ensure_repository_update_safe() {{ return 0; }}
+        preserve_production_data() {{ return 1; }}
+        check_local_changes() {{ touch "{mutation_marker}"; return 1; }}
+        fetch_remote() {{ touch "{mutation_marker}"; return 0; }}
+        if update_repository "{repo}" origin main; then
+            exit 99
+        fi
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not mutation_marker.exists()
+    assert "Failed to preserve production data" in result.stdout + result.stderr
+
+
 def test_validate_runtime_configuration_requires_trust_monitor_secret() -> None:
     result = run_bash(
         f"""

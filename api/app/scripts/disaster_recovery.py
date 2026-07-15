@@ -52,7 +52,7 @@ REQUIRED_VOLUME_COMPONENTS = (
     "bisq2",
     "alertmanager",
 )
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 
 
 class RecoveryError(RuntimeError):
@@ -103,10 +103,77 @@ def _safe_archive_member(member: tarfile.TarInfo) -> Path:
     return _safe_relative(normalized)
 
 
+def _prepare_empty_extraction_destination(destination: Path) -> Path:
+    destination = Path(os.path.abspath(destination))
+    destination_existed = destination.exists()
+    current = Path(destination.anchor)
+    for part in destination.parts[1:]:
+        current /= part
+        if current.is_symlink():
+            raise RecoveryError("Extraction destination contains a symlink")
+        if current.exists():
+            if not current.is_dir():
+                raise RecoveryError("Extraction destination path is not a directory")
+            continue
+        try:
+            current.mkdir(mode=0o700)
+        except FileExistsError:
+            if current.is_symlink() or not current.is_dir():
+                raise RecoveryError("Extraction destination path is unsafe")
+
+    destination_stat = destination.stat()
+    if destination_existed and (
+        destination_stat.st_uid != os.geteuid()
+        or stat.S_IMODE(destination_stat.st_mode) & 0o077
+    ):
+        raise RecoveryError("Extraction destination must be private")
+    try:
+        destination_is_empty = not any(destination.iterdir())
+    except OSError as exc:
+        raise RecoveryError("Extraction destination is inaccessible") from exc
+    if not destination_is_empty:
+        raise RecoveryError("Extraction destination must be empty")
+    if not destination_existed:
+        destination.chmod(0o700)
+    return destination
+
+
+def _prepare_extraction_parent(
+    destination: Path,
+    relative: Path,
+    created_directories: set[Path],
+) -> None:
+    current = destination
+    current_relative = Path(".")
+    for part in relative.parent.parts:
+        if part in {"", "."}:
+            continue
+        current /= part
+        current_relative /= part
+        if current.is_symlink():
+            raise RecoveryError(
+                f"Extraction target parent is a symlink: {relative.as_posix()}"
+            )
+        if current.exists():
+            if not current.is_dir() or current_relative not in created_directories:
+                raise RecoveryError(
+                    f"Extraction target parent is unsafe: {relative.as_posix()}"
+                )
+            continue
+        try:
+            current.mkdir(mode=0o700)
+        except FileExistsError as exc:
+            raise RecoveryError(
+                f"Extraction target parent changed unexpectedly: {relative.as_posix()}"
+            ) from exc
+        created_directories.add(current_relative)
+
+
 def _safe_extract_archive(archive: tarfile.TarFile, destination: Path) -> list[Path]:
-    destination.mkdir(parents=True, exist_ok=True)
+    destination = _prepare_empty_extraction_destination(destination)
     extracted: list[Path] = []
     seen: set[Path] = set()
+    created_directories = {Path(".")}
     for member in archive:
         relative = _safe_archive_member(member)
         if relative == Path("."):
@@ -115,17 +182,44 @@ def _safe_extract_archive(archive: tarfile.TarFile, destination: Path) -> list[P
             raise RecoveryError(f"Duplicate archive member: {relative.as_posix()}")
         seen.add(relative)
         target = destination / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
+        _prepare_extraction_parent(destination, relative, created_directories)
+        if target.is_symlink():
+            raise RecoveryError(
+                f"Extraction target is a symlink: {relative.as_posix()}"
+            )
         if member.isdir():
-            target.mkdir(parents=True, exist_ok=True)
+            if target.exists():
+                if not target.is_dir() or relative not in created_directories:
+                    raise RecoveryError(
+                        f"Extraction directory is unsafe: {relative.as_posix()}"
+                    )
+            else:
+                try:
+                    target.mkdir(mode=0o700)
+                except FileExistsError as exc:
+                    raise RecoveryError(
+                        f"Extraction directory changed unexpectedly: {relative.as_posix()}"
+                    ) from exc
+                created_directories.add(relative)
             extracted.append(relative)
             continue
 
         source = archive.extractfile(member)
         if source is None:
             raise RecoveryError(f"Could not read archive member: {member.name!r}")
-        with source, target.open("wb") as output:
-            shutil.copyfileobj(source, output, length=1024 * 1024)
+        try:
+            with source:
+                descriptor = os.open(
+                    target,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                    0o600,
+                )
+                with os.fdopen(descriptor, "wb") as output:
+                    shutil.copyfileobj(source, output, length=1024 * 1024)
+        except OSError as exc:
+            raise RecoveryError(
+                f"Extraction target is unsafe: {relative.as_posix()}"
+            ) from exc
         extracted.append(relative)
     return extracted
 
@@ -231,6 +325,51 @@ def _is_matrix_state(relative: Path, explicit_paths: set[Path] | None = None) ->
     )
 
 
+def _matrix_roots_for_snapshot(
+    data_dir: Path,
+    entries: list[dict[str, Any]],
+    explicit_paths: set[Path] | None,
+) -> tuple[set[Path], set[Path]]:
+    configured_paths = explicit_paths or matrix_state_paths_from_values([])
+    matrix_files: set[Path] = set()
+    matrix_store_roots: set[Path] = set()
+    for configured in configured_paths:
+        relative = _safe_relative(configured.as_posix())
+        if relative == Path("."):
+            raise RecoveryError("Matrix state root must not be the data directory")
+        candidate = data_dir / relative
+        if candidate.is_dir() or (
+            not relative.suffix and relative.name.lower().endswith("_store")
+        ):
+            matrix_store_roots.add(relative)
+        else:
+            matrix_files.add(relative)
+
+    matrix_entries: list[Path] = []
+    for entry in entries:
+        components = entry.get("components")
+        if not isinstance(components, list) or "matrix" not in components:
+            continue
+        matrix_entries.append(_safe_relative(str(entry.get("relative_path", ""))))
+
+    for relative in matrix_entries:
+        lowered_parts = [part.lower() for part in relative.parts]
+        if "matrix_session_store" in lowered_parts:
+            index = lowered_parts.index("matrix_session_store")
+            matrix_store_roots.add(Path(*relative.parts[: index + 1]))
+
+    for relative in matrix_entries:
+        if not any(root in relative.parents for root in matrix_store_roots):
+            matrix_files.add(relative)
+
+    matrix_files = {
+        path
+        for path in matrix_files
+        if not any(root in path.parents for root in matrix_store_roots)
+    }
+    return matrix_files, matrix_store_roots
+
+
 def _iter_data_files(data_dir: Path) -> Iterable[tuple[Path, Path]]:
     for path in sorted(data_dir.rglob("*")):
         relative = path.relative_to(data_dir)
@@ -295,10 +434,18 @@ def snapshot_data(
     if not any(entry["type"] == "sqlite" for entry in entries):
         raise RecoveryError("No SQLite databases were found in application data")
 
+    matrix_files, matrix_store_roots = _matrix_roots_for_snapshot(
+        data_dir,
+        entries,
+        matrix_state_paths,
+    )
+
     manifest = {
         "created_at": _now_iso(),
         "entries": entries,
         "format_version": FORMAT_VERSION,
+        "matrix_state_files": sorted(path.as_posix() for path in matrix_files),
+        "matrix_store_roots": sorted(path.as_posix() for path in matrix_store_roots),
     }
     _write_json(output_dir / "manifest/application.json", manifest)
     return manifest
@@ -408,7 +555,7 @@ def _sqlite_entries_in_directory(root: Path) -> list[dict[str, Any]]:
 
 def _volume_sqlite_manifest(archive_path: Path) -> list[dict[str, Any]]:
     with tempfile.TemporaryDirectory(prefix="volume-manifest-") as temporary_dir:
-        root = Path(temporary_dir)
+        root = Path(temporary_dir).resolve(strict=True)
         with tarfile.open(archive_path, mode="r:gz") as archive:
             _safe_extract_archive(archive, root)
         return _sqlite_entries_in_directory(root)
@@ -626,6 +773,46 @@ def _verify_artifacts(root: Path, manifest: dict[str, Any]) -> int:
     return checked
 
 
+def _matrix_roots_from_manifest(
+    manifest: dict[str, Any],
+) -> tuple[set[Path], set[Path]]:
+    def parse_paths(key: str) -> set[Path]:
+        raw_paths = manifest.get(key)
+        if not isinstance(raw_paths, list) or any(
+            not isinstance(value, str) for value in raw_paths
+        ):
+            raise RecoveryError("Application snapshot Matrix roots are invalid")
+        paths = {_safe_relative(value) for value in raw_paths}
+        if len(paths) != len(raw_paths) or Path(".") in paths:
+            raise RecoveryError("Application snapshot Matrix roots are unsafe")
+        return paths
+
+    matrix_files = parse_paths("matrix_state_files")
+    matrix_store_roots = parse_paths("matrix_store_roots")
+    if matrix_files.intersection(matrix_store_roots) or any(
+        root in path.parents for path in matrix_files for root in matrix_store_roots
+    ):
+        raise RecoveryError("Application snapshot Matrix roots overlap")
+
+    entries = manifest.get("entries")
+    if not isinstance(entries, list):
+        raise RecoveryError("Application snapshot entries are invalid")
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise RecoveryError("Application snapshot entry is invalid")
+        components = entry.get("components")
+        if not isinstance(components, list) or "matrix" not in components:
+            continue
+        relative = _safe_relative(str(entry.get("relative_path", "")))
+        if relative not in matrix_files and not any(
+            root in relative.parents for root in matrix_store_roots
+        ):
+            raise RecoveryError(
+                "Application snapshot Matrix entry has no explicit root"
+            )
+    return matrix_files, matrix_store_roots
+
+
 def _load_application_manifest(root: Path) -> dict[str, Any]:
     path = root / "manifest/application.json"
     try:
@@ -636,6 +823,7 @@ def _load_application_manifest(root: Path) -> dict[str, Any]:
         raise RecoveryError("Unsupported application snapshot format")
     if not isinstance(manifest.get("entries"), list):
         raise RecoveryError("Application snapshot entries are invalid")
+    _matrix_roots_from_manifest(manifest)
     return manifest
 
 
@@ -681,9 +869,12 @@ def _safe_destination(root: Path, relative: Path) -> Path:
 def _data_file_components(
     path: Path,
     relative: Path,
-    matrix_state_paths: set[Path] | None,
+    matrix_state_files: set[Path],
+    matrix_store_roots: set[Path],
 ) -> set[str]:
-    matrix_state = _is_matrix_state(relative, matrix_state_paths)
+    matrix_state = relative in matrix_state_files or any(
+        root in relative.parents for root in matrix_store_roots
+    )
     if _is_sqlite_candidate(path):
         components = {"sqlite"}
         if matrix_state:
@@ -704,6 +895,7 @@ def _record_restore_preimage(
 
     rollback_path: Path | None = None
     original_metadata: tuple[int, int, int] | None = None
+    sqlite_summary: dict[str, Any] | None = None
     if destination.exists():
         if not destination.is_file():
             raise RecoveryError(f"Restore target is not a file: {relative}")
@@ -716,7 +908,7 @@ def _record_restore_preimage(
         rollback_path = rollback_dir / "files" / relative
         rollback_path.parent.mkdir(parents=True, exist_ok=True)
         if sqlite_file:
-            _sqlite_backup(destination, rollback_path)
+            sqlite_summary = _sqlite_backup(destination, rollback_path)
         else:
             shutil.copy2(destination, rollback_path)
 
@@ -734,6 +926,10 @@ def _record_restore_preimage(
             "mode": original_metadata[0],
             "uid": original_metadata[1],
         }
+        transaction_entry["sha256"] = _sha256(rollback_path)
+        transaction_entry["size_bytes"] = rollback_path.stat().st_size
+        if sqlite_summary is not None:
+            transaction_entry["sqlite_summary"] = sqlite_summary
     entries = transaction_manifest["entries"]
     if not isinstance(entries, list):  # pragma: no cover - internal invariant
         raise RecoveryError("Application rollback manifest is invalid")
@@ -887,6 +1083,34 @@ def _rollback_manifest_path(rollback_dir: Path) -> Path:
     return rollback_dir / "rollback-manifest.json"
 
 
+def _validate_rollback_preimage(
+    path: Path,
+    entry: dict[str, Any],
+    relative: Path,
+) -> None:
+    if not path.is_file() or path.is_symlink():
+        raise RecoveryError(f"Application rollback file is missing: {relative}")
+    expected_size = entry.get("size_bytes")
+    expected_sha256 = entry.get("sha256")
+    if (
+        not isinstance(expected_size, int)
+        or isinstance(expected_size, bool)
+        or expected_size < 0
+        or not isinstance(expected_sha256, str)
+        or re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None
+    ):
+        raise RecoveryError("Application rollback preimage metadata is invalid")
+    if path.stat().st_size != expected_size or _sha256(path) != expected_sha256:
+        raise RecoveryError(f"Application rollback preimage mismatch: {relative}")
+
+    if entry.get("sqlite") is True:
+        expected_summary = entry.get("sqlite_summary")
+        if not isinstance(expected_summary, dict):
+            raise RecoveryError("Application rollback SQLite summary is invalid")
+        if _sqlite_summary(path) != expected_summary:
+            raise RecoveryError(f"Application rollback SQLite mismatch: {relative}")
+
+
 def rollback_data(data_dir: Path, rollback_dir: Path) -> int:
     data_dir = data_dir.resolve()
     rollback_dir = rollback_dir.resolve()
@@ -912,8 +1136,7 @@ def rollback_data(data_dir: Path, rollback_dir: Path) -> int:
         if entry.get("had_original") is True:
             rollback_relative = _safe_relative(str(entry.get("rollback_path", "")))
             source = rollback_dir / rollback_relative
-            if not source.is_file() or source.is_symlink():
-                raise RecoveryError(f"Application rollback file is missing: {relative}")
+            _validate_rollback_preimage(source, entry, relative)
             metadata_value = entry.get("metadata")
             if not isinstance(metadata_value, dict):
                 raise RecoveryError("Application rollback metadata is invalid")
@@ -924,6 +1147,7 @@ def rollback_data(data_dir: Path, rollback_dir: Path) -> int:
             )
             try:
                 shutil.copy2(source, temporary)
+                _validate_rollback_preimage(temporary, entry, relative)
                 _apply_file_metadata(temporary, metadata)
                 os.replace(temporary, destination)
             finally:
@@ -954,15 +1178,18 @@ def restore_data(
     if rollback_dir == data_dir or data_dir in rollback_dir.parents:
         raise RecoveryError("Rollback directory must be outside application data")
     manifest = _load_application_manifest(snapshot_root)
-    effective_matrix_paths = set(matrix_state_paths or set())
-    for entry in manifest["entries"]:
-        components = entry.get("components")
-        if not isinstance(components, list) or "matrix" not in components:
-            continue
-        matrix_relative = _safe_relative(str(entry.get("relative_path", "")))
-        effective_matrix_paths.add(matrix_relative)
-        if matrix_relative.parent != Path("."):
-            effective_matrix_paths.add(matrix_relative.parent)
+    matrix_state_files, matrix_store_roots = _matrix_roots_from_manifest(manifest)
+    for configured in matrix_state_paths or set():
+        relative = _safe_relative(configured.as_posix())
+        represented = (
+            relative in matrix_state_files
+            or relative in matrix_store_roots
+            or any(root in relative.parents for root in matrix_store_roots)
+        )
+        if not represented:
+            raise RecoveryError(
+                "Configured Matrix state path is absent from the backup manifest"
+            )
     selected_entries = [
         entry for entry in manifest["entries"] if _entry_is_selected(entry, selected)
     ]
@@ -988,7 +1215,8 @@ def restore_data(
             components = _data_file_components(
                 current,
                 relative,
-                effective_matrix_paths,
+                matrix_state_files,
+                matrix_store_roots,
             )
             if not selected.intersection(components):
                 continue
@@ -1270,8 +1498,12 @@ def import_qdrant(
     *,
     delete_absent: bool = False,
 ) -> list[str]:
+    if selected_collection is not None and delete_absent:
+        raise RecoveryError(
+            "A selected Qdrant collection cannot be combined with delete-absent"
+        )
     with tempfile.TemporaryDirectory(prefix="qdrant-restore-") as temporary_dir:
-        root = Path(temporary_dir)
+        root = Path(temporary_dir).resolve(strict=True)
         with tarfile.open(fileobj=input_stream, mode="r|gz") as archive:
             _safe_extract_archive(archive, root)
         try:

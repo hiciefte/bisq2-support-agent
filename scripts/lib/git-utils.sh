@@ -432,7 +432,10 @@ update_repository() {
     fi
 
     # CRITICAL: Preserve production data BEFORE any git operations
-    data_backup_dir=$(preserve_production_data "$repo_dir")
+    if ! data_backup_dir=$(preserve_production_data "$repo_dir"); then
+        log_error "Failed to preserve production data; aborting repository update"
+        return 1
+    fi
 
     # Check for local changes and stash if needed
     if check_local_changes "$repo_dir"; then
