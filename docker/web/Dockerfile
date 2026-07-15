@@ -1,5 +1,5 @@
 # Stage 1: Dependencies & Build
-FROM node:20-alpine AS builder
+FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS builder
 
 # Set working directory for build stage
 WORKDIR /build
@@ -36,10 +36,20 @@ ENV NEXT_BUILD_ID=${BUILD_ID}
 # Build the application
 RUN npm run build
 
+# Keep only runtime dependencies in the artifact copied into the final image.
+# hadolint ignore=DL3059
+RUN npm prune --omit=dev
+
 # Stage 2: Runtime
-FROM node:20-alpine
+FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293
 
 WORKDIR /app
+
+# Upgrade vulnerable packages from the pinned Alpine release to exact fixed versions.
+RUN apk add --no-cache \
+  libcrypto3=3.5.7-r0 \
+  libssl3=3.5.7-r0 && \
+  npm install --global npm@11.18.0
 
 # Copy built application, node_modules and next.config.js
 COPY --from=builder /build/.next ./.next

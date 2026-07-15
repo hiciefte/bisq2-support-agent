@@ -1,7 +1,7 @@
 services:
   # Nginx reverse proxy for web frontend only
   nginx:
-    image: nginx:alpine
+    image: nginx:alpine@sha256:54f2a904c251d5a34adf545a72d32515a15e08418dae0266e23be2e18c66fefa
     restart: unless-stopped
     environment:
       - API_URL=${API_URL:-/api} # For CSP configuration
@@ -71,8 +71,8 @@ services:
       context: ./bisq2-api
       dockerfile: Dockerfile
       args:
-        # Optional: uncomment and set if you need a different branch/repo
-        # BISQ2_BRANCH: add-support-api
+        # Optional: set a different full commit SHA for an intentional upgrade.
+        # BISQ2_COMMIT: <40-character commit SHA>
         # BISQ2_REPO_URL: https://github.com/hiciefte/bisq2.git
         APP_UID: 1001 # Match host user UID if needed for volume permissions
         APP_GID: 1001 # Match host user GID if needed for volume permissions
@@ -111,7 +111,7 @@ services:
   # Compose owns boundary-secret bootstrap so the first upgrade does not depend
   # on newly pulled host scripts. Each initializer can access only its volume.
   scheduler-secret-init:
-    image: alpine:latest
+    image: alpine:latest@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
     restart: "no"
     network_mode: none
     read_only: true
@@ -129,7 +129,7 @@ services:
     pids_limit: 32
 
   alertmanager-secret-init:
-    image: alpine:latest
+    image: alpine:latest@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
     restart: "no"
     network_mode: none
     read_only: true
@@ -149,6 +149,9 @@ services:
   # API backend
   api:
     image: ${BISQ_SUPPORT_API_IMAGE:-bisq-support-agent-api:local}
+    # This image is built from the checked-out source; never resolve its local
+    # sharing tag from a registry.
+    pull_policy: never
     build:
       context: ..
       dockerfile: docker/api/Dockerfile
@@ -158,7 +161,6 @@ services:
         - APP_GID=${APP_GID:-1001}
     restart: unless-stopped
     volumes:
-      - ../api/app:/app/app # Mount the app directory for development
       - ../api/data:/data # Mount the data directory
       - scheduler-api-secret:/run/bisq-secrets/scheduler:ro
       # Named volume disabled: causes permission issues in local dev (root:root ownership)
@@ -348,7 +350,7 @@ services:
 
   # Qdrant vector database for hybrid search (semantic + BM25)
   qdrant:
-    image: qdrant/qdrant:v1.12.1
+    image: qdrant/qdrant:v1.12.1@sha256:d774e7bb65744454984c6021637a0da89271f30df15e48601a9fafc926d26b1f
     restart: unless-stopped
     volumes:
       - qdrant-data:/qdrant/storage
@@ -381,7 +383,7 @@ services:
 
   # Monitoring - Prometheus
   blackbox-exporter:
-    image: prom/blackbox-exporter:v0.25.0
+    image: prom/blackbox-exporter:v0.25.0@sha256:b04a9fef4fa086a02fc7fcd8dcdbc4b7b35cc30cdee860fdc6a19dd8b208d63e
     restart: always
     command:
       - '--config.file=/etc/blackbox_exporter/config.yml'
@@ -409,7 +411,7 @@ services:
           memory: 128M
 
   prometheus:
-    image: prom/prometheus:v3.9.1
+    image: prom/prometheus:v3.9.1@sha256:1f0f50f06acaceb0f5670d2c8a658a599affe7b0d8e78b898c1035653849a702
     restart: always
     volumes:
       - ./prometheus:/etc/prometheus
@@ -448,7 +450,7 @@ services:
 
   # Monitoring - Grafana
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:latest@sha256:121a7a9ece6dc10b969f1f96eed64b4f07dfac0d0b8abc070f7cb83bbde86f63
     restart: always
     entrypoint:
       - /bin/sh
@@ -506,7 +508,7 @@ services:
 
   # Node exporter for host metrics
   node-exporter:
-    image: prom/node-exporter:latest
+    image: prom/node-exporter:latest@sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0
     restart: always
     volumes:
       - /proc:/host/proc:ro
@@ -542,7 +544,7 @@ services:
 
   # cAdvisor for container metrics
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.47.0
+    image: gcr.io/cadvisor/cadvisor:v0.47.0@sha256:adc29827d88730174181e9fe221938323baa6ba8c5734c2ec52aa2e86a0c303e
     restart: always
     volumes:
       - /:/rootfs:ro
@@ -628,7 +630,7 @@ services:
 
   # Alertmanager for alert routing and notification
   alertmanager:
-    image: prom/alertmanager:v0.27.0
+    image: prom/alertmanager:v0.27.0@sha256:e13b6ed5cb929eeaee733479dce55e10eb3bc2e9c4586c705a4e8da41e5eacf5
     restart: always
     volumes:
       - ./alertmanager:/etc/alertmanager:ro
@@ -666,7 +668,7 @@ services:
 
   # Scheduler for periodic tasks
   scheduler:
-    image: alpine:latest
+    image: alpine:latest@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
     restart: always
     environment:
       - PROMETHEUS_URL=http://prometheus:9090
