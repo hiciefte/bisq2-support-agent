@@ -245,6 +245,64 @@ groups:
           summary: "Training review queue backlog: {{ $value }} items"
           description: "The FULL_REVIEW queue has {{ $value }} items pending. Consider reviewing and clearing the backlog."
 
+  - name: privacy_retention_alerts
+    interval: 30s
+    rules:
+      - alert: PrivacyRetentionWindowExceeded
+        expr: max by (store) (privacy_retention_oldest_age_seconds) > on (store) max by (store) (privacy_retention_window_seconds)
+        for: 15m
+        labels:
+          severity: critical
+          component: privacy
+        annotations:
+          summary: "Privacy-retention window exceeded for {{ $labels.store }}"
+          description: "The oldest retained local personal-data record is older than its configured window."
+          runbook_url: "docs/runbooks/privacy-retention.md"
+
+      - alert: PrivacyRetentionJobStaleOrMissing
+        expr: absent(privacy_retention_last_success_timestamp_seconds{job="api"}) or (time() - max(privacy_retention_last_success_timestamp_seconds{job="api"})) > 90000
+        for: 15m
+        labels:
+          severity: critical
+          component: privacy
+        annotations:
+          summary: "Privacy-retention job is stale or missing"
+          description: "No successful privacy-retention run has been observed within the daily schedule allowance."
+          runbook_url: "docs/runbooks/privacy-retention.md"
+
+      - alert: PrivacyRetentionLogJobStaleOrMissing
+        expr: absent(privacy_retention_log_last_success_timestamp_seconds{job="node-exporter"}) or (time() - max(privacy_retention_log_last_success_timestamp_seconds{job="node-exporter"})) > 90000
+        for: 15m
+        labels:
+          severity: critical
+          component: privacy
+        annotations:
+          summary: "Bind-mounted log-retention job is stale or missing"
+          description: "No successful bind-mounted log-retention run has been observed within the daily schedule allowance."
+          runbook_url: "docs/runbooks/privacy-retention.md"
+
+      - alert: MatrixAlertRelayRetentionStaleOrMissing
+        expr: absent(privacy_retention_last_success_timestamp_seconds{job="matrix-alert-relay"}) or (time() - max(privacy_retention_last_success_timestamp_seconds{job="matrix-alert-relay"})) > 7500
+        for: 15m
+        labels:
+          severity: critical
+          component: privacy
+        annotations:
+          summary: "Matrix alert-relay retention metrics are stale or missing"
+          description: "The isolated Matrix alert relay has not reported a successful session-retention check within its hourly schedule allowance."
+          runbook_url: "docs/runbooks/privacy-retention.md"
+
+      - alert: PrivacyRetentionFailures
+        expr: increase(privacy_retention_failures_total[1h]) > 0
+        for: 5m
+        labels:
+          severity: critical
+          component: privacy
+        annotations:
+          summary: "Privacy-retention job failed"
+          description: "At least one local personal-data store failed retention processing."
+          runbook_url: "docs/runbooks/privacy-retention.md"
+
   - name: operator_security_alerts
     interval: 30s
     rules:

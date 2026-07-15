@@ -1,14 +1,19 @@
 import Link from "next/link"
 import { Metadata } from "next"
 import { Card } from "@/components/ui/card"
+import { getPrivacyRetentionDays } from "@/lib/privacy-retention"
 
 export const metadata: Metadata = {
   title: "Privacy Policy - Bisq 2 Support Assistant",
   description:
-    "Learn how we handle your data. We collect minimal information and automatically delete personal data after 30 days.",
+    "Learn how support records, retained knowledge, external copies, and operational integration state are handled.",
 }
 
+export const dynamic = "force-dynamic"
+
 export default function PrivacyPolicy() {
+  const retentionDays = getPrivacyRetentionDays()
+
   return (
     <main className="min-h-screen bg-gradient-to-b from-background to-muted/20 p-4 md:p-8">
       <div className="mx-auto max-w-4xl">
@@ -23,27 +28,30 @@ export default function PrivacyPolicy() {
 
         <Card className="p-6 md:p-10">
           <h1 className="text-3xl font-bold mb-2">Privacy Policy</h1>
-          <p className="text-sm text-muted-foreground mb-8">Last updated: October 1, 2025</p>
+          <p className="text-sm text-muted-foreground mb-8">Last updated: July 15, 2026</p>
 
           <div className="space-y-8">
             {/* What We Collect */}
             <section>
               <h2 className="text-2xl font-semibold mb-4">What We Collect</h2>
               <p className="mb-4">
-                We collect the following information when you use our chat service:
+                The support service stores information needed to answer questions, collect feedback,
+                and operate connected support channels:
               </p>
               <ul className="list-disc pl-6 space-y-2 mb-4">
-                <li>Your questions and the AI&apos;s responses</li>
-                <li>Feedback ratings (thumbs up/down)</li>
-                <li>Optional explanations for negative feedback</li>
-                <li>Timestamps of interactions</li>
+                <li>Questions, responses, conversation context, and timestamps</li>
+                <li>Feedback ratings and optional feedback explanations</li>
+                <li>Escalations and source records used for staff review and training workflows</li>
+                <li>
+                  For Matrix and Bisq interactions, the display names and user, room, conversation,
+                  and message identifiers supplied by those channels
+                </li>
+                <li>Application and access logs, including request and operational metadata</li>
               </ul>
-              <p className="font-semibold mb-2">We do NOT collect:</p>
+              <p className="font-semibold mb-2">What the web chat does not require:</p>
               <ul className="list-disc pl-6 space-y-2">
-                <li>Names or personal identifiers</li>
-                <li>Email addresses or contact information</li>
-                <li>IP addresses (beyond standard server logs)</li>
-                <li>User accounts or login credentials</li>
+                <li>A user account or login</li>
+                <li>Your name, email address, or contact information</li>
               </ul>
             </section>
 
@@ -51,9 +59,22 @@ export default function PrivacyPolicy() {
             <section>
               <h2 className="text-2xl font-semibold mb-4">How We Use Your Data</h2>
               <ul className="list-disc pl-6 space-y-2">
-                <li><strong>Improve AI Responses:</strong> Analyze feedback to enhance answer quality</li>
-                <li><strong>Generate FAQs:</strong> Create anonymized frequently asked questions for our knowledge base</li>
-                <li><strong>Service Analytics:</strong> Understand usage patterns to improve the chatbot</li>
+                <li>
+                  <strong>Answer and escalate questions:</strong> Provide automated support and
+                  route uncertain cases to staff
+                </li>
+                <li>
+                  <strong>Improve responses:</strong> Review feedback and support conversations to
+                  improve answer quality
+                </li>
+                <li>
+                  <strong>Generate reviewed knowledge:</strong> Create FAQ candidates for staff
+                  approval
+                </li>
+                <li>
+                  <strong>Operate the service:</strong> Prevent duplicate processing, troubleshoot
+                  failures, and measure service health
+                </li>
               </ul>
             </section>
 
@@ -62,37 +83,88 @@ export default function PrivacyPolicy() {
               <h2 className="text-2xl font-semibold mb-4">Data Retention</h2>
               <div className="space-y-3">
                 <div className="p-4 bg-muted rounded-lg">
-                  <p className="font-semibold mb-1">Personal Data</p>
-                  <p className="text-sm">Automatically deleted after 30 days</p>
+                  <p className="font-semibold mb-1">Local records deleted on schedule</p>
+                  <p className="text-sm">
+                    Scheduled retention runs remove local records older than {retentionDays} days
+                    from feedback and conversation data, escalations, channel-derived training and
+                    review sources, translation caches, timestamped processed-message IDs and legacy
+                    rows, backups, and bind-mounted application and access logs. Related message,
+                    user, room, and conversation identifiers are deleted or anonymized when a newer
+                    linked row still needs a stable key. Active bind-mounted logs are purged on the
+                    first retention run or after a scheduling gap when their oldest line cannot be
+                    bounded safely.
+                  </p>
                 </div>
                 <div className="p-4 bg-muted rounded-lg">
-                  <p className="font-semibold mb-1">Anonymized FAQs</p>
-                  <p className="text-sm">Kept permanently (no personal identifiers)</p>
+                  <p className="font-semibold mb-1">Legacy records with unknown age need review</p>
+                  <p className="text-sm">
+                    Malformed or untimestamped legacy or corrupted rows are not automatically
+                    deleted because their age cannot be proven. They can remain beyond{" "}
+                    {retentionDays} days until an operator safely migrates or removes them.
+                    Processed-message IDs written before per-ID timestamps were introduced use the
+                    file modification time as a migration boundary and can remain for one additional{" "}
+                    {retentionDays}-day window after upgrade.
+                  </p>
+                </div>
+                <div className="p-4 bg-muted rounded-lg">
+                  <p className="font-semibold mb-1">Container runtime logs need a host policy</p>
+                  <p className="text-sm">
+                    Container stdout and stderr logs are outside the application job. An operator
+                    must install and verify the provided host age-retention policy. Size-based
+                    rotation alone does not guarantee deletion on the {retentionDays}-day schedule.
+                  </p>
+                </div>
+                <div className="p-4 bg-muted rounded-lg">
+                  <p className="font-semibold mb-1">
+                    Reviewed knowledge text and aggregates may remain
+                  </p>
+                  <p className="text-sm">
+                    Staff-reviewed FAQs and support playbooks may be retained indefinitely. They can
+                    contain reviewed question and answer text copied from a candidate, but do not
+                    retain source user, room, message, reviewer, or conversation identifiers after
+                    their retention boundary. Aggregate service and quality metrics may also be
+                    retained when they contain no message text or user and channel identifiers.
+                  </p>
+                </div>
+                <div className="p-4 bg-muted rounded-lg">
+                  <p className="font-semibold mb-1">Operational channel state is rotated</p>
+                  <p className="text-sm">
+                    The Matrix session file and its local end-to-end encryption crypto store are
+                    operational security state, not support conversation records. The whole local
+                    Matrix session generation is deleted once it reaches the configured{" "}
+                    {retentionDays}-day age, then the integration reauthenticates and creates new
+                    local encryption state. Current Matrix and Bisq sync cursors can remain so the
+                    connectors know where to resume; processed-message ID history older than{" "}
+                    {retentionDays} days is deleted. Rotating local state does not delete original
+                    channel messages.
+                  </p>
+                </div>
+                <div className="p-4 bg-muted rounded-lg">
+                  <p className="font-semibold mb-1">Copies outside this service</p>
+                  <p className="text-sm">
+                    Local deletion does not remove original messages from Matrix or Bisq, or copies
+                    held by configured AI and translation providers. Those copies follow the
+                    retention and deletion policies of the external system that holds them.
+                  </p>
                 </div>
               </div>
             </section>
 
             {/* Third-Party Services */}
             <section>
-              <h2 className="text-2xl font-semibold mb-4">Third-Party Services</h2>
+              <h2 className="text-2xl font-semibold mb-4">
+                External Processing and Source Systems
+              </h2>
               <p className="mb-4">
-                We use <strong>OpenAI</strong> to power our AI chatbot:
+                Answer generation and translation can send question text and relevant conversation
+                context to configured external providers. Messages received through Matrix or Bisq
+                also remain in those source systems.
               </p>
-              <ul className="list-disc pl-6 space-y-2 mb-4">
-                <li>Your questions are sent to OpenAI&apos;s servers for processing</li>
-                <li>OpenAI does not use API data to train their models</li>
-                <li>
-                  See{" "}
-                  <a
-                    href="https://openai.com/policies/row-privacy-policy/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-primary hover:underline"
-                  >
-                    OpenAI&apos;s Privacy Policy
-                  </a>
-                </li>
-              </ul>
+              <p>
+                The local retention job controls only this service&apos;s local stores. External
+                providers and channel networks process and retain their own copies under their own
+                policies.
+              </p>
             </section>
 
             {/* Security Warning */}
@@ -111,18 +183,25 @@ export default function PrivacyPolicy() {
                   <li>Trading partner information</li>
                 </ul>
                 <p className="mt-4 text-sm text-yellow-800 dark:text-yellow-300">
-                  Treat this chatbot like a public forum. We cannot guarantee the security of any information you choose to share.
+                  Treat this chatbot like a public forum. We cannot guarantee the security of any
+                  information you choose to share.
                 </p>
               </div>
             </section>
 
             {/* Your Rights */}
             <section>
-              <h2 className="text-2xl font-semibold mb-4">Your Rights</h2>
+              <h2 className="text-2xl font-semibold mb-4">Your Choices and Limits</h2>
               <ul className="list-disc pl-6 space-y-2">
-                <li>No account is required to use this service</li>
-                <li>All data is automatically deleted after 30 days</li>
-                <li>To prevent data collection: Don&apos;t share sensitive information</li>
+                <li>No account is required to use the web chat</li>
+                <li>Do not submit sensitive or identifying information</li>
+                <li>
+                  The {retentionDays}-day window applies to the local records listed above, not to
+                  retained reviewed knowledge, aggregate metrics, current channel sync cursors,
+                  legacy rows whose age cannot be proven, the one-time processed-ID migration
+                  allowance, or copies held by external systems. Matrix session and encryption
+                  states are rotated on that configured cadence
+                </li>
               </ul>
             </section>
 

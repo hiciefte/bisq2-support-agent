@@ -11,9 +11,12 @@ Architecture:
 import asyncio
 import logging
 import os
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Optional, Protocol, runtime_checkable
 
 from app.channels.plugins.support_markdown import build_matrix_message_content
+from app.metrics.privacy_metrics import record_privacy_retention_run
 
 try:
     from nio import AsyncClient, RoomSendResponse
@@ -28,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 # Default session path for Docker environments
 DEFAULT_ALERT_SESSION_PATH = "/data/matrix_alert_session.json"
+ALERT_RELAY_RETENTION_STORE = "matrix_alert_relay_session"
 
 
 @runtime_checkable
@@ -249,7 +253,7 @@ class MatrixAlertService:
             logger.exception("Error sending alert to Matrix")
             return False
 
-    async def close(self) -> None:
+    async def close(self, *, strict: bool = False) -> None:
         """Close the Matrix client connection.
 
         Uses ConnectionManager.disconnect() to properly update metrics
@@ -260,9 +264,50 @@ class MatrixAlertService:
                 await self._connection_manager.disconnect()
             elif self._client is not None:
                 await self._client.close()
-        except Exception:
+        except Exception as error:
             logger.warning("Error closing Matrix alert client")
-        finally:
+            if strict:
+                raise RuntimeError(
+                    "Matrix alert client did not close cleanly"
+                ) from error
+        else:
             self._client = None
             self._connection_manager = None
             self._session_manager = None
+
+    async def rotate_expired_session(self, *, dry_run: bool = False) -> int:
+        """Rotate the relay session generation after the privacy window."""
+        from app.services.privacy_retention_service import (
+            prune_matrix_session_artifacts,
+        )
+
+        retention_days = int(getattr(self.settings, "DATA_RETENTION_DAYS", 30))
+        session_file = Path(self._get_session_path())
+        run_at = datetime.now(UTC)
+        preview = prune_matrix_session_artifacts(
+            session_file=session_file,
+            retention_days=retention_days,
+            now=run_at,
+            dry_run=True,
+        )
+        if dry_run:
+            return preview.deleted_rows
+        if not preview.deleted_rows:
+            record_privacy_retention_run(
+                stores={ALERT_RELAY_RETENTION_STORE: preview},
+                run_at=run_at.timestamp(),
+            )
+            return 0
+
+        async with self._init_lock:
+            await self.close(strict=True)
+            result = prune_matrix_session_artifacts(
+                session_file=session_file,
+                retention_days=retention_days,
+                now=datetime.now(UTC),
+            )
+        record_privacy_retention_run(
+            stores={ALERT_RELAY_RETENTION_STORE: result},
+            run_at=datetime.now(UTC).timestamp(),
+        )
+        return result.deleted_rows

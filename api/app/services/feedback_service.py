@@ -159,6 +159,11 @@ class FeedbackService:
             logger.error(f"Error loading feedback data from database: {e!s}")
             return []
 
+    def invalidate_retention_caches(self) -> None:
+        """Discard cached rows after the retention job mutates persistence."""
+        self._feedback_cache = None
+        self._last_load_time = None
+
     async def store_feedback(self, feedback_data: Dict[str, Any]) -> bool:
         """Store user feedback in the SQLite database.
 

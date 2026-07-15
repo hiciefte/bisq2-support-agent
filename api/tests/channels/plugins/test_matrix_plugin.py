@@ -9,6 +9,7 @@ Note: Matrix channel wraps the existing Matrix integration components:
 """
 
 import asyncio
+import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -323,6 +324,81 @@ class TestMatrixChannelLifecycle:
         proactive_scanner.stop.assert_awaited_once()
         runtime.unregister.assert_called_once_with("proactive_scanner")
         assert channel.is_connected is False
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_expired_session_rotation_stops_and_rebuilds_live_client(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        from app.services.privacy_retention_service import RetentionStoreResult
+
+        session_path = tmp_path / "matrix-session.json"
+        connection_manager = MagicMock()
+        client = SimpleNamespace(access_token="token", device_id="device")
+        runtime = MagicMock(spec=ChannelRuntime)
+        runtime.settings = SimpleNamespace(
+            MATRIX_SYNC_SESSION_PATH=str(session_path),
+            DATA_RETENTION_DAYS=7,
+        )
+        runtime.resolve_optional = MagicMock(
+            side_effect=lambda name: {
+                "matrix_connection_manager": connection_manager,
+                "matrix_client": client,
+            }.get(name)
+        )
+        channel = MatrixChannel(runtime)
+        channel.stop = AsyncMock()
+        channel.start = AsyncMock()
+        expired = RetentionStoreResult(2, None, 7 * 86400.0)
+        prune = MagicMock(return_value=expired)
+        monkeypatch.setattr(
+            "app.services.privacy_retention_service.prune_matrix_session_artifacts",
+            prune,
+        )
+        setup_dependencies = MagicMock()
+        monkeypatch.setattr(MatrixChannel, "setup_dependencies", setup_dependencies)
+
+        result = await channel.rotate_expired_session()
+
+        assert result is expired
+        channel.stop.assert_awaited_once_with(strict=True)
+        channel.start.assert_awaited_once_with()
+        setup_dependencies.assert_called_once_with(runtime, runtime.settings)
+        assert client.access_token is None
+        assert client.device_id is None
+        assert prune.call_count == 3
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_expired_session_rotation_keeps_files_when_disconnect_fails(
+        self,
+        tmp_path,
+    ):
+        session_path = tmp_path / "matrix-session.json"
+        session_path.write_text("session", encoding="utf-8")
+        old_timestamp = session_path.stat().st_mtime - 2 * 86400
+        os.utime(session_path, (old_timestamp, old_timestamp))
+        connection_manager = SimpleNamespace(
+            disconnect=AsyncMock(side_effect=RuntimeError("close failed"))
+        )
+        runtime = MagicMock(spec=ChannelRuntime)
+        runtime.settings = SimpleNamespace(
+            MATRIX_SYNC_SESSION_PATH=str(session_path),
+            DATA_RETENTION_DAYS=1,
+        )
+        runtime.resolve_optional = MagicMock(
+            side_effect=lambda name: (
+                connection_manager if name == "matrix_connection_manager" else None
+            )
+        )
+        channel = MatrixChannel(runtime)
+
+        with pytest.raises(RuntimeError, match="did not close cleanly"):
+            await channel.rotate_expired_session()
+
+        assert session_path.exists()
 
     @pytest.mark.unit
     def test_health_check_returns_healthy_when_connected(self):

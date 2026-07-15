@@ -117,7 +117,8 @@ class Bisq2Channel(ChannelBase):
                 str(
                     Path(str(getattr(settings, "DATA_DIR", "/data") or "/data"))
                     / "bisq_live_channel_sync_state.json"
-                )
+                ),
+                retention_days=int(getattr(settings, "DATA_RETENTION_DAYS", 30) or 30),
             ),
             allow_override=True,
         )

@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 
 try:
@@ -242,6 +243,7 @@ class SessionManager:
             "access_token": resp.access_token,
             "device_id": resp.device_id,
             "user_id": resp.user_id,
+            "created_at": datetime.now(UTC).isoformat(),
         }
 
         # Ensure parent directory exists

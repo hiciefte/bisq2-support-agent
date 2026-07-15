@@ -82,6 +82,7 @@ class TestBisq2ChannelProperties:
 
         settings = MagicMock()
         settings.DATA_DIR = str(tmp_path)
+        settings.DATA_RETENTION_DAYS = 7
         settings.BISQ_API_URL = "http://localhost:8090"
         settings.BISQ2_CHATOPS_CHANNEL_IDS = []
         settings.BISQ2_STAFF_IDS = []
@@ -97,6 +98,7 @@ class TestBisq2ChannelProperties:
             == Path(tmp_path) / "bisq_live_channel_sync_state.json"
         )
         assert live_state.state_file != training_state
+        assert live_state.retention_days == 7
 
         live_state.mark_processed("live-message")
         live_state.save_state()

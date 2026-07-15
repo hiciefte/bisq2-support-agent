@@ -9,7 +9,7 @@ Tests cover:
 """
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -70,6 +70,19 @@ class TestSessionPersistence:
         permissions = stat_info.st_mode & 0o777
 
         assert permissions == 0o600, f"Expected 0600, got {oct(permissions)}"
+
+    def test_live_save_does_not_restore_expired_processed_ids(self, polling_state_file):
+        manager = PollingStateManager(str(polling_state_file), retention_days=1)
+        manager.mark_processed(
+            "expired-event",
+            processed_at=datetime(2000, 1, 1, tzinfo=UTC),
+        )
+
+        manager.save_state()
+
+        persisted = json.loads(polling_state_file.read_text(encoding="utf-8"))
+        assert persisted["processed_ids"] == []
+        assert manager.is_processed("expired-event") is False
 
 
 class TestDatabaseDuplicateCheck:

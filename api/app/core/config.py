@@ -449,7 +449,12 @@ class Settings(BaseSettings):
     )
 
     # Privacy and data protection settings
-    DATA_RETENTION_DAYS: int = 30  # Days to retain personal data before cleanup
+    DATA_RETENTION_DAYS: int = Field(
+        default=30,
+        ge=1,
+        le=30,
+        description="Maximum days to retain local personal data",
+    )
     ENABLE_PRIVACY_MODE: bool = True  # Enable privacy-preserving features
     PII_DETECTION_ENABLED: bool = True  # Enable PII detection in logs
 
@@ -535,7 +540,7 @@ class Settings(BaseSettings):
     ESCALATION_CLAIM_TTL_MINUTES: int = 30
     ESCALATION_AUTO_CLOSE_HOURS: int = 24
     ESCALATION_DELIVERY_MAX_RETRIES: int = 3
-    ESCALATION_RETENTION_DAYS: int = 90
+    ESCALATION_RETENTION_DAYS: int = Field(default=30, ge=1, le=30)
     ESCALATION_ENABLED: bool = True
     ESCALATION_BISQ2_WS_ENABLED: bool = False
     ESCALATION_POLL_TIMEOUT_MINUTES: int = 30

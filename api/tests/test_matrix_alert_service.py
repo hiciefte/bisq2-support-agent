@@ -4,6 +4,9 @@ TDD tests for the Matrix alerting functionality that sends
 Prometheus Alertmanager alerts to a dedicated Matrix room.
 """
 
+import json
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -101,6 +104,127 @@ class TestMatrixAlertServiceSessionPath:
         # Should derive from same directory as MATRIX_SYNC_SESSION_FILE
         assert session_path == "/data/matrix_alert_session.json"
 
+    @pytest.mark.asyncio
+    async def test_expired_session_rotation_closes_client_before_deletion(
+        self, tmp_path
+    ):
+        from app.channels.plugins.matrix.services.alert_service import (
+            ALERT_RELAY_RETENTION_STORE,
+            MatrixAlertService,
+        )
+        from prometheus_client import REGISTRY
+
+        session_file = tmp_path / "alert-session.json"
+        session_file.write_text(
+            json.dumps(
+                {
+                    "access_token": "fixture",
+                    "device_id": "fixture",
+                    "user_id": "fixture",
+                    "created_at": (datetime.now(UTC) - timedelta(days=31)).isoformat(),
+                }
+            ),
+            encoding="utf-8",
+        )
+        settings = MagicMock()
+        settings.MATRIX_ALERT_SESSION_FILE_PATH = str(session_file)
+        settings.DATA_RETENTION_DAYS = 30
+        service = MatrixAlertService(settings)
+        service.close = AsyncMock()
+
+        assert await service.rotate_expired_session(dry_run=True) == 1
+        assert session_file.exists()
+        service.close.assert_not_awaited()
+
+        assert await service.rotate_expired_session() == 1
+        service.close.assert_awaited_once_with(strict=True)
+        assert not session_file.exists()
+        labels = {"store": ALERT_RELAY_RETENTION_STORE}
+        assert REGISTRY.get_sample_value("privacy_retention_deleted_last", labels) == 1
+        assert (
+            REGISTRY.get_sample_value("privacy_retention_oldest_age_seconds", labels)
+            == 0
+        )
+        assert (
+            REGISTRY.get_sample_value("privacy_retention_window_seconds", labels)
+            == 30 * 86400
+        )
+
+    @pytest.mark.asyncio
+    async def test_expired_session_rotation_keeps_files_when_close_fails(
+        self, tmp_path
+    ):
+        from app.channels.plugins.matrix.services.alert_service import (
+            MatrixAlertService,
+        )
+
+        session_file = tmp_path / "alert-session.json"
+        session_file.write_text(
+            json.dumps(
+                {
+                    "access_token": "fixture",
+                    "device_id": "fixture",
+                    "user_id": "fixture",
+                    "created_at": (datetime.now(UTC) - timedelta(days=31)).isoformat(),
+                }
+            ),
+            encoding="utf-8",
+        )
+        settings = MagicMock()
+        settings.MATRIX_ALERT_SESSION_FILE_PATH = str(session_file)
+        settings.DATA_RETENTION_DAYS = 30
+        service = MatrixAlertService(settings)
+        service._connection_manager = SimpleNamespace(
+            disconnect=AsyncMock(side_effect=RuntimeError("close failed"))
+        )
+
+        with pytest.raises(RuntimeError, match="did not close cleanly"):
+            await service.rotate_expired_session()
+
+        assert session_file.exists()
+        assert service._connection_manager is not None
+
+    @pytest.mark.asyncio
+    async def test_retention_metrics_report_age_when_session_is_retained(
+        self, tmp_path
+    ):
+        from app.channels.plugins.matrix.services.alert_service import (
+            ALERT_RELAY_RETENTION_STORE,
+            MatrixAlertService,
+        )
+        from prometheus_client import REGISTRY
+
+        session_file = tmp_path / "alert-session.json"
+        session_file.write_text(
+            json.dumps(
+                {
+                    "access_token": "fixture",
+                    "device_id": "fixture",
+                    "user_id": "fixture",
+                    "created_at": (datetime.now(UTC) - timedelta(days=29)).isoformat(),
+                }
+            ),
+            encoding="utf-8",
+        )
+        settings = MagicMock()
+        settings.MATRIX_ALERT_SESSION_FILE_PATH = str(session_file)
+        settings.DATA_RETENTION_DAYS = 30
+        service = MatrixAlertService(settings)
+
+        assert await service.rotate_expired_session() == 0
+        assert session_file.exists()
+        labels = {"store": ALERT_RELAY_RETENTION_STORE}
+        assert REGISTRY.get_sample_value("privacy_retention_deleted_last", labels) == 0
+        oldest_age = REGISTRY.get_sample_value(
+            "privacy_retention_oldest_age_seconds", labels
+        )
+        assert oldest_age is not None
+        assert 28 * 86400 < oldest_age < 30 * 86400
+        assert (
+            REGISTRY.get_sample_value("privacy_retention_window_seconds", labels)
+            == 30 * 86400
+        )
+
     def test_uses_default_when_no_paths_configured(self):
         """Test fallback to default path when nothing is configured."""
         from app.channels.plugins.matrix.services.alert_service import (
@@ -121,6 +245,39 @@ class TestMatrixAlertServiceSessionPath:
 
         # Should use sensible default
         assert session_path == "/data/matrix_alert_session.json"
+
+
+class TestMatrixAlertRelayRetentionObservability:
+    @pytest.mark.asyncio
+    async def test_retention_loop_counts_failures(self):
+        import asyncio
+
+        from app.alert_relay import _session_retention_loop
+
+        stop_event = asyncio.Event()
+        service = MagicMock()
+
+        async def fail_rotation() -> int:
+            stop_event.set()
+            raise RuntimeError("fixture failure")
+
+        service.rotate_expired_session = AsyncMock(side_effect=fail_rotation)
+
+        with patch(
+            "app.alert_relay.record_privacy_retention_failure"
+        ) as record_failure:
+            await _session_retention_loop(service, stop_event)
+
+        record_failure.assert_called_once_with()
+
+    def test_relay_exposes_prometheus_metrics(self):
+        from app.alert_relay import app
+        from fastapi.testclient import TestClient
+
+        response = TestClient(app).get("/metrics")
+
+        assert response.status_code == 200
+        assert "privacy_retention_last_success_timestamp_seconds" in response.text
 
 
 class TestMatrixAlertServiceConcurrency:

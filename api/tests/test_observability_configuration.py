@@ -147,6 +147,10 @@ def test_critical_services_have_functional_prometheus_probes() -> None:
     assert scrape_configs["blackbox-exporter"]["static_configs"] == [
         {"targets": ["blackbox-exporter:9115"]}
     ]
+    assert scrape_configs["matrix-alert-relay"]["static_configs"] == [
+        {"targets": ["matrix-alert-relay:8000"]}
+    ]
+    assert scrape_configs["matrix-alert-relay"]["metrics_path"] == "/metrics"
 
     docker_utils = (REPO_ROOT / "scripts/lib/docker-utils.sh").read_text(
         encoding="utf-8"
@@ -214,6 +218,48 @@ def test_scheduler_exports_fresh_heartbeat_metric(tmp_path: Path) -> None:
     value = int(metric.strip().splitlines()[-1].split()[-1])
     assert "# TYPE scheduler_heartbeat_timestamp_seconds gauge" in metric
     assert abs(time.time() - value) < 10
+
+
+def test_privacy_retention_alerts_use_dynamic_window_and_missing_guard() -> None:
+    rules = _alert_rules()
+    overdue = str(rules["PrivacyRetentionWindowExceeded"]["expr"])
+    stale = str(rules["PrivacyRetentionJobStaleOrMissing"]["expr"])
+    log_stale = str(rules["PrivacyRetentionLogJobStaleOrMissing"]["expr"])
+    relay_stale = str(rules["MatrixAlertRelayRetentionStaleOrMissing"]["expr"])
+
+    assert "privacy_retention_oldest_age_seconds" in overdue
+    assert "privacy_retention_window_seconds" in overdue
+    assert "2592000" not in overdue
+    assert (
+        'absent(privacy_retention_last_success_timestamp_seconds{job="api"})' in stale
+    )
+    assert 'job="api"' in stale
+    assert (
+        "absent(privacy_retention_log_last_success_timestamp_seconds"
+        '{job="node-exporter"})' in log_stale
+    )
+    assert 'job="node-exporter"' in log_stale
+    assert (
+        "absent(privacy_retention_last_success_timestamp_seconds"
+        '{job="matrix-alert-relay"})' in relay_stale
+    )
+    assert 'job="matrix-alert-relay"' in relay_stale
+    assert (
+        rules["PrivacyRetentionWindowExceeded"]["annotations"]["runbook_url"]
+        == "docs/runbooks/privacy-retention.md"
+    )
+    assert (
+        rules["PrivacyRetentionJobStaleOrMissing"]["annotations"]["runbook_url"]
+        == "docs/runbooks/privacy-retention.md"
+    )
+    assert (
+        rules["PrivacyRetentionLogJobStaleOrMissing"]["annotations"]["runbook_url"]
+        == "docs/runbooks/privacy-retention.md"
+    )
+    assert (
+        rules["MatrixAlertRelayRetentionStaleOrMissing"]["annotations"]["runbook_url"]
+        == "docs/runbooks/privacy-retention.md"
+    )
 
 
 def test_alert_delivery_drill_uses_a_dedicated_verified_receiver() -> None:

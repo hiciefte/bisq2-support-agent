@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from app.core.config import Settings, get_settings
 from app.core.security import verify_scheduler_access
+from app.metrics.privacy_metrics import record_privacy_retention_failure
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from starlette.concurrency import run_in_threadpool
 
@@ -115,6 +117,68 @@ async def update_wiki(request: Request) -> dict[str, Any]:
         "status": "completed",
         "pages_processed": pages_processed,
     }
+
+
+@router.post("/privacy-retention")
+async def privacy_retention(
+    request: Request,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Apply the configured privacy window across local personal-data stores."""
+    service = _require_app_service(request, "privacy_retention_service")
+    translation_service = getattr(request.app.state, "translation_service", None)
+    state_managers: list[Any] = []
+    runtime = getattr(request.app.state, "channel_runtime", None)
+    resolve_optional = getattr(runtime, "resolve_optional", None)
+    if callable(resolve_optional):
+        live_bisq_state = resolve_optional("bisq2_sync_state_manager")
+        if live_bisq_state is not None:
+            state_managers.append(live_bisq_state)
+    training_bisq_state = getattr(request.app.state, "bisq_sync_state", None)
+    if training_bisq_state is not None:
+        state_managers.append(training_bisq_state)
+    matrix_sync_service = getattr(request.app.state, "matrix_sync_service", None)
+    matrix_polling_state = getattr(matrix_sync_service, "polling_state", None)
+    if matrix_polling_state is not None:
+        state_managers.append(matrix_polling_state)
+
+    matrix_session_results = {}
+    matrix_channel = getattr(request.app.state, "matrix_channel", None)
+    rotate_session = getattr(matrix_channel, "rotate_expired_session", None)
+
+    try:
+        close_matrix_sync = getattr(matrix_sync_service, "close", None)
+        if not dry_run and callable(close_matrix_sync):
+            await close_matrix_sync()
+        if callable(rotate_session):
+            session_result = await rotate_session(dry_run=dry_run)
+            session_path = Path(
+                str(service.settings.MATRIX_SYNC_SESSION_PATH)
+            ).resolve()
+            matrix_session_results[session_path] = session_result
+        report = await run_in_threadpool(
+            service.run,
+            dry_run=dry_run,
+            translation_cache=getattr(translation_service, "cache", None),
+            feedback_service=getattr(
+                request.app.state,
+                "feedback_service",
+                None,
+            ),
+            learning_engine=getattr(
+                request.app.state,
+                "learning_engine",
+                None,
+            ),
+            processed_state_managers=tuple(state_managers),
+            matrix_session_results=matrix_session_results,
+        )
+    except Exception as error:
+        if not getattr(error, "report", None):
+            record_privacy_retention_failure()
+        raise _task_failure("privacy retention", error) from error
+
+    return report.as_dict()
 
 
 @router.post("/reconcile-llm-wiki-coverage")

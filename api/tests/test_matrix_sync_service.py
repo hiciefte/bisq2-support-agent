@@ -5,6 +5,7 @@ Matrix rooms for staff replies and processes them through the unified
 training pipeline.
 """
 
+from types import SimpleNamespace
 from typing import Any, Dict, List
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -210,6 +211,37 @@ class TestMatrixSyncServiceInit:
             polling_state=MagicMock(),
         )
         assert service.is_configured() is False
+
+    @pytest.mark.asyncio
+    async def test_close_clears_live_session_credentials(
+        self,
+        mock_settings,
+        mock_pipeline_service,
+        mock_polling_state,
+    ):
+        from app.services.training.ingest.matrix_sync_service import MatrixSyncService
+
+        service = MatrixSyncService(
+            settings=mock_settings,
+            pipeline_service=mock_pipeline_service,
+            polling_state=mock_polling_state,
+        )
+        client = SimpleNamespace(access_token="token", device_id="device")
+        connection_manager = SimpleNamespace(disconnect=AsyncMock())
+        service._client = client
+        service._connection_manager = connection_manager
+        service._session_manager = MagicMock()
+        service._error_handler = MagicMock()
+
+        await service.close()
+
+        connection_manager.disconnect.assert_awaited_once_with()
+        assert client.access_token is None
+        assert client.device_id is None
+        assert service._client is None
+        assert service._connection_manager is None
+        assert service._session_manager is None
+        assert service._error_handler is None
 
     def test_service_initializes_with_all_components(self, mock_settings):
         """Service should initialize with settings, pipeline, and polling state."""

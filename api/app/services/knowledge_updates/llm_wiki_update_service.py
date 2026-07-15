@@ -1421,9 +1421,7 @@ class KnowledgeUpdateService:
                 "status": REVIEWED_STATUS,
                 "protocol": frontmatter.get("protocol") or candidate.protocol or "all",
                 "source_refs": merged_refs,
-                "reviewed_by": reviewer
-                or frontmatter.get("reviewed_by")
-                or "support-admin",
+                "reviewed_by": "support-admin",
                 "reviewed_at": datetime.now(timezone.utc).date().isoformat(),
                 "risk_level": frontmatter.get("risk_level") or _risk_level(candidate),
             }
@@ -1483,9 +1481,7 @@ class KnowledgeUpdateService:
                 "status": REVIEWED_STATUS,
                 "protocol": frontmatter.get("protocol") or candidate.protocol or "all",
                 "source_refs": merged_refs,
-                "reviewed_by": reviewer
-                or frontmatter.get("reviewed_by")
-                or "support-admin",
+                "reviewed_by": "support-admin",
                 "reviewed_at": datetime.now(timezone.utc).date().isoformat(),
                 "risk_level": frontmatter.get("risk_level") or _risk_level(candidate),
             }
@@ -1807,7 +1803,7 @@ class KnowledgeUpdateService:
             "page_type": "support_playbook",
             "status": REVIEWED_STATUS,
             "protocol": candidate.protocol or "all",
-            "reviewed_by": reviewer or "support-admin",
+            "reviewed_by": "support-admin",
             "reviewed_at": datetime.now(timezone.utc).date().isoformat(),
             "risk_level": _risk_level(candidate),
             "source_refs": source_refs,

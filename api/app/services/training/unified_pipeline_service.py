@@ -2110,7 +2110,11 @@ class UnifiedPipelineService:
             bisq_api = Bisq2API(settings=self.settings)
 
         if state_manager is None:
-            state_manager = BisqSyncStateManager()
+            state_manager = BisqSyncStateManager(
+                retention_days=int(
+                    getattr(self.settings, "DATA_RETENTION_DAYS", 30) or 30
+                )
+            )
 
         # Override staff users in settings if provided
         settings_to_use = self.settings
@@ -2161,7 +2165,8 @@ class UnifiedPipelineService:
 
         # Create polling state manager
         polling_state = PollingStateManager(
-            state_file=self.settings.get_data_path("matrix_polling_state.json")
+            state_file=self.settings.get_data_path("matrix_polling_state.json"),
+            retention_days=int(getattr(self.settings, "DATA_RETENTION_DAYS", 30) or 30),
         )
 
         # Create and run sync service

@@ -309,6 +309,7 @@ services:
     environment:
       - NEXT_PUBLIC_API_URL=/api # Production-specific for Nginx routing
       - API_URL_INTERNAL=http://nginx:80 # SSR calls go through nginx for rate limiting and security headers
+      - DATA_RETENTION_DAYS=${DATA_RETENTION_DAYS:-30}
       - NODE_ENV=production
       - NEXT_TELEMETRY_DISABLED=1
     command: npm run start
@@ -591,6 +592,7 @@ services:
       - MATRIX_ALERT_PASSWORD=${MATRIX_ALERT_PASSWORD:-}
       - MATRIX_ALERT_ROOM=${MATRIX_ALERT_ROOM:-}
       - MATRIX_ALERT_SESSION_FILE=/data/matrix_alert_relay_session.json
+      - DATA_RETENTION_DAYS=${DATA_RETENTION_DAYS:-30}
     expose:
       - "8000"
     networks:
@@ -673,6 +675,7 @@ services:
       - API_PORT=8000
       - BISQ_READINESS_CURRENCY=${BISQ_READINESS_CURRENCY:-EUR}
       - BISQ_READINESS_DIRECTION=${BISQ_READINESS_DIRECTION:-SELL}
+      - DATA_RETENTION_DAYS=${DATA_RETENTION_DAYS:-30}
     volumes:
       - ./scripts/lib/runtime-secret.sh:/scripts/lib/runtime-secret.sh:ro
       - ./scripts/lib/scheduler-api.sh:/scripts/lib/scheduler-api.sh:ro
@@ -680,10 +683,13 @@ services:
       - ./scripts/bisq-readiness-check.sh:/scripts/bisq-readiness-check.sh:ro
       - ./scripts/poll-matrix.sh:/scripts/poll-matrix.sh:ro
       - ./scripts/process-feedback.sh:/scripts/process-feedback.sh:ro
+      - ./scripts/privacy-retention.sh:/scripts/privacy-retention.sh:ro
+      - ./scripts/rotate-retention-logs.sh:/scripts/rotate-retention-logs.sh:ro
       - ./scripts/rag-health-check.sh:/scripts/rag-health-check.sh:ro
       - ./scripts/reconcile-llm-wiki-coverage.sh:/scripts/reconcile-llm-wiki-coverage.sh:ro
       - ./scripts/update-wiki.sh:/scripts/update-wiki.sh:ro
       - ./logs/cron:/var/log/cron
+      - ./logs/nginx:/var/log/retention/nginx
       - scheduler-api-secret:/run/bisq-secrets/scheduler:ro
       - scheduler-metrics:/var/lib/node_exporter/textfile_collector
     command: >
@@ -695,11 +701,14 @@ services:
         # Add @reboot entries to run scripts once when crond starts
         echo '@reboot /scripts/process-feedback.sh >> /var/log/cron/feedback.log 2>&1' > /etc/crontabs/root &&
         echo '@reboot /scripts/bisq-readiness-check.sh >> /var/log/cron/bisq-readiness.log 2>&1' >> /etc/crontabs/root &&
+        echo '@reboot /scripts/privacy-retention.sh >> /var/log/cron/privacy-retention.log 2>&1' >> /etc/crontabs/root &&
         # Add regular cron entries
         # NOTE: update-faqs.sh removed - replaced by unified training pipeline (poll-matrix.sh)
         echo '0 1 * * 0 /scripts/update-wiki.sh >> /var/log/cron/wiki.log 2>&1' >> /etc/crontabs/root &&
         echo '0 0 * * 1 /scripts/process-feedback.sh >> /var/log/cron/feedback.log 2>&1' >> /etc/crontabs/root &&
         echo '30 0 * * * /scripts/reconcile-llm-wiki-coverage.sh >> /var/log/cron/llm-wiki-coverage.log 2>&1' >> /etc/crontabs/root &&
+        echo '0 2 * * * /scripts/privacy-retention.sh >> /var/log/cron/privacy-retention.log 2>&1' >> /etc/crontabs/root &&
+        echo '30 2 * * * /scripts/rotate-retention-logs.sh >> /var/log/cron/privacy-retention.log 2>&1' >> /etc/crontabs/root &&
         echo '*/15 * * * * /scripts/rag-health-check.sh >> /var/log/cron/rag-health.log 2>&1' >> /etc/crontabs/root &&
         echo '*/10 * * * * /scripts/bisq-readiness-check.sh >> /var/log/cron/bisq-readiness.log 2>&1' >> /etc/crontabs/root &&
         echo '0 */12 * * * /scripts/poll-matrix.sh >> /var/log/cron/matrix-poll.log 2>&1' >> /etc/crontabs/root &&
