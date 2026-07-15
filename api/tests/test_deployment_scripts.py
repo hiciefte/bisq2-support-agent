@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import sqlite3
 import subprocess
 from pathlib import Path
 
@@ -13,6 +14,7 @@ GIT_UTILS_SH = REPO_ROOT / "scripts" / "lib" / "git-utils.sh"
 ROLLBACK_SH = REPO_ROOT / "scripts" / "rollback.sh"
 UPDATE_SH = REPO_ROOT / "scripts" / "update.sh"
 DEPLOY_SH = REPO_ROOT / "scripts" / "deploy.sh"
+BACKUP_SH = REPO_ROOT / "scripts" / "backup.sh"
 START_SH = REPO_ROOT / "scripts" / "start.sh"
 STOP_SH = REPO_ROOT / "scripts" / "stop.sh"
 ROLLBACK_TOR_SH = REPO_ROOT / "scripts" / "rollback-tor.sh"
@@ -657,7 +659,9 @@ def test_preserve_production_data_command_substitution_returns_backup_path(
     repo = tmp_path / "bisq-support-test"
     data_dir = repo / "api" / "data"
     data_dir.mkdir(parents=True)
-    (data_dir / "faqs.db").write_bytes(b"sqlite fixture")
+    with sqlite3.connect(data_dir / "faqs.db") as connection:
+        connection.execute("CREATE TABLE faqs (question TEXT NOT NULL)")
+        connection.execute("INSERT INTO faqs (question) VALUES ('fixture')")
 
     result = run_bash(
         f"""
@@ -682,9 +686,175 @@ def test_preserve_production_data_command_substitution_returns_backup_path(
     backup_dir = Path(output_lines[0])
     assert backup_dir.is_dir()
     assert backup_dir.parent == data_dir
-    assert (backup_dir / "faqs.db").read_bytes() == b"sqlite fixture"
+    with sqlite3.connect(backup_dir / "faqs.db") as connection:
+        assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert (
+            connection.execute("SELECT question FROM faqs").fetchone()[0] == "fixture"
+        )
     assert "Backing up production data files" in result.stderr
     assert "Backed up 1 production data file(s)" in result.stderr
+
+
+def test_preserve_production_data_does_not_skip_authoritative_file_over_50_mb(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "bisq-support-test"
+    data_dir = repo / "api" / "data"
+    data_dir.mkdir(parents=True)
+    source = data_dir / "conversations.jsonl"
+    source.write_bytes(b"")
+    with source.open("r+b") as stream:
+        stream.truncate(51 * 1024 * 1024)
+
+    result = run_bash(
+        f"""
+        source "{GIT_UTILS_SH}"
+        realpath() {{
+            if [ "$1" = "-e" ]; then
+                command realpath "$2"
+            else
+                command realpath "$@"
+            fi
+        }}
+        flock() {{ return 0; }}
+        preserve_production_data "{repo}"
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 0, result.stderr
+    backup_dir = Path(result.stdout.splitlines()[-1])
+    assert (backup_dir / source.name).stat().st_size == source.stat().st_size
+    assert "Skipping oversized file" not in result.stderr
+
+
+def test_backup_gpg_recipient_rejects_non_fingerprint_before_keyring_lookup(
+    tmp_path: Path,
+) -> None:
+    gpg_log = tmp_path / "gpg.log"
+
+    result = run_bash(
+        f"""
+        source "{BACKUP_SH}"
+        gpg() {{ printf '%s\n' "$*" >> "{gpg_log}"; }}
+        RECIPIENT=0123456789ABCDEF
+        validate_gpg_recipient_fingerprint
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 2
+    assert "full 40- or 64-character fingerprint" in result.stdout + result.stderr
+    assert not gpg_log.exists()
+
+
+def test_backup_gpg_recipient_requires_one_exact_keyring_match(
+    tmp_path: Path,
+) -> None:
+    fingerprint = "0123456789ABCDEF0123456789ABCDEF01234567"
+    other_fingerprint = "FEDCBA9876543210FEDCBA9876543210FEDCBA98"
+
+    missing = run_bash(
+        f"""
+        source "{BACKUP_SH}"
+        gpg() {{ printf 'fpr:::::::::{other_fingerprint}:\n'; }}
+        RECIPIENT={fingerprint}
+        validate_gpg_recipient_fingerprint
+        """,
+        cwd=REPO_ROOT,
+    )
+    ambiguous = run_bash(
+        f"""
+        source "{BACKUP_SH}"
+        gpg() {{
+            printf 'fpr:::::::::{fingerprint}:\n'
+            printf 'fpr:::::::::{fingerprint}:\n'
+        }}
+        RECIPIENT={fingerprint}
+        validate_gpg_recipient_fingerprint
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert missing.returncode == 2
+    assert "no exact public-key match" in missing.stdout + missing.stderr
+    assert ambiguous.returncode == 2
+    assert "resolves ambiguously" in ambiguous.stdout + ambiguous.stderr
+
+
+def test_backup_gpg_recipient_resolves_and_normalizes_exact_fingerprint(
+    tmp_path: Path,
+) -> None:
+    fingerprint = "0123456789ABCDEF0123456789ABCDEF01234567"
+    gpg_log = tmp_path / "gpg.log"
+
+    result = run_bash(
+        f"""
+        source "{BACKUP_SH}"
+        gpg() {{
+            printf '%s\n' "$*" > "{gpg_log}"
+            printf 'fpr:::::::::{fingerprint}:\n'
+        }}
+        RECIPIENT={fingerprint.lower()}
+        validate_gpg_recipient_fingerprint
+        printf '%s' "$RECIPIENT"
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == fingerprint
+    assert gpg_log.read_text(encoding="utf-8").strip() == (
+        "--batch --with-colons --fingerprint --list-keys -- " + fingerprint
+    )
+
+
+def test_backup_gpg_encryption_keeps_atomic_publish_without_trust_override(
+    tmp_path: Path,
+) -> None:
+    fingerprint = "0123456789ABCDEF0123456789ABCDEF01234567"
+    staging = tmp_path / "staging"
+    target = tmp_path / "target"
+    gpg_log = tmp_path / "gpg.log"
+    staging.mkdir()
+    target.mkdir()
+    (staging / "manifest.json").write_text("{}\n", encoding="utf-8")
+
+    result = run_bash(
+        f"""
+        source "{BACKUP_SH}"
+        gpg() {{
+            printf '%s\n' "$*" > "{gpg_log}"
+            local output=''
+            while [ "$#" -gt 0 ]; do
+                if [ "$1" = --output ]; then
+                    output="$2"
+                    shift 2
+                else
+                    shift
+                fi
+            done
+            cat > "$output"
+        }}
+        revalidate_backup_target() {{ return 0; }}
+        STAGING_DIR="{staging}"
+        TARGET_DIR="{target}"
+        ENCRYPTION=gpg
+        RECIPIENT={fingerprint}
+        encrypt_backup 20260101T000000Z
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    completed = target / "bisq-support-backup-20260101T000000Z.tar.gz.gpg"
+    gpg_args = gpg_log.read_text(encoding="utf-8").strip()
+    assert result.returncode == 0, result.stderr
+    assert completed.is_file()
+    assert completed.stat().st_mode & 0o777 == 0o600
+    assert not list(target.glob(".*.partial.*"))
+    assert "--trust-model" not in gpg_args
+    assert f"--recipient {fingerprint}" in gpg_args
+    assert re.search(r"--output .*/\.bisq-support-backup-.*\.partial\.\d+", gpg_args)
 
 
 def test_preserve_production_data_command_substitution_returns_empty_without_data(
@@ -715,6 +885,33 @@ def test_preserve_production_data_command_substitution_returns_empty_without_dat
     assert "Backing up production data files" in result.stderr
     assert "No production data files found to backup" in result.stderr
     assert not list((repo / "api" / "data").glob(".backup_*"))
+
+
+def test_update_repository_aborts_before_git_work_when_preservation_fails(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "bisq-support-test"
+    repo.mkdir()
+    mutation_marker = tmp_path / "git-work-started"
+
+    result = run_bash(
+        f"""
+        source "{GIT_UTILS_SH}"
+        validate_git_repo() {{ return 0; }}
+        ensure_repository_update_safe() {{ return 0; }}
+        preserve_production_data() {{ return 1; }}
+        check_local_changes() {{ touch "{mutation_marker}"; return 1; }}
+        fetch_remote() {{ touch "{mutation_marker}"; return 0; }}
+        if update_repository "{repo}" origin main; then
+            exit 99
+        fi
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not mutation_marker.exists()
+    assert "Failed to preserve production data" in result.stdout + result.stderr
 
 
 def test_validate_runtime_configuration_requires_trust_monitor_secret() -> None:
