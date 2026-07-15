@@ -22,6 +22,9 @@ describe("PrivacyPolicy", () => {
             screen.getByText(/Scheduled retention runs remove local records older than 14 days/)
         ).toBeInTheDocument();
         expect(
+            screen.getByText(/legacy rows that are timestamped or otherwise provably aged/)
+        ).toBeInTheDocument();
+        expect(
             screen.getByText(
                 /Staff-reviewed FAQs and support playbooks may be retained indefinitely/
             )

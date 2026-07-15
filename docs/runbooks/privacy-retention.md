@@ -85,18 +85,19 @@ Inspect these series:
 - `privacy_retention_deleted_last{store}`
 - `privacy_retention_oldest_age_seconds{store}`
 - `privacy_retention_window_seconds{store}`
-- `privacy_retention_last_success_timestamp_seconds`
+- `privacy_retention_last_success_timestamp_seconds{store}`
 - `privacy_retention_log_last_success_timestamp_seconds`
-- `privacy_retention_failures_total`
+- `privacy_retention_failures_total{store}`
 
 `PrivacyRetentionWindowExceeded` means a store contains personal data beyond
-its exported window. `PrivacyRetentionJobStaleOrMissing` means no successful
-daily API run is visible. `PrivacyRetentionLogJobStaleOrMissing` independently
-covers the bind-mounted log job through node-exporter.
-`MatrixAlertRelayRetentionStaleOrMissing` covers the isolated relay session
-volume independently. `PrivacyRetentionFailures` means
-at least one store group failed while the job continued with the remaining
-groups.
+its exported window. `PrivacyRetentionMetricsMissing` and
+`PrivacyRetentionJobStale` independently detect absent telemetry and overdue
+successes for each daily API store group. `PrivacyRetentionLogMetricsMissing`
+and `PrivacyRetentionLogJobStale` apply the same split to the bind-mounted log
+job through node-exporter. `MatrixAlertRelayRetentionMetricsMissing` and
+`MatrixAlertRelayRetentionStale` cover the isolated relay session volume.
+`PrivacyRetentionFailures` means the labeled store group failed while the job
+continued with the remaining groups.
 
 ## Triage
 

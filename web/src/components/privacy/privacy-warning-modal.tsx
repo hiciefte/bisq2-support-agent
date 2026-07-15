@@ -13,7 +13,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { AlertTriangle, Send, Database, Trash2, FileText, KeyRound } from "lucide-react"
 
-const STORAGE_KEY = "bisq-privacy-warning-acknowledged-v3"
+const STORAGE_KEY_PREFIX = "bisq-privacy-warning-acknowledged-v3"
 
 interface PrivacyWarningModalProps {
   retentionDays: number
@@ -21,16 +21,17 @@ interface PrivacyWarningModalProps {
 
 export function PrivacyWarningModal({ retentionDays }: PrivacyWarningModalProps) {
   const [showModal, setShowModal] = useState(false)
+  const storageKey = `${STORAGE_KEY_PREFIX}-${retentionDays}-days`
 
   useEffect(() => {
-    const acknowledged = localStorage.getItem(STORAGE_KEY)
+    const acknowledged = localStorage.getItem(storageKey)
     if (!acknowledged) {
       setShowModal(true)
     }
-  }, [])
+  }, [storageKey])
 
   const handleAcknowledge = () => {
-    localStorage.setItem(STORAGE_KEY, "true")
+    localStorage.setItem(storageKey, "true")
     setShowModal(false)
   }
 
@@ -93,8 +94,11 @@ export function PrivacyWarningModal({ retentionDays }: PrivacyWarningModalProps)
             <div className="flex items-start gap-3">
               <Trash2 className="h-5 w-5 text-muted-foreground flex-shrink-0 mt-0.5" />
               <p>
-                <strong>Local support records older than {retentionDays} days are deleted</strong>,
-                including questions, answers, feedback, escalations, channel identifiers, and
+                <strong>
+                  Qualifying local support records older than {retentionDays} days are deleted or
+                  anonymized
+                </strong>
+                , including questions, answers, feedback, escalations, channel identifiers, and
                 bind-mounted logs; legacy rows with no provable timestamp can remain pending manual
                 review, and container runtime logs require a separately verified host policy
               </p>

@@ -21,6 +21,15 @@ from app.metrics.privacy_metrics import (
 
 logger = logging.getLogger(__name__)
 
+RETENTION_STORE_GROUPS = (
+    "feedback",
+    "escalations",
+    "training",
+    "translations",
+    "processed_ids",
+    "file_artifacts",
+)
+
 
 @dataclass(frozen=True)
 class RetentionStoreResult:
@@ -217,6 +226,8 @@ def prune_matrix_session_artifacts(
 class PrivacyRetentionService:
     """Apply configured retention to all local personal-data stores."""
 
+    STORE_GROUPS = RETENTION_STORE_GROUPS
+
     _LEGACY_PERSONAL_FILES = (
         "conversations.jsonl",
         "processed_message_ids.jsonl",
@@ -356,6 +367,17 @@ class PrivacyRetentionService:
         return RetentionStoreResult(count, oldest, window_seconds)
 
     @staticmethod
+    def _fsync_directory(path: Path) -> None:
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        )
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+    @staticmethod
     def _vacuum(
         connection: sqlite3.Connection,
         *,
@@ -373,7 +395,11 @@ class PrivacyRetentionService:
                 os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0),
                 0o600,
             )
-            os.close(descriptor)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            PrivacyRetentionService._fsync_directory(marker.parent)
         connection.commit()
         if not dry_run and marker.is_file():
             checkpoint = connection.execute(
@@ -384,6 +410,7 @@ class PrivacyRetentionService:
             connection.execute("VACUUM")
             report.vacuumed_databases.append(path.name)
             marker.unlink()
+            PrivacyRetentionService._fsync_directory(marker.parent)
 
     def _cleanup_feedback_parents(
         self,
@@ -822,7 +849,8 @@ class PrivacyRetentionService:
             params: tuple[Any, ...] = tuple(sorted(old_ids))
             if dry_run:
                 retained_condition = (
-                    f" AND julianday({timestamp_expression}) >= julianday(?)"
+                    f" AND (julianday({timestamp_expression}) IS NULL "
+                    f"OR julianday({timestamp_expression}) >= julianday(?))"
                 )
                 params += (cutoff.isoformat(),)
             rows = connection.execute(
@@ -908,10 +936,47 @@ class PrivacyRetentionService:
             ):
                 if not self._table_exists(connection, reference_table):
                     continue
+                retained_condition = ""
+                params: tuple[Any, ...] = tuple(sorted(old_ids))
+                if dry_run and reference_table == "knowledge_update_proposals":
+                    retained_condition = (
+                        " AND (julianday(created_at) IS NULL "
+                        "OR julianday(created_at) >= julianday(?))"
+                    )
+                    params += (cutoff.isoformat(),)
+                elif dry_run:
+                    surviving_references = [
+                        "thread_key LIKE 'retained:%'",
+                        "julianday(COALESCE(updated_at, created_at)) IS NULL",
+                        "julianday(COALESCE(updated_at, created_at)) "
+                        ">= julianday(?)",
+                    ]
+                    params += (cutoff.isoformat(),)
+                    for child_table, timestamp_column in (
+                        ("thread_messages", "timestamp"),
+                        ("conversation_state_transitions", "created_at"),
+                    ):
+                        if not self._table_exists(connection, child_table):
+                            continue
+                        surviving_references.append(f"""EXISTS (
+                                SELECT 1 FROM {child_table}
+                                WHERE {child_table}.thread_id =
+                                    conversation_threads.id
+                                  AND (
+                                    julianday({child_table}.{timestamp_column}) IS NULL
+                                    OR julianday(
+                                        {child_table}.{timestamp_column}
+                                    ) >= julianday(?)
+                                  )
+                            )""")
+                        params += (cutoff.isoformat(),)
+                    retained_condition = (
+                        " AND (" + " OR ".join(surviving_references) + ")"
+                    )
                 reference_rows = connection.execute(
                     f"SELECT DISTINCT candidate_id FROM {reference_table} "
-                    f"WHERE candidate_id IN ({placeholders})",
-                    tuple(sorted(old_ids)),
+                    f"WHERE candidate_id IN ({placeholders}){retained_condition}",
+                    params,
                 ).fetchall()
                 referenced_ids.update(
                     int(row[0]) for row in reference_rows if row[0] is not None
@@ -1149,16 +1214,26 @@ class PrivacyRetentionService:
                 return
             cutoff_epoch = int((now - timedelta(days=self.retention_days)).timestamp())
             now_epoch = int(now.timestamp())
-            condition = "created_at < ? OR expires_at <= ?"
+            unknown_count = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM translations WHERE created_at IS NULL"
+                ).fetchone()[0]
+            )
             count = int(
                 connection.execute(
-                    f"SELECT COUNT(*) FROM translations WHERE {condition}",
+                    """
+                    SELECT COUNT(*) FROM translations
+                    WHERE created_at IS NULL OR created_at < ? OR expires_at <= ?
+                    """,
                     (cutoff_epoch, now_epoch),
                 ).fetchone()[0]
             )
             if count and not dry_run:
                 connection.execute(
-                    f"DELETE FROM translations WHERE {condition}",
+                    """
+                    DELETE FROM translations
+                    WHERE created_at IS NULL OR created_at < ? OR expires_at <= ?
+                    """,
                     (cutoff_epoch, now_epoch),
                 )
             oldest_row = connection.execute(
@@ -1169,6 +1244,8 @@ class PrivacyRetentionService:
                 if oldest_row and oldest_row[0] is not None
                 else None
             )
+            if dry_run and unknown_count:
+                oldest = max(oldest or 0.0, self._window_seconds + 1.0)
             report.stores["translation_cache"] = RetentionStoreResult(
                 count, oldest, self._window_seconds
             )
@@ -1826,15 +1903,68 @@ class PrivacyRetentionService:
             Path(path).resolve(): result
             for path, result in (matrix_session_results or {}).items()
         }
-        self._run_store_group(
-            report=report,
-            name="feedback",
-            operation=lambda: self._cleanup_feedback_database(
+
+        def cleanup_feedback_group() -> None:
+            self._cleanup_feedback_database(
                 cutoff=cutoff,
                 now=completed_at,
                 dry_run=dry_run,
                 report=report,
-            ),
+            )
+            if not dry_run and feedback_service is not None:
+                invalidate = getattr(
+                    feedback_service,
+                    "invalidate_retention_caches",
+                    None,
+                )
+                if callable(invalidate):
+                    invalidate()
+
+        def cleanup_training_group() -> None:
+            self._cleanup_training_database(
+                cutoff=cutoff,
+                now=completed_at,
+                dry_run=dry_run,
+                report=report,
+            )
+            if learning_engine is None:
+                return
+            prune_history = getattr(
+                learning_engine,
+                "prune_review_history_before",
+                None,
+            )
+            if not callable(prune_history):
+                return
+            in_memory_deleted = int(prune_history(cutoff, dry_run=dry_run))
+            result = report.stores.get(
+                "training_learning_history",
+                RetentionStoreResult(0, None, self._window_seconds),
+            )
+            if in_memory_deleted > result.deleted_rows:
+                report.stores["training_learning_history"] = RetentionStoreResult(
+                    in_memory_deleted,
+                    result.oldest_age_seconds,
+                    result.window_seconds,
+                )
+
+        def cleanup_translation_group() -> None:
+            self._cleanup_translation_database(
+                now=completed_at,
+                dry_run=dry_run,
+                report=report,
+            )
+            if dry_run or translation_cache is None:
+                return
+            l1_cache = getattr(translation_cache, "l1", None)
+            clear = getattr(l1_cache, "clear", None)
+            if callable(clear):
+                clear()
+
+        self._run_store_group(
+            report=report,
+            name="feedback",
+            operation=cleanup_feedback_group,
         )
         self._run_store_group(
             report=report,
@@ -1849,21 +1979,12 @@ class PrivacyRetentionService:
         self._run_store_group(
             report=report,
             name="training",
-            operation=lambda: self._cleanup_training_database(
-                cutoff=cutoff,
-                now=completed_at,
-                dry_run=dry_run,
-                report=report,
-            ),
+            operation=cleanup_training_group,
         )
         self._run_store_group(
             report=report,
             name="translations",
-            operation=lambda: self._cleanup_translation_database(
-                now=completed_at,
-                dry_run=dry_run,
-                report=report,
-            ),
+            operation=cleanup_translation_group,
         )
         self._run_store_group(
             report=report,
@@ -1887,44 +2008,20 @@ class PrivacyRetentionService:
             ),
         )
 
-        if not dry_run and translation_cache is not None:
-            l1_cache = getattr(translation_cache, "l1", None)
-            clear = getattr(l1_cache, "clear", None)
-            if callable(clear):
-                clear()
-
-        if learning_engine is not None:
-            prune_history = getattr(
-                learning_engine,
-                "prune_review_history_before",
-                None,
-            )
-            if callable(prune_history):
-                in_memory_deleted = int(prune_history(cutoff, dry_run=dry_run))
-                result = report.stores["training_learning_history"]
-                if in_memory_deleted > result.deleted_rows:
-                    report.stores["training_learning_history"] = RetentionStoreResult(
-                        in_memory_deleted,
-                        result.oldest_age_seconds,
-                        result.window_seconds,
-                    )
-
-        if not dry_run and feedback_service is not None:
-            invalidate = getattr(
-                feedback_service,
-                "invalidate_retention_caches",
-                None,
-            )
-            if callable(invalidate):
-                invalidate()
-
-        if report.failed_store_groups:
-            record_privacy_retention_failure()
-            raise PrivacyRetentionError(report)
-
+        successful_groups = tuple(
+            group
+            for group in self.STORE_GROUPS
+            if group not in report.failed_store_groups
+        )
         if not dry_run:
             record_privacy_retention_run(
                 stores=report.stores,
+                successful_store_groups=successful_groups,
                 run_at=completed_at.timestamp(),
             )
+        if report.failed_store_groups:
+            record_privacy_retention_failure(
+                failed_store_groups=report.failed_store_groups
+            )
+            raise PrivacyRetentionError(report)
         return report

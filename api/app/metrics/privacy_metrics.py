@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Mapping, Protocol
+from typing import Iterable, Mapping, Protocol
 
 from prometheus_client import Counter, Gauge
 
@@ -59,17 +59,22 @@ PRIVACY_RETENTION_WINDOW_SECONDS = Gauge(
 
 PRIVACY_RETENTION_LAST_SUCCESS_TIMESTAMP_SECONDS = Gauge(
     "privacy_retention_last_success_timestamp_seconds",
-    "Unix timestamp of the last successful privacy-retention run",
+    "Unix timestamp of the last successful privacy-retention store-group run",
+    ["store"],
 )
 
 PRIVACY_RETENTION_FAILURES_TOTAL = Counter(
     "privacy_retention_failures_total",
-    "Failed privacy-retention runs",
+    "Failed privacy-retention store-group runs",
+    ["store"],
 )
 
 
 def record_privacy_retention_run(
-    *, stores: Mapping[str, _StoreResult], run_at: float
+    *,
+    stores: Mapping[str, _StoreResult],
+    successful_store_groups: Iterable[str],
+    run_at: float,
 ) -> None:
     """Publish a bounded per-store snapshot after a successful run."""
     for store, result in stores.items():
@@ -89,9 +94,13 @@ def record_privacy_retention_run(
             else float(result.oldest_age_seconds)
         )
         PRIVACY_RETENTION_WINDOW_SECONDS.labels(store=store).set(result.window_seconds)
-    PRIVACY_RETENTION_LAST_SUCCESS_TIMESTAMP_SECONDS.set(run_at)
+    for store_group in set(successful_store_groups):
+        PRIVACY_RETENTION_LAST_SUCCESS_TIMESTAMP_SECONDS.labels(store=store_group).set(
+            run_at
+        )
 
 
-def record_privacy_retention_failure() -> None:
+def record_privacy_retention_failure(*, failed_store_groups: Iterable[str]) -> None:
     """Count a failed retention pass without advancing last-success state."""
-    PRIVACY_RETENTION_FAILURES_TOTAL.inc()
+    for store_group in set(failed_store_groups):
+        PRIVACY_RETENTION_FAILURES_TOTAL.labels(store=store_group).inc()

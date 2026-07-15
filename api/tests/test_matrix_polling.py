@@ -9,7 +9,7 @@ Tests cover:
 """
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -83,6 +83,47 @@ class TestSessionPersistence:
         persisted = json.loads(polling_state_file.read_text(encoding="utf-8"))
         assert persisted["processed_ids"] == []
         assert manager.is_processed("expired-event") is False
+
+    def test_legacy_ids_without_valid_timestamps_expire_fail_closed(
+        self, polling_state_file
+    ):
+        now = datetime.now(UTC)
+        polling_state_file.write_text(
+            json.dumps(
+                {
+                    "processed_ids": ["valid", "missing", "invalid"],
+                    "processed_id_timestamps": {
+                        "valid": now.isoformat(),
+                        "invalid": "not-a-timestamp",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        manager = PollingStateManager(str(polling_state_file))
+
+        assert manager.processed_ids == {"valid"}
+        cutoff = now - timedelta(days=1)
+        assert manager.prune_before(cutoff, dry_run=True) == 2
+        assert manager.prune_before(cutoff) == 2
+        persisted = json.loads(polling_state_file.read_text(encoding="utf-8"))
+        assert persisted["processed_ids"] == ["valid"]
+
+    def test_save_applies_processed_id_cap_to_memory(self, polling_state_file):
+        manager = PollingStateManager(str(polling_state_file))
+        timestamp = datetime.now(UTC)
+        for index in range(10001):
+            manager.mark_processed(
+                f"event-{index}",
+                processed_at=timestamp + timedelta(microseconds=index),
+            )
+
+        manager.save_state()
+
+        assert len(manager.processed_ids) == 10000
+        assert len(manager._processed_at) == 10000
+        assert "event-0" not in manager.processed_ids
 
 
 class TestDatabaseDuplicateCheck:

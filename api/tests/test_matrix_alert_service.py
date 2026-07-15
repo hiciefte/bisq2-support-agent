@@ -130,14 +130,14 @@ class TestMatrixAlertServiceSessionPath:
         settings.MATRIX_ALERT_SESSION_FILE_PATH = str(session_file)
         settings.DATA_RETENTION_DAYS = 30
         service = MatrixAlertService(settings)
-        service.close = AsyncMock()
+        service._close_unlocked = AsyncMock()
 
         assert await service.rotate_expired_session(dry_run=True) == 1
         assert session_file.exists()
-        service.close.assert_not_awaited()
+        service._close_unlocked.assert_not_awaited()
 
         assert await service.rotate_expired_session() == 1
-        service.close.assert_awaited_once_with(strict=True)
+        service._close_unlocked.assert_awaited_once_with(strict=True)
         assert not session_file.exists()
         labels = {"store": ALERT_RELAY_RETENTION_STORE}
         assert REGISTRY.get_sample_value("privacy_retention_deleted_last", labels) == 1
@@ -268,7 +268,81 @@ class TestMatrixAlertRelayRetentionObservability:
         ) as record_failure:
             await _session_retention_loop(service, stop_event)
 
-        record_failure.assert_called_once_with()
+        record_failure.assert_called_once_with(
+            failed_store_groups=("matrix_alert_relay_session",)
+        )
+
+    @pytest.mark.asyncio
+    async def test_retention_stop_is_bounded_when_rotation_ignores_cancellation(
+        self, monkeypatch
+    ):
+        import asyncio
+
+        from app import alert_relay
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+        service = MagicMock()
+
+        async def stubborn_rotation() -> int:
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                await release.wait()
+            return 0
+
+        service.rotate_expired_session = AsyncMock(side_effect=stubborn_rotation)
+        stop_event = asyncio.Event()
+        monkeypatch.setattr(
+            alert_relay,
+            "SESSION_ROTATION_CANCEL_TIMEOUT_SECONDS",
+            0.01,
+        )
+        task = asyncio.create_task(
+            alert_relay._rotate_session_or_stop(service, stop_event)
+        )
+        await started.wait()
+
+        stop_event.set()
+        assert await asyncio.wait_for(task, timeout=0.2) is None
+
+        release.set()
+        await asyncio.sleep(0)
+
+    @pytest.mark.asyncio
+    async def test_relay_close_is_bounded_when_client_ignores_cancellation(
+        self, monkeypatch
+    ):
+        import asyncio
+
+        from app import alert_relay
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+        service = MagicMock()
+
+        async def stubborn_close() -> None:
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                await release.wait()
+
+        service.close = AsyncMock(side_effect=stubborn_close)
+        monkeypatch.setattr(alert_relay, "SESSION_CLOSE_TIMEOUT_SECONDS", 0.01)
+        monkeypatch.setattr(
+            alert_relay,
+            "SESSION_ROTATION_CANCEL_TIMEOUT_SECONDS",
+            0.01,
+        )
+
+        task = asyncio.create_task(alert_relay._close_service_bounded(service))
+        await started.wait()
+        await asyncio.wait_for(task, timeout=0.2)
+
+        release.set()
+        await asyncio.sleep(0)
 
     def test_relay_exposes_prometheus_metrics(self):
         from app.alert_relay import app
@@ -293,6 +367,40 @@ class TestMatrixAlertServiceConcurrency:
         settings.MATRIX_ALERT_ROOM = "!alert:matrix.org"
         settings.MATRIX_SYNC_SESSION_FILE = "/data/matrix_session.json"
         return settings
+
+    @pytest.mark.asyncio
+    async def test_close_waits_for_in_flight_send(self, mock_settings, monkeypatch):
+        import asyncio
+
+        from app.channels.plugins.matrix.services import alert_service
+
+        class FakeRoomSendResponse:
+            pass
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def room_send(**_kwargs):
+            started.set()
+            await release.wait()
+            return FakeRoomSendResponse()
+
+        monkeypatch.setattr(alert_service, "RoomSendResponse", FakeRoomSendResponse)
+        service = alert_service.MatrixAlertService(mock_settings)
+        service._client = SimpleNamespace(room_send=room_send)
+        service._connection_manager = SimpleNamespace(disconnect=AsyncMock())
+
+        send_task = asyncio.create_task(service.send_alert_message("fixture"))
+        await started.wait()
+        close_task = asyncio.create_task(service.close())
+        await asyncio.sleep(0)
+
+        service._connection_manager.disconnect.assert_not_awaited()
+
+        release.set()
+        assert await send_task is True
+        await close_task
+        assert service._client is None
 
     @pytest.mark.asyncio
     async def test_concurrent_get_client_calls_only_init_once(self, mock_settings):

@@ -1027,13 +1027,14 @@ async def trigger_bisq_sync(
     logger.info("Admin request to trigger Bisq sync")
 
     try:
+        from app.core.config import get_settings
+
+        settings = get_settings()
         # Get or create Bisq API client
         bisq_api = getattr(request.app.state, "bisq_api", None)
         if not bisq_api:
             from app.channels.plugins.bisq2.client.api import Bisq2API
-            from app.core.config import get_settings
 
-            settings = get_settings()
             bisq_api = Bisq2API(settings)
             request.app.state.bisq_api = bisq_api
 

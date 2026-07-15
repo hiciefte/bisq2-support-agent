@@ -23,7 +23,8 @@ jest.mock("@/components/ui/dialog", () => ({
     DialogTitle: ({ children }: PropsWithChildren) => <h2>{children}</h2>,
 }));
 
-const STORAGE_KEY = "bisq-privacy-warning-acknowledged-v3";
+const storageKey = (retentionDays: number) =>
+    `bisq-privacy-warning-acknowledged-v3-${retentionDays}-days`;
 
 describe("PrivacyWarningModal", () => {
     beforeEach(() => {
@@ -35,7 +36,9 @@ describe("PrivacyWarningModal", () => {
 
         expect(await screen.findByText("Privacy & Data Usage Notice")).toBeInTheDocument();
         expect(
-            screen.getByText("Local support records older than 14 days are deleted")
+            screen.getByText(
+                "Qualifying local support records older than 14 days are deleted or anonymized"
+            )
         ).toBeInTheDocument();
         expect(
             screen.getByText(/container runtime logs require a separately verified host policy/)
@@ -63,7 +66,16 @@ describe("PrivacyWarningModal", () => {
 
         fireEvent.click(await screen.findByRole("button", { name: "I Understand" }));
 
-        expect(window.localStorage.getItem(STORAGE_KEY)).toBe("true");
+        expect(window.localStorage.getItem(storageKey(30))).toBe("true");
         expect(screen.queryByText("Privacy & Data Usage Notice")).not.toBeInTheDocument();
+    });
+
+    it("shows a new notice when the configured retention window changes", async () => {
+        window.localStorage.setItem(storageKey(30), "true");
+
+        render(<PrivacyWarningModal retentionDays={14} />);
+
+        expect(await screen.findByText("Privacy & Data Usage Notice")).toBeInTheDocument();
+        expect(window.localStorage.getItem(storageKey(14))).toBeNull();
     });
 });

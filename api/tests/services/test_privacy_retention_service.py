@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -365,6 +366,7 @@ def _create_translation_db(path: Path) -> None:
                 ("old", int(OLD.timestamp()), future),
                 ("exact", int(EXACT.timestamp()), future),
                 ("new", int(NEW.timestamp()), future),
+                ("unknown", None, future),
             ],
         )
 
@@ -505,6 +507,12 @@ def test_dry_run_reports_actions_without_mutating_fixture_stores(
     assert report.stores["feedback"].anonymized_rows == 1
     assert report.stores["escalations"].deleted_rows == 1
     assert report.stores["training_learning_history"].deleted_rows == 1
+    assert report.stores["training_candidates"].deleted_rows == 2
+    assert report.stores["training_candidates"].anonymized_rows == 2
+    assert report.stores["translation_cache"].deleted_rows == 2
+    translation_age = report.stores["translation_cache"].oldest_age_seconds
+    assert translation_age is not None
+    assert translation_age > report.stores["translation_cache"].window_seconds
     oldest_history = report.stores["training_learning_history"].oldest_age_seconds
     assert oldest_history is not None
     assert oldest_history > report.stores["training_learning_history"].window_seconds
@@ -512,6 +520,33 @@ def test_dry_run_reports_actions_without_mutating_fixture_stores(
     assert oldest_legacy is not None
     assert oldest_legacy > report.stores["legacy_file_conversations"].window_seconds
     assert report.vacuumed_databases == []
+
+
+def test_training_candidate_dry_run_matches_ordered_cleanup(
+    retention_fixture: tuple[PrivacyRetentionService, Path],
+) -> None:
+    service, data_dir = retention_fixture
+
+    dry_run = service.run(dry_run=True, now=NOW)
+    applied = service.run(now=NOW)
+
+    assert (
+        dry_run.stores["training_candidates"].deleted_rows
+        == applied.stores["training_candidates"].deleted_rows
+    )
+    assert (
+        dry_run.stores["training_candidates"].anonymized_rows
+        == applied.stores["training_candidates"].anonymized_rows
+    )
+    retained_candidate_ids = {
+        row[0]
+        for row in _table_rows(
+            data_dir / "unified_training.db",
+            "unified_faq_candidates",
+            "id",
+        )
+    }
+    assert 5 not in retained_candidate_ids
 
 
 def test_run_removes_only_out_of_window_rows_and_is_idempotent(
@@ -691,6 +726,106 @@ def test_success_invalidates_only_live_personal_data_caches(
     feedback_service.invalidate_retention_caches.assert_called_once_with()
 
 
+@pytest.mark.parametrize(
+    ("failing_hook", "failed_group"),
+    [
+        ("feedback", "feedback"),
+        ("training", "training"),
+        ("translations", "translations"),
+    ],
+)
+def test_post_cleanup_hook_failures_use_store_group_accounting(
+    retention_fixture: tuple[PrivacyRetentionService, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    failing_hook: str,
+    failed_group: str,
+) -> None:
+    service, _ = retention_fixture
+    translation_cache = SimpleNamespace(l1=MagicMock())
+    feedback_service = MagicMock()
+    learning_engine = MagicMock()
+    learning_engine.prune_review_history_before.return_value = 0
+    if failing_hook == "feedback":
+        feedback_service.invalidate_retention_caches.side_effect = RuntimeError(
+            "fixture failure"
+        )
+    elif failing_hook == "training":
+        learning_engine.prune_review_history_before.side_effect = RuntimeError(
+            "fixture failure"
+        )
+    else:
+        translation_cache.l1.clear.side_effect = RuntimeError("fixture failure")
+    record_run = MagicMock()
+    record_failure = MagicMock()
+    monkeypatch.setattr(
+        "app.services.privacy_retention_service.record_privacy_retention_run",
+        record_run,
+    )
+    monkeypatch.setattr(
+        "app.services.privacy_retention_service.record_privacy_retention_failure",
+        record_failure,
+    )
+
+    with pytest.raises(PrivacyRetentionError) as error:
+        service.run(
+            now=NOW,
+            translation_cache=translation_cache,
+            feedback_service=feedback_service,
+            learning_engine=learning_engine,
+        )
+
+    assert error.value.report.failed_store_groups == [failed_group]
+    successful_groups = record_run.call_args.kwargs["successful_store_groups"]
+    assert failed_group not in successful_groups
+    assert set(successful_groups) == set(service.STORE_GROUPS) - {failed_group}
+    record_failure.assert_called_once_with(failed_store_groups=[failed_group])
+
+
+def test_dry_run_training_hook_failure_is_recorded_without_success_metrics(
+    retention_fixture: tuple[PrivacyRetentionService, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, _ = retention_fixture
+    learning_engine = MagicMock()
+    learning_engine.prune_review_history_before.side_effect = RuntimeError(
+        "fixture failure"
+    )
+    record_run = MagicMock()
+    record_failure = MagicMock()
+    monkeypatch.setattr(
+        "app.services.privacy_retention_service.record_privacy_retention_run",
+        record_run,
+    )
+    monkeypatch.setattr(
+        "app.services.privacy_retention_service.record_privacy_retention_failure",
+        record_failure,
+    )
+
+    with pytest.raises(PrivacyRetentionError):
+        service.run(dry_run=True, now=NOW, learning_engine=learning_engine)
+
+    record_run.assert_not_called()
+    record_failure.assert_called_once_with(failed_store_groups=["training"])
+
+
+def test_learning_hook_handles_absent_persisted_history_result(
+    retention_fixture: tuple[PrivacyRetentionService, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, _ = retention_fixture
+    monkeypatch.setattr(
+        service,
+        "_cleanup_training_database",
+        MagicMock(),
+    )
+    learning_engine = MagicMock()
+    learning_engine.prune_review_history_before.return_value = 2
+
+    report = service.run(dry_run=True, now=NOW, learning_engine=learning_engine)
+
+    assert report.stores["training_learning_history"].deleted_rows == 2
+
+
 def test_failed_vacuum_is_retried_after_deletions_are_committed(
     tmp_path: Path,
 ) -> None:
@@ -744,3 +879,36 @@ def test_failed_vacuum_is_retried_after_deletions_are_committed(
 
     assert not marker.exists()
     assert report.vacuumed_databases == ["retention.db"]
+
+
+def test_vacuum_fsyncs_pending_marker_and_parent_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "retention.db"
+    with _connect(path) as connection:
+        connection.execute("CREATE TABLE records (id INTEGER PRIMARY KEY)")
+        connection.execute("INSERT INTO records VALUES (1)")
+
+    connection = _connect(path)
+    connection.execute("DELETE FROM records")
+    fsync = MagicMock()
+    monkeypatch.setattr(os, "fsync", fsync)
+    report = PrivacyRetentionReport(
+        dry_run=False,
+        cutoff=CUTOFF,
+        completed_at=NOW,
+    )
+    try:
+        PrivacyRetentionService._vacuum(
+            connection,
+            path=path,
+            changed=1,
+            dry_run=False,
+            report=report,
+        )
+    finally:
+        connection.close()
+
+    assert fsync.call_count == 3
+    assert not (tmp_path / ".retention.db.retention-vacuum-pending").exists()

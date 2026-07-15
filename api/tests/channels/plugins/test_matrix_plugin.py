@@ -335,7 +335,7 @@ class TestMatrixChannelLifecycle:
         from app.services.privacy_retention_service import RetentionStoreResult
 
         session_path = tmp_path / "matrix-session.json"
-        connection_manager = MagicMock()
+        connection_manager = SimpleNamespace(disconnect=AsyncMock())
         client = SimpleNamespace(access_token="token", device_id="device")
         runtime = MagicMock(spec=ChannelRuntime)
         runtime.settings = SimpleNamespace(
@@ -349,8 +349,11 @@ class TestMatrixChannelLifecycle:
             }.get(name)
         )
         channel = MatrixChannel(runtime)
-        channel.stop = AsyncMock()
-        channel.start = AsyncMock()
+
+        async def reconnect() -> None:
+            channel._is_connected = True
+
+        channel.start = AsyncMock(side_effect=reconnect)
         expired = RetentionStoreResult(2, None, 7 * 86400.0)
         prune = MagicMock(return_value=expired)
         monkeypatch.setattr(
@@ -363,7 +366,7 @@ class TestMatrixChannelLifecycle:
         result = await channel.rotate_expired_session()
 
         assert result is expired
-        channel.stop.assert_awaited_once_with(strict=True)
+        connection_manager.disconnect.assert_awaited_once_with()
         channel.start.assert_awaited_once_with()
         setup_dependencies.assert_called_once_with(runtime, runtime.settings)
         assert client.access_token is None
@@ -399,6 +402,83 @@ class TestMatrixChannelLifecycle:
             await channel.rotate_expired_session()
 
         assert session_path.exists()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_expired_session_rotation_fails_when_reconnect_is_unhealthy(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        from app.services.privacy_retention_service import RetentionStoreResult
+
+        session_path = tmp_path / "matrix-session.json"
+        connection_manager = SimpleNamespace(disconnect=AsyncMock())
+        client = SimpleNamespace(access_token="token", device_id="device")
+        runtime = MagicMock(spec=ChannelRuntime)
+        runtime.settings = SimpleNamespace(
+            MATRIX_SYNC_SESSION_PATH=str(session_path),
+            DATA_RETENTION_DAYS=7,
+        )
+        runtime.resolve_optional = MagicMock(
+            side_effect=lambda name: {
+                "matrix_connection_manager": connection_manager,
+                "matrix_client": client,
+            }.get(name)
+        )
+        channel = MatrixChannel(runtime)
+        channel.start = AsyncMock()
+        expired = RetentionStoreResult(1, None, 7 * 86400.0)
+        monkeypatch.setattr(
+            "app.services.privacy_retention_service.prune_matrix_session_artifacts",
+            MagicMock(return_value=expired),
+        )
+        monkeypatch.setattr(MatrixChannel, "setup_dependencies", MagicMock())
+
+        with pytest.raises(RuntimeError, match="did not reconnect"):
+            await channel.rotate_expired_session()
+
+        connection_manager.disconnect.assert_awaited_once_with()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_stop_waits_for_in_flight_send(self):
+        send_started = asyncio.Event()
+        release_send = asyncio.Event()
+
+        async def room_send(**_kwargs):
+            send_started.set()
+            await release_send.wait()
+            return SimpleNamespace(event_id="$sent")
+
+        client = SimpleNamespace(room_send=room_send)
+        connection_manager = SimpleNamespace(disconnect=AsyncMock())
+        runtime = MagicMock(spec=ChannelRuntime)
+        runtime.settings = SimpleNamespace(MATRIX_SYNC_IGNORE_UNVERIFIED_DEVICES=True)
+        runtime.resolve_optional = MagicMock(
+            side_effect=lambda name: {
+                "matrix_client": client,
+                "matrix_connection_manager": connection_manager,
+            }.get(name)
+        )
+        channel = MatrixChannel(runtime)
+        outgoing = MagicMock(spec=OutgoingMessage)
+        outgoing.answer = "fixture"
+        outgoing.in_reply_to = ""
+        outgoing.sources = []
+        outgoing.metadata = None
+
+        send_task = asyncio.create_task(channel.send_message("!room", outgoing))
+        await send_started.wait()
+        stop_task = asyncio.create_task(channel.stop())
+        await asyncio.sleep(0)
+
+        connection_manager.disconnect.assert_not_awaited()
+
+        release_send.set()
+        assert await send_task
+        await stop_task
+        connection_manager.disconnect.assert_awaited_once_with()
 
     @pytest.mark.unit
     def test_health_check_returns_healthy_when_connected(self):

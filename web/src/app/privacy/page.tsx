@@ -87,12 +87,12 @@ export default function PrivacyPolicy() {
                   <p className="text-sm">
                     Scheduled retention runs remove local records older than {retentionDays} days
                     from feedback and conversation data, escalations, channel-derived training and
-                    review sources, translation caches, timestamped processed-message IDs and legacy
-                    rows, backups, and bind-mounted application and access logs. Related message,
-                    user, room, and conversation identifiers are deleted or anonymized when a newer
-                    linked row still needs a stable key. Active bind-mounted logs are purged on the
-                    first retention run or after a scheduling gap when their oldest line cannot be
-                    bounded safely.
+                    review sources, translation caches, timestamped processed-message IDs, legacy
+                    rows that are timestamped or otherwise provably aged, backups, and bind-mounted
+                    application and access logs. Related message, user, room, and conversation
+                    identifiers are deleted or anonymized when a newer linked row still needs a
+                    stable key. Active bind-mounted logs are purged on the first retention run or
+                    after a scheduling gap when their oldest line cannot be bounded safely.
                   </p>
                 </div>
                 <div className="p-4 bg-muted rounded-lg">

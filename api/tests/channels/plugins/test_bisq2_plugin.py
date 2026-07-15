@@ -8,7 +8,9 @@ not by the channel plugin. Bisq2 sends responses via REST API.
 
 import asyncio
 from collections import deque
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -19,6 +21,43 @@ from app.channels.models import (
     OutgoingMessage,
     UserContext,
 )
+
+
+@pytest.mark.unit
+def test_retention_prune_evicts_live_seen_message_cache(tmp_path):
+    from app.channels.plugins.bisq2.channel import Bisq2Channel
+    from app.channels.plugins.bisq2.client.sync_state import BisqSyncStateManager
+    from app.channels.runtime import ChannelRuntime
+
+    manager = BisqSyncStateManager(str(tmp_path / "bisq-state.json"))
+    manager.mark_processed(
+        "expired-message",
+        processed_at=datetime.now(UTC) - timedelta(days=2),
+    )
+    runtime = MagicMock(spec=ChannelRuntime)
+    runtime.settings = SimpleNamespace()
+    runtime.resolve_optional = MagicMock(
+        side_effect=lambda name: (
+            manager if name == "bisq2_sync_state_manager" else None
+        )
+    )
+    channel = Bisq2Channel(runtime)
+    channel._cache_message(
+        {
+            "messageId": "expired-message",
+            "conversationId": "conversation",
+            "message": "fixture",
+        }
+    )
+
+    assert channel._should_process_message("expired-message") is False
+
+    deleted = manager.prune_before(datetime.now(UTC) - timedelta(days=1))
+
+    assert deleted == 1
+    assert channel._should_process_message("expired-message") is True
+    assert "expired-message" not in channel._message_cache_by_id
+    assert "expired-message" not in channel._seen_message_order
 
 
 class TestBisq2ChannelProperties:

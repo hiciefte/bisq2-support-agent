@@ -45,6 +45,7 @@ class PollingStateManager:
         self.room_tokens: Dict[str, str] = {}  # Per-room pagination tokens
         self.processed_ids: Set[str] = set()
         self._processed_at: Dict[str, datetime] = {}
+        self._pending_expired_ids: Set[str] = set()
         self.last_poll: Optional[datetime] = None
         self._state_lock = threading.RLock()
 
@@ -78,22 +79,33 @@ class PollingStateManager:
             processed_list = state.get("processed_ids", [])
             if not isinstance(processed_list, list):
                 processed_list = []
-            # Keep only last 10,000 IDs in memory
-            retained_ids = [str(event_id) for event_id in processed_list[-10000:]]
-            self.processed_ids = set(retained_ids)
+            ordered_ids = list(
+                dict.fromkeys(
+                    str(event_id)
+                    for event_id in processed_list
+                    if str(event_id).strip()
+                )
+            )
 
             raw_timestamps = state.get("processed_id_timestamps", {})
             if not isinstance(raw_timestamps, dict):
                 raw_timestamps = {}
-            fallback_timestamp = datetime.fromtimestamp(
-                self.state_file.stat().st_mtime,
-                tz=UTC,
-            )
+            parsed_timestamps = {
+                event_id: self._parse_optional_timestamp(raw_timestamps.get(event_id))
+                for event_id in ordered_ids
+            }
+            valid_ids = [
+                event_id
+                for event_id in ordered_ids
+                if parsed_timestamps[event_id] is not None
+            ]
+            retained_ids = valid_ids[-10000:]
+            self._pending_expired_ids = set(ordered_ids) - set(retained_ids)
+            self.processed_ids = set(retained_ids)
             self._processed_at = {
-                event_id: self._parse_timestamp(
-                    raw_timestamps.get(event_id), fallback=fallback_timestamp
-                )
+                event_id: parsed_timestamp
                 for event_id in retained_ids
+                if (parsed_timestamp := parsed_timestamps[event_id]) is not None
             }
 
             last_poll = state.get("last_poll", "unknown")
@@ -108,11 +120,6 @@ class PollingStateManager:
         except (IOError, json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
             logger.error(f"Failed to load polling state from {self.state_file}: {e}")
             return False
-
-    @staticmethod
-    def _parse_timestamp(value: object, *, fallback: datetime) -> datetime:
-        parsed = PollingStateManager._parse_optional_timestamp(value)
-        return parsed or fallback
 
     @staticmethod
     def _parse_optional_timestamp(value: object) -> datetime | None:
@@ -150,6 +157,11 @@ class PollingStateManager:
             self.processed_ids,
             key=lambda event_id: (self._processed_at[event_id], event_id),
         )[-10000:]
+        retained_set = set(retained_ids)
+        self.processed_ids = retained_set
+        self._processed_at = {
+            event_id: self._processed_at[event_id] for event_id in retained_ids
+        }
         state_data = {
             "since_token": self.since_token,  # Kept for backward compatibility
             "room_tokens": self.room_tokens,
@@ -185,6 +197,7 @@ class PollingStateManager:
                 # (temp file already has these from umask 0o077, but this ensures
                 # correctness even if umask handling changes in the future)
                 os.chmod(self.state_file, 0o600)
+                self._pending_expired_ids.clear()
 
                 logger.debug(
                     f"Polling state saved to {self.state_file}: "
@@ -294,7 +307,7 @@ class PollingStateManager:
             else cutoff.astimezone(UTC)
         )
         with self._state_lock:
-            expired = {
+            expired = self._pending_expired_ids | {
                 event_id
                 for event_id, processed_at in self._processed_at.items()
                 if processed_at < effective_cutoff

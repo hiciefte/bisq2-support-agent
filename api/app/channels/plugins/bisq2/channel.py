@@ -8,6 +8,7 @@ import hashlib
 import inspect
 import json
 import re
+import threading
 import time
 from collections import deque
 from datetime import datetime, timezone
@@ -77,6 +78,7 @@ class Bisq2Channel(ChannelBase):
     _ws_rest_fallback_interval_seconds: float
     _ws_startup_timeout_seconds: float
     _question_prefilter: QuestionPrefilterProtocol
+    _seen_message_lock: threading.RLock
     _VALID_USER_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_\-@.:]{1,128}$")
     _MAX_WS_MESSAGE_BUFFER = 5000
     ENABLED_FLAG = "BISQ2_CHANNEL_ENABLED"
@@ -535,6 +537,7 @@ class Bisq2Channel(ChannelBase):
 
     def __init__(self, runtime) -> None:
         super().__init__(runtime)
+        self._seen_message_lock = threading.RLock()
         self._sync_state_manager = self.runtime.resolve_optional(
             "bisq2_sync_state_manager"
         )
@@ -564,6 +567,11 @@ class Bisq2Channel(ChannelBase):
         self._seen_message_order = deque(persisted_order)
         self._max_seen_message_ids = 10000
         self._message_cache_by_id = {}
+        register_prune_listener = getattr(
+            self._sync_state_manager, "register_prune_listener", None
+        )
+        if callable(register_prune_listener):
+            register_prune_listener(self._prune_seen_message_ids)
         self._ws_message_buffer = deque(maxlen=self._MAX_WS_MESSAGE_BUFFER)
         self._ws_listener_task = None
         self._ws_callback_registered = False
@@ -1018,7 +1026,8 @@ class Bisq2Channel(ChannelBase):
         return f"bisq2-user-{digest}"
 
     def _should_process_message(self, message_id: str) -> bool:
-        return message_id not in self._seen_message_ids
+        with self._seen_message_lock:
+            return message_id not in self._seen_message_ids
 
     def _build_chat_history_for_message(
         self, msg: Dict[str, Any]
@@ -1067,7 +1076,9 @@ class Bisq2Channel(ChannelBase):
     ) -> List[ConversationMessage]:
         """Collect normalized messages for one conversation from local cache."""
         by_id: Dict[str, ConversationMessage] = {}
-        for raw in self._message_cache_by_id.values():
+        with self._seen_message_lock:
+            cached_messages = list(self._message_cache_by_id.values())
+        for raw in cached_messages:
             if not isinstance(raw, dict):
                 continue
             raw_conversation_id = str(
@@ -1179,23 +1190,39 @@ class Bisq2Channel(ChannelBase):
         message_id = self._derive_message_id(msg)
         msg_with_id = dict(msg)
         msg_with_id["messageId"] = message_id
-        self._message_cache_by_id[message_id] = msg_with_id
+        with self._seen_message_lock:
+            self._message_cache_by_id[message_id] = msg_with_id
 
     def _mark_seen(self, message_id: str) -> None:
         """Track seen message IDs with bounded memory usage."""
-        if message_id in self._seen_message_ids:
+        with self._seen_message_lock:
+            if message_id in self._seen_message_ids:
+                return
+
+            self._seen_message_ids.add(message_id)
+            self._seen_message_order.append(message_id)
+            mark_processed = getattr(self._sync_state_manager, "mark_processed", None)
+            if callable(mark_processed):
+                mark_processed(message_id)
+
+            while len(self._seen_message_order) > self._max_seen_message_ids:
+                oldest = self._seen_message_order.popleft()
+                self._seen_message_ids.discard(oldest)
+                self._message_cache_by_id.pop(oldest, None)
+
+    def _prune_seen_message_ids(self, expired_ids: set[str]) -> None:
+        """Evict privacy-expired IDs from all live Bisq channel caches."""
+        if not expired_ids:
             return
-
-        self._seen_message_ids.add(message_id)
-        self._seen_message_order.append(message_id)
-        mark_processed = getattr(self._sync_state_manager, "mark_processed", None)
-        if callable(mark_processed):
-            mark_processed(message_id)
-
-        while len(self._seen_message_order) > self._max_seen_message_ids:
-            oldest = self._seen_message_order.popleft()
-            self._seen_message_ids.discard(oldest)
-            self._message_cache_by_id.pop(oldest, None)
+        with self._seen_message_lock:
+            self._seen_message_ids.difference_update(expired_ids)
+            self._seen_message_order = deque(
+                message_id
+                for message_id in self._seen_message_order
+                if message_id not in expired_ids
+            )
+            for message_id in expired_ids:
+                self._message_cache_by_id.pop(message_id, None)
 
     def _resolve_visible_citation(self, original_question: Any) -> Optional[str]:
         """Return user-facing citation text without internal history scaffolding."""

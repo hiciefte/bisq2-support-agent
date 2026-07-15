@@ -68,8 +68,8 @@ def test_log_retention_dry_run_and_apply_are_bounded(tmp_path: Path) -> None:
     assert not old_rotation.exists()
     assert list(cron.glob("privacy-retention.log.*"))
     metrics = (metrics_dir / "privacy-retention-logs.prom").read_text(encoding="utf-8")
-    assert "privacy_retention_log_files_deleted_last 1" in metrics
-    assert 'store="application_logs"' in metrics
+    assert 'privacy_retention_deleted_last{store="application_logs"} 1' in metrics
+    assert "privacy_retention_log_files_deleted_last" not in metrics
     success = next(
         line
         for line in metrics.splitlines()
@@ -129,7 +129,42 @@ def test_log_rotation_purges_mixed_age_active_log(tmp_path: Path) -> None:
     metrics = (tmp_path / "metrics/privacy-retention-logs.prom").read_text(
         encoding="utf-8"
     )
-    assert "privacy_retention_log_files_deleted_last 1" in metrics
+    assert 'privacy_retention_deleted_last{store="application_logs"} 1' in metrics
+
+
+def test_log_rotation_suppresses_platform_stat_fallback_diagnostics(
+    tmp_path: Path,
+) -> None:
+    log_base = tmp_path / "logs"
+    cron = log_base / "cron"
+    cron.mkdir(parents=True)
+    (cron / "scheduler.log").write_text("bounded metadata\n", encoding="utf-8")
+    _mark_recent_rotation(cron)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    stat = fake_bin / "stat"
+    stat.write_text(
+        "#!/bin/bash\n"
+        'if [ "$1" = "-c" ]; then\n'
+        '  echo "unsupported primary stat mode" >&2\n'
+        "  exit 1\n"
+        "fi\n"
+        'echo "fallback stat diagnostic" >&2\n'
+        "date +%s\n",
+        encoding="utf-8",
+    )
+    stat.chmod(0o755)
+
+    result = _run_rotation(
+        log_base,
+        tmp_path / "metrics",
+        "--dry-run",
+        extra_env={"PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "stat diagnostic" not in result.stderr
 
 
 def test_log_rotation_purges_active_log_after_stale_checkpoint(tmp_path: Path) -> None:

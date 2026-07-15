@@ -78,6 +78,10 @@ class MatrixChannel(ChannelBase):
         max_answer_length=500,
     )
 
+    def __init__(self, runtime: Any) -> None:
+        super().__init__(runtime)
+        self._session_lifecycle_lock = asyncio.Lock()
+
     @classmethod
     def setup_dependencies(cls, runtime: Any, settings: Any) -> None:
         """Register Matrix channel dependencies in shared runtime."""
@@ -366,6 +370,11 @@ class MatrixChannel(ChannelBase):
             await self.join_room(str(room_id))
 
     async def stop(self, *, strict: bool = False) -> None:
+        """Stop the channel without racing a send or session rotation."""
+        async with self._session_lifecycle_lock:
+            await self._stop_unlocked(strict=strict)
+
+    async def _stop_unlocked(self, *, strict: bool = False) -> None:
         """Stop the Matrix channel.
 
         Disconnects from homeserver gracefully via ConnectionManager.
@@ -445,12 +454,7 @@ class MatrixChannel(ChannelBase):
         if not preview.deleted_rows or dry_run:
             return preview
 
-        lock = getattr(self, "_session_rotation_lock", None)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._session_rotation_lock = lock
-
-        async with lock:
+        async with self._session_lifecycle_lock:
             preview = prune_matrix_session_artifacts(
                 session_file=session_file,
                 retention_days=retention_days,
@@ -475,7 +479,7 @@ class MatrixChannel(ChannelBase):
                     now=datetime.now(UTC),
                 )
 
-            await self.stop(strict=True)
+            await self._stop_unlocked(strict=True)
             try:
                 result = prune_matrix_session_artifacts(
                     session_file=session_file,
@@ -488,6 +492,10 @@ class MatrixChannel(ChannelBase):
                     client.device_id = None
                 type(self).setup_dependencies(self.runtime, settings)
                 await self.start()
+                if not self.is_connected:
+                    raise RuntimeError(
+                        "Matrix channel did not reconnect after session rotation"
+                    )
             return result
 
     async def _wire_trust_monitor_alerts(self) -> None:
@@ -602,6 +610,13 @@ class MatrixChannel(ChannelBase):
         self._logger.info("Proactive impersonation scanner started")
 
     async def send_message(self, target: str, message: OutgoingMessage) -> SendResult:
+        """Send a response while holding the shared Matrix lifecycle lock."""
+        async with self._session_lifecycle_lock:
+            return await self._send_message_unlocked(target, message)
+
+    async def _send_message_unlocked(
+        self, target: str, message: OutgoingMessage
+    ) -> SendResult:
         """Send response to Matrix room.
 
         Uses Matrix nio AsyncClient to send text message to room.
@@ -773,6 +788,13 @@ class MatrixChannel(ChannelBase):
         return "m.text"
 
     async def send_reaction(self, room_id: str, event_id: str, key: str) -> bool:
+        """Send a reaction while holding the shared Matrix lifecycle lock."""
+        async with self._session_lifecycle_lock:
+            return await self._send_reaction_unlocked(room_id, event_id, key)
+
+    async def _send_reaction_unlocked(
+        self, room_id: str, event_id: str, key: str
+    ) -> bool:
         """Send Matrix ``m.reaction`` annotation for a room event."""
         client = self.runtime.resolve_optional("matrix_client")
         if not client:

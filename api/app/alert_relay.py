@@ -9,9 +9,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
-from app.channels.plugins.matrix.services.alert_service import MatrixAlertService
+from app.channels.plugins.matrix.services.alert_service import (
+    ALERT_RELAY_RETENTION_STORE,
+    MatrixAlertService,
+)
 from app.core.config import Settings, get_settings
 from app.metrics.privacy_metrics import record_privacy_retention_failure
 from app.routes.alertmanager import router as alertmanager_router
@@ -20,9 +23,79 @@ from fastapi.responses import Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 logger = logging.getLogger(__name__)
-
-
+SESSION_ROTATION_TIMEOUT_SECONDS = 60.0
+SESSION_ROTATION_CANCEL_TIMEOUT_SECONDS = 1.0
+SESSION_CLOSE_TIMEOUT_SECONDS = 10.0
 matrix_alert_service = MatrixAlertService(get_settings())
+
+
+def _consume_task_result(task: asyncio.Task[Any]) -> None:
+    """Retrieve a detached task result without surfacing cancellation noise."""
+    try:
+        task.result()
+    except BaseException:
+        pass
+
+
+async def _cancel_tasks_bounded(
+    tasks: list[asyncio.Task[Any]],
+    *,
+    label: str,
+) -> None:
+    """Request cancellation without allowing a resistant task to block."""
+    pending = [task for task in tasks if not task.done()]
+    for task in pending:
+        task.cancel()
+    if not pending:
+        return
+    done, still_pending = await asyncio.wait(
+        pending,
+        timeout=SESSION_ROTATION_CANCEL_TIMEOUT_SECONDS,
+    )
+    for task in done:
+        _consume_task_result(task)
+    for task in still_pending:
+        logger.error("%s task ignored cancellation", label)
+        task.add_done_callback(_consume_task_result)
+
+
+async def _close_service_bounded(service: MatrixAlertService) -> None:
+    """Close the Matrix client without allowing shutdown to hang."""
+    close_task = asyncio.create_task(service.close())
+    done, _ = await asyncio.wait(
+        {close_task},
+        timeout=SESSION_CLOSE_TIMEOUT_SECONDS,
+    )
+    if close_task in done:
+        await close_task
+        return
+    logger.error("Matrix alert relay close timed out")
+    await _cancel_tasks_bounded([close_task], label="Matrix alert relay close")
+
+
+async def _rotate_session_or_stop(
+    service: MatrixAlertService,
+    stop_event: asyncio.Event,
+) -> int | None:
+    """Run one rotation with bounded shutdown and execution time."""
+    rotation_task = asyncio.create_task(service.rotate_expired_session())
+    stop_task = asyncio.create_task(stop_event.wait())
+    try:
+        done, _ = await asyncio.wait(
+            {rotation_task, stop_task},
+            timeout=SESSION_ROTATION_TIMEOUT_SECONDS,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if rotation_task in done:
+            return await rotation_task
+        if stop_task in done:
+            return None
+        raise TimeoutError("Matrix alert session retention timed out")
+    finally:
+        await _cancel_tasks_bounded(
+            [rotation_task, stop_task],
+            label="Matrix alert retention",
+        )
 
 
 async def _session_retention_loop(
@@ -31,11 +104,15 @@ async def _session_retention_loop(
 ) -> None:
     while not stop_event.is_set():
         try:
-            deleted = await service.rotate_expired_session()
+            deleted = await _rotate_session_or_stop(service, stop_event)
+            if deleted is None:
+                break
             if deleted:
                 logger.info("Rotated expired Matrix alert session generation")
         except Exception:
-            record_privacy_retention_failure()
+            record_privacy_retention_failure(
+                failed_store_groups=(ALERT_RELAY_RETENTION_STORE,)
+            )
             logger.exception("Matrix alert session retention failed")
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=3600)
@@ -61,7 +138,7 @@ async def lifespan(relay_app: FastAPI) -> AsyncIterator[None]:
     finally:
         stop_event.set()
         await retention_task
-        await matrix_alert_service.close()
+        await _close_service_bounded(matrix_alert_service)
 
 
 app = FastAPI(title="Bisq Matrix Alert Relay", lifespan=lifespan)

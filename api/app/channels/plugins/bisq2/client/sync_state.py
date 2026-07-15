@@ -12,7 +12,7 @@ import threading
 from collections import deque
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Deque, Dict, Optional, Set
+from typing import Callable, Deque, Dict, Optional, Set
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +51,8 @@ class BisqSyncStateManager:
         self.processed_message_ids: Set[str] = set()
         self._processed_message_order: Deque[str] = deque()
         self._processed_at: Dict[str, datetime] = {}
+        self._pending_expired_ids: Set[str] = set()
+        self._prune_listeners: list[Callable[[set[str]], None]] = []
         self._load_state()
 
     def _load_state(self) -> None:
@@ -84,22 +86,27 @@ class BisqSyncStateManager:
                         for message_id in processed_list
                         if str(message_id).strip()
                     )
-                )[-self.MAX_PROCESSED_IDS :]
-                self._processed_message_order = deque(ordered_ids)
-                self.processed_message_ids = set(ordered_ids)
+                )
                 raw_timestamps = data.get("processed_message_timestamps", {})
                 if not isinstance(raw_timestamps, dict):
                     raw_timestamps = {}
-                fallback_timestamp = datetime.fromtimestamp(
-                    self.state_file.stat().st_mtime,
-                    tz=UTC,
-                )
-                self._processed_at = {
-                    message_id: self._parse_processed_at(
-                        raw_timestamps.get(message_id),
-                        fallback=fallback_timestamp,
-                    )
+                parsed_timestamps = {
+                    message_id: self._parse_processed_at(raw_timestamps.get(message_id))
                     for message_id in ordered_ids
+                }
+                valid_ids = [
+                    message_id
+                    for message_id in ordered_ids
+                    if parsed_timestamps[message_id] is not None
+                ]
+                retained_ids = valid_ids[-self.MAX_PROCESSED_IDS :]
+                self._pending_expired_ids = set(ordered_ids) - set(retained_ids)
+                self._processed_message_order = deque(retained_ids)
+                self.processed_message_ids = set(retained_ids)
+                self._processed_at = {
+                    message_id: parsed_timestamp
+                    for message_id in retained_ids
+                    if (parsed_timestamp := parsed_timestamps[message_id]) is not None
                 }
 
                 logger.info(
@@ -112,10 +119,11 @@ class BisqSyncStateManager:
                 self.processed_message_ids = set()
                 self._processed_message_order = deque()
                 self._processed_at = {}
+                self._pending_expired_ids = set()
                 logger.exception(f"Failed to load sync state from {self.state_file}")
 
     @staticmethod
-    def _parse_processed_at(value: object, *, fallback: datetime) -> datetime:
+    def _parse_processed_at(value: object) -> datetime | None:
         if isinstance(value, str):
             try:
                 parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -126,7 +134,7 @@ class BisqSyncStateManager:
                 )
             except ValueError:
                 pass
-        return fallback
+        return None
 
     def save_state(self, *, prune_expired: bool = True) -> None:
         """Atomically save state to disk.
@@ -174,6 +182,7 @@ class BisqSyncStateManager:
                     os.fsync(handle.fileno())
 
                 temp_file.replace(self.state_file)
+                self._pending_expired_ids.clear()
 
                 logger.info(
                     f"Saved sync state: timestamp={self.last_sync_timestamp}, "
@@ -197,6 +206,12 @@ class BisqSyncStateManager:
         """
         with self._state_lock:
             return message_id in self.processed_message_ids
+
+    def register_prune_listener(self, listener: Callable[[set[str]], None]) -> None:
+        """Register a callback that evicts IDs from a live consumer cache."""
+        with self._state_lock:
+            if listener not in self._prune_listeners:
+                self._prune_listeners.append(listener)
 
     def get_processed_ids_in_order(self) -> list[str]:
         """Return retained message IDs from oldest to newest."""
@@ -276,7 +291,7 @@ class BisqSyncStateManager:
             else cutoff.astimezone(UTC)
         )
         with self._state_lock:
-            expired = {
+            expired = self._pending_expired_ids | {
                 message_id
                 for message_id, processed_at in self._processed_at.items()
                 if processed_at < effective_cutoff
@@ -292,7 +307,10 @@ class BisqSyncStateManager:
             for message_id in expired:
                 self._processed_at.pop(message_id, None)
             self.save_state(prune_expired=False)
-            return len(expired)
+            listeners = tuple(self._prune_listeners)
+        for listener in listeners:
+            listener(set(expired))
+        return len(expired)
 
     def oldest_processed_at(self) -> datetime | None:
         """Return the oldest retained processed-ID timestamp."""

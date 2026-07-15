@@ -57,7 +57,7 @@ cleanup() {
 trap cleanup EXIT
 
 file_mtime() {
-    stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"
+    stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null
 }
 
 for root in "${log_roots[@]}"; do
@@ -156,9 +156,9 @@ done
 mkdir -p "$metrics_dir"
 temporary_file=$(mktemp "$metrics_dir/.privacy-retention-logs.XXXXXX")
 {
-    echo '# HELP privacy_retention_log_files_deleted_last Log files deleted by the latest retention run.'
-    echo '# TYPE privacy_retention_log_files_deleted_last gauge'
-    echo "privacy_retention_log_files_deleted_last ${deleted}"
+    echo '# HELP privacy_retention_deleted_last Rows or file artifacts deleted by the latest retention run.'
+    echo '# TYPE privacy_retention_deleted_last gauge'
+    echo "privacy_retention_deleted_last{store=\"application_logs\"} ${deleted}"
     echo '# HELP privacy_retention_oldest_age_seconds Age of the oldest retained personal-data record.'
     echo '# TYPE privacy_retention_oldest_age_seconds gauge'
     echo "privacy_retention_oldest_age_seconds{store=\"application_logs\"} ${oldest_age}"

@@ -210,7 +210,37 @@ def test_privacy_retention_failure_is_generic(
     assert response.status_code == 500
     assert response.json() == {"detail": "Scheduled task failed"}
     assert private_detail not in response.text
-    record_failure.assert_called_once_with()
+    record_failure.assert_called_once_with(
+        failed_store_groups=scheduler.RETENTION_STORE_GROUPS
+    )
+
+
+def test_privacy_retention_accounts_for_runtime_resolution_failure(
+    scheduler_client: TestClient,
+    monkeypatch,
+) -> None:
+    runtime = MagicMock()
+    runtime.resolve_optional.side_effect = RuntimeError("private resolver failure")
+    scheduler_client.app.state.channel_runtime = runtime
+    record_failure = MagicMock()
+    monkeypatch.setattr(
+        scheduler,
+        "record_privacy_retention_failure",
+        record_failure,
+    )
+
+    response = scheduler_client.post(
+        "/internal/scheduler/privacy-retention",
+        headers=_scheduler_headers(),
+    )
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Scheduled task failed"}
+    assert "private resolver failure" not in response.text
+    scheduler_client.app.state.privacy_retention_service.run.assert_not_called()
+    record_failure.assert_called_once_with(
+        failed_store_groups=scheduler.RETENTION_STORE_GROUPS
+    )
 
 
 def test_privacy_retention_coordinates_live_state_and_matrix_session(
