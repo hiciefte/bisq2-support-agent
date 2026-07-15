@@ -255,7 +255,6 @@ preserve_production_data() {
 
     log_info "Backing up production data files..." >&2
     local backed_up_count=0
-    local max_file_size=$((50 * 1024 * 1024))  # 50MB limit
 
     for file in "${production_files[@]}"; do
         local file_path="$repo_dir/$file"
@@ -266,14 +265,6 @@ preserve_production_data() {
             continue
         fi
 
-        # SECURITY: Check file size to prevent disk exhaustion
-        local file_size
-        file_size=$(stat -c%s "$file_path" 2>/dev/null || stat -f%z "$file_path" 2>/dev/null)
-        if [ "$file_size" -gt "$max_file_size" ]; then
-            log_warning "Skipping oversized file (>50MB): $file" >&2
-            continue
-        fi
-
         # SECURITY: Verify file is readable
         if [ ! -r "$file_path" ]; then
             log_error "Cannot read file: $file" >&2
@@ -281,8 +272,25 @@ preserve_production_data() {
             return 1
         fi
 
-        # Use -- to prevent filename interpretation
-        cp -- "$file_path" "$backup_dir/"
+        # This rollback safeguard must never silently omit authoritative data.
+        # Use the SQLite backup API for databases; stream-copy other files.
+        local destination="$backup_dir/$(basename "$file")"
+        local backup_succeeded=false
+        if [[ "$file" = *.db ]]; then
+            local recovery_helper="$LIB_DIR/../../api/app/scripts/disaster_recovery.py"
+            if command -v python3 >/dev/null 2>&1 \
+                && [ -f "$recovery_helper" ] \
+                && python3 "$recovery_helper" backup-file "$file_path" "$destination"; then
+                backup_succeeded=true
+            fi
+        elif cp -- "$file_path" "$destination"; then
+            backup_succeeded=true
+        fi
+        if [ "$backup_succeeded" != true ]; then
+            log_error "Failed to back up authoritative file: $file" >&2
+            flock -u 200
+            return 1
+        fi
         backed_up_count=$((backed_up_count + 1))
         log_debug "Backed up: $file" >&2
     done

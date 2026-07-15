@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import sqlite3
 import subprocess
 from pathlib import Path
 
@@ -657,7 +658,9 @@ def test_preserve_production_data_command_substitution_returns_backup_path(
     repo = tmp_path / "bisq-support-test"
     data_dir = repo / "api" / "data"
     data_dir.mkdir(parents=True)
-    (data_dir / "faqs.db").write_bytes(b"sqlite fixture")
+    with sqlite3.connect(data_dir / "faqs.db") as connection:
+        connection.execute("CREATE TABLE faqs (question TEXT NOT NULL)")
+        connection.execute("INSERT INTO faqs (question) VALUES ('fixture')")
 
     result = run_bash(
         f"""
@@ -682,9 +685,46 @@ def test_preserve_production_data_command_substitution_returns_backup_path(
     backup_dir = Path(output_lines[0])
     assert backup_dir.is_dir()
     assert backup_dir.parent == data_dir
-    assert (backup_dir / "faqs.db").read_bytes() == b"sqlite fixture"
+    with sqlite3.connect(backup_dir / "faqs.db") as connection:
+        assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert (
+            connection.execute("SELECT question FROM faqs").fetchone()[0] == "fixture"
+        )
     assert "Backing up production data files" in result.stderr
     assert "Backed up 1 production data file(s)" in result.stderr
+
+
+def test_preserve_production_data_does_not_skip_authoritative_file_over_50_mb(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "bisq-support-test"
+    data_dir = repo / "api" / "data"
+    data_dir.mkdir(parents=True)
+    source = data_dir / "conversations.jsonl"
+    source.write_bytes(b"")
+    with source.open("r+b") as stream:
+        stream.truncate(51 * 1024 * 1024)
+
+    result = run_bash(
+        f"""
+        source "{GIT_UTILS_SH}"
+        realpath() {{
+            if [ "$1" = "-e" ]; then
+                command realpath "$2"
+            else
+                command realpath "$@"
+            fi
+        }}
+        flock() {{ return 0; }}
+        preserve_production_data "{repo}"
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 0, result.stderr
+    backup_dir = Path(result.stdout.splitlines()[-1])
+    assert (backup_dir / source.name).stat().st_size == source.stat().st_size
+    assert "Skipping oversized file" not in result.stderr
 
 
 def test_preserve_production_data_command_substitution_returns_empty_without_data(
