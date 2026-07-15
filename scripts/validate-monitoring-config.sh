@@ -8,13 +8,13 @@ PROMETHEUS_CONFIG_DIR="$PROJECT_ROOT/docker/prometheus"
 docker run --rm \
     --entrypoint promtool \
     --volume "$PROMETHEUS_CONFIG_DIR:/etc/prometheus:ro" \
-    prom/prometheus:latest \
+    prom/prometheus:v3.9.1 \
     check config /etc/prometheus/prometheus.yml
 
 docker run --rm \
     --entrypoint promtool \
     --volume "$PROMETHEUS_CONFIG_DIR:/etc/prometheus:ro" \
-    prom/prometheus:latest \
+    prom/prometheus:v3.9.1 \
     check rules /etc/prometheus/alert_rules.yml
 
 docker run --rm \

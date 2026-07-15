@@ -48,9 +48,13 @@ class TestNginxHealthRoutes:
         assert "proxy_pass http://api:8000;" in block
         assert "proxy_pass http://api:8000/health$1;" not in block
 
-    def test_api_readiness_is_not_publicly_proxied(self, nginx_conf):
+    @pytest.mark.parametrize(
+        "path",
+        ["/api/health/ready", "/api/health/ready/"],
+    )
+    def test_api_readiness_is_not_publicly_proxied(self, nginx_conf, path):
         """Dependency probes must remain on the internal service path."""
-        block = _location_block(nginx_conf, "location = /api/health/ready {")
+        block = _location_block(nginx_conf, f"location = {path} {{")
 
         assert "return 404;" in block
         assert "proxy_pass" not in block

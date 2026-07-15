@@ -230,9 +230,14 @@ class TestHealthRoute:
         assert response.json()["components"]["vector_store"]["status"] == "unavailable"
 
     def test_liveness_remains_independent_of_dependencies(self, test_client):
-        test_client.app.state.rag_service = MagicMock(
-            side_effect=AssertionError("liveness inspected RAG")
-        )
+        class DependencyTrap:
+            def __bool__(self):
+                raise AssertionError("liveness inspected RAG")
+
+            def __getattr__(self, name):
+                raise AssertionError(f"liveness inspected RAG attribute {name}")
+
+        test_client.app.state.rag_service = DependencyTrap()
 
         response = test_client.get("/health/live")
 

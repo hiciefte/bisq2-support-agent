@@ -304,11 +304,16 @@ def test_monitoring_validator_checks_every_changed_configuration() -> None:
     script = (REPO_ROOT / "scripts/validate-monitoring-config.sh").read_text(
         encoding="utf-8"
     )
+    compose = (REPO_ROOT / "docker/docker-compose.yml").read_text(encoding="utf-8")
 
     assert "check config /etc/prometheus/prometheus.yml" in script
     assert "check rules /etc/prometheus/alert_rules.yml" in script
     assert "--config.check" in script
     assert "check-config /etc/alertmanager/alertmanager.yml" in script
+    assert "prom/prometheus:v3.9.1" in script
+    assert "prom/prometheus:v3.9.1" in compose
+    assert "prom/prometheus:latest" not in script
+    assert "prom/prometheus:latest" not in compose
 
 
 def test_every_alert_runbook_reference_resolves_to_a_repository_file() -> None:
