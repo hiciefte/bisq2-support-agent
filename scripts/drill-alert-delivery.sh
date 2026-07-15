@@ -6,7 +6,7 @@ PROJECT_ROOT="$SCRIPT_DIR/.."
 DOCKER_DIR="$PROJECT_ROOT/docker"
 COMPOSE_FILE="docker-compose.yml"
 
-# shellcheck source=lib/common.sh
+# shellcheck source=scripts/lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 setup_colors
 source_deploy_paths "/etc/bisq-support/deploy.env" >&2 || true
@@ -77,6 +77,8 @@ drill_id="drill-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 alert_active=false
 
+# ShellCheck cannot infer that EXIT traps invoke their callback.
+# shellcheck disable=SC2317,SC2329
 resolve_drill_alert() {
     if [ "$alert_active" != "true" ]; then
         return
