@@ -171,10 +171,10 @@ detect_encryption() {
                 log_error "An age identity file is required"
                 return 2
             }
-            [ -f "$AGE_IDENTITY_FILE" ] && [ ! -L "$AGE_IDENTITY_FILE" ] || {
+            if [ ! -f "$AGE_IDENTITY_FILE" ] || [ -L "$AGE_IDENTITY_FILE" ]; then
                 log_error "Age identity file is unavailable or unsafe"
                 return 2
-            }
+            fi
             check_required_commands age || return 1
             ;;
         gpg)
@@ -189,10 +189,10 @@ detect_encryption() {
 
 validate_configuration() {
     [ -n "$BACKUP_FILE" ] || { log_error "--backup is required"; return 2; }
-    [ -f "$BACKUP_FILE" ] && [ ! -L "$BACKUP_FILE" ] || {
+    if [ ! -f "$BACKUP_FILE" ] || [ -L "$BACKUP_FILE" ]; then
         log_error "Backup file is unavailable or unsafe"
         return 2
-    }
+    fi
     if [ "$VERIFY_ONLY" = "$APPLY" ]; then
         log_error "Choose exactly one of --verify or --apply"
         return 2

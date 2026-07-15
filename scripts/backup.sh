@@ -318,19 +318,19 @@ validate_configuration() {
     [ -d "$DATA_DIR" ] || { log_error "Application data directory is missing"; return 1; }
     [ -f "$DOCKER_DIR/.env" ] || { log_error "Docker environment file is missing"; return 1; }
 
-    [ -d "$MOUNT_ROOT" ] && [ ! -L "$MOUNT_ROOT" ] || {
+    if [ ! -d "$MOUNT_ROOT" ] || [ -L "$MOUNT_ROOT" ]; then
         log_error "Off-host mount root is missing or unsafe"
         return 1
-    }
+    fi
     MOUNT_ROOT="$(cd "$MOUNT_ROOT" && pwd -P)"
-    [ "$MOUNT_ROOT" != / ] && mountpoint -q -- "$MOUNT_ROOT" || {
+    if [ "$MOUNT_ROOT" = / ] || ! mountpoint -q -- "$MOUNT_ROOT"; then
         log_error "Off-host mount root is not mounted"
         return 1
-    }
-    [ -d "$TARGET_DIR" ] && [ ! -L "$TARGET_DIR" ] || {
+    fi
+    if [ ! -d "$TARGET_DIR" ] || [ -L "$TARGET_DIR" ]; then
         log_error "Backup target is missing or unsafe"
         return 1
-    }
+    fi
     TARGET_DIR="$(cd "$TARGET_DIR" && pwd -P)"
     case "$TARGET_DIR/" in
         "$MOUNT_ROOT/"*) ;;

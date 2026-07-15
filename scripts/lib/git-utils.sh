@@ -274,7 +274,8 @@ preserve_production_data() {
 
         # This rollback safeguard must never silently omit authoritative data.
         # Use the SQLite backup API for databases; stream-copy other files.
-        local destination="$backup_dir/$(basename "$file")"
+        local destination
+        destination="$backup_dir/$(basename "$file")"
         local backup_succeeded=false
         if [[ "$file" = *.db ]]; then
             local recovery_helper="$LIB_DIR/../../api/app/scripts/disaster_recovery.py"
