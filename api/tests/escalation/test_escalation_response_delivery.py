@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from app.channels.models import ChannelType, OutgoingMessage
 from app.models.escalation import Escalation, EscalationPriority, EscalationStatus
+from app.services.channel_launch_control_service import ChannelLaunchControlService
 
 
 def _make_escalation(channel="web", **overrides):
@@ -132,6 +133,49 @@ class TestResponseDeliveryMatrix:
         result = await delivery.deliver(escalation, "Staff answer here")
 
         assert result is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("launch_state", ["kill", "shadow"])
+    @pytest.mark.parametrize(
+        ("channel_id", "channel_metadata"),
+        [
+            ("matrix", {"room_id": "room-id"}),
+            ("bisq2", {"conversation_id": "conversation-id"}),
+        ],
+    )
+    async def test_reviewed_staff_delivery_ignores_autonomous_launch_guard(
+        self,
+        tmp_path,
+        launch_state: str,
+        channel_id: str,
+        channel_metadata: dict[str, str],
+    ) -> None:
+        """Manual reviewed responses remain deliverable during an automatic stop."""
+        from app.services.escalation.response_delivery import ResponseDelivery
+
+        launch_control = ChannelLaunchControlService(
+            str(tmp_path / "feedback.db"), environment_enabled=True
+        )
+        if launch_state == "shadow":
+            launch_control.set_autonomous_delivery_enabled(True)
+        expected_reason = "kill_switch" if launch_state == "kill" else "shadow_mode"
+        assert launch_control.review_only_reason(channel_id) == expected_reason
+
+        adapter = MagicMock()
+        adapter.get_delivery_target = MagicMock(return_value="room-id")
+        adapter.send_message = AsyncMock(return_value=True)
+        registry = MagicMock()
+        registry.get.return_value = adapter
+        delivery = ResponseDelivery(registry)
+        escalation = _make_escalation(
+            channel=channel_id,
+            channel_metadata=channel_metadata,
+        )
+
+        result = await delivery.deliver(escalation, "Reviewed staff answer")
+
+        assert result is True
+        adapter.send_message.assert_awaited_once()
 
 
 class TestResponseDeliveryBisq2:

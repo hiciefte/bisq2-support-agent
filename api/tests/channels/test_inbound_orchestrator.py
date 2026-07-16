@@ -354,7 +354,13 @@ async def test_orchestrator_sends_acknowledgment_reaction_before_arbitration_enq
         question="Need help",
         user=SimpleNamespace(user_id="@user:server"),
     )
-    arbitration = ArbitrationCoordinator(policy_service=policy_service)
+    arbitration = ArbitrationCoordinator(
+        policy_service=policy_service,
+        launch_control_service=SimpleNamespace(
+            review_only_reason=lambda channel_id: None,
+            secondary_delivery_block_reason=lambda channel_id: None,
+        ),
+    )
     runtime.resolve_optional = MagicMock(
         side_effect=lambda name: (
             arbitration

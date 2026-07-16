@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import os
 import sqlite3
@@ -22,10 +23,17 @@ CUTOFF = NOW - timedelta(days=30)
 OLD = CUTOFF - timedelta(seconds=1)
 EXACT = CUTOFF
 NEW = CUTOFF + timedelta(seconds=1)
+RESERVATION_CUTOFF = NOW - timedelta(days=2)
+RESERVATION_OLD = RESERVATION_CUTOFF - timedelta(seconds=1)
+RESERVATION_NEW = RESERVATION_CUTOFF + timedelta(seconds=1)
 
 
 def _iso(value: datetime) -> str:
     return value.isoformat()
+
+
+def _message_key(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def _connect(path: Path) -> sqlite3.Connection:
@@ -94,6 +102,12 @@ def _create_feedback_db(path: Path) -> None:
                 actor_id TEXT,
                 created_at TEXT
             );
+            CREATE TABLE channel_delivery_reservations (
+                channel_id TEXT NOT NULL,
+                message_key TEXT NOT NULL,
+                reserved_at REAL NOT NULL,
+                PRIMARY KEY (channel_id, message_key)
+            );
             CREATE TABLE trust_actor_profiles (
                 actor_key TEXT PRIMARY KEY,
                 actor_id TEXT,
@@ -155,6 +169,19 @@ def _create_feedback_db(path: Path) -> None:
         connection.executemany(
             "INSERT INTO conversation_messages (id, feedback_id, content, created_at) VALUES (?, ?, 'context', ?)",
             [(1, 4, _iso(NEW)), (2, 5, _iso(OLD))],
+        )
+        connection.executemany(
+            """
+            INSERT INTO channel_delivery_reservations (
+                channel_id, message_key, reserved_at
+            ) VALUES ('matrix', ?, ?)
+            """,
+            [
+                (_message_key("old-reservation"), RESERVATION_OLD.timestamp()),
+                (_message_key("exact-reservation"), RESERVATION_CUTOFF.timestamp()),
+                (_message_key("new-reservation"), RESERVATION_NEW.timestamp()),
+                (_message_key("malformed-reservation"), "unknown"),
+            ],
         )
         for table, timestamp_column in (
             ("chatops_action_audit", "created_at"),
@@ -505,6 +532,7 @@ def test_dry_run_reports_actions_without_mutating_fixture_stores(
     assert report.dry_run is True
     assert report.stores["feedback"].deleted_rows == 1
     assert report.stores["feedback"].anonymized_rows == 1
+    assert report.stores["channel_delivery_reservations"].deleted_rows == 1
     assert report.stores["escalations"].deleted_rows == 1
     assert report.stores["training_learning_history"].deleted_rows == 1
     assert report.stores["training_candidates"].deleted_rows == 2
@@ -520,6 +548,75 @@ def test_dry_run_reports_actions_without_mutating_fixture_stores(
     assert oldest_legacy is not None
     assert oldest_legacy > report.stores["legacy_file_conversations"].window_seconds
     assert report.vacuumed_databases == []
+
+
+def test_delivery_reservations_use_scheduled_boundary_safe_retention(
+    retention_fixture: tuple[PrivacyRetentionService, Path],
+) -> None:
+    service, data_dir = retention_fixture
+    path = data_dir / "feedback.db"
+    before = _table_rows(
+        path,
+        "channel_delivery_reservations",
+        "message_key, reserved_at",
+    )
+
+    dry_run = service.run(dry_run=True, now=NOW)
+
+    assert dry_run.stores["channel_delivery_reservations"].deleted_rows == 1
+    assert dry_run.stores["channel_delivery_reservations"].window_seconds == 172800
+    assert (
+        _table_rows(
+            path,
+            "channel_delivery_reservations",
+            "message_key, reserved_at",
+        )
+        == before
+    )
+
+    applied = service.run(now=NOW)
+    retained = _table_rows(
+        path,
+        "channel_delivery_reservations",
+        "message_key, reserved_at",
+    )
+
+    assert applied.stores["channel_delivery_reservations"].deleted_rows == 1
+    assert {row[0] for row in retained} == {
+        _message_key("exact-reservation"),
+        _message_key("new-reservation"),
+        _message_key("malformed-reservation"),
+    }
+    assert all(len(row[0]) == 64 for row in retained)
+    assert all("reservation" not in row[0] for row in retained)
+    oldest_age = applied.stores["channel_delivery_reservations"].oldest_age_seconds
+    assert oldest_age is not None
+    assert oldest_age > applied.stores["channel_delivery_reservations"].window_seconds
+    assert (
+        service.run(now=NOW).stores["channel_delivery_reservations"].deleted_rows == 0
+    )
+
+
+def test_delivery_reservations_follow_shorter_configured_privacy_window(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "feedback.db"
+    _create_feedback_db(path)
+    settings = _settings(tmp_path)
+    settings.DATA_RETENTION_DAYS = 1
+    service = PrivacyRetentionService(settings)
+
+    report = service.run(now=NOW)
+    retained = _table_rows(
+        path,
+        "channel_delivery_reservations",
+        "message_key",
+    )
+
+    result = report.stores["channel_delivery_reservations"]
+    assert result.deleted_rows == 3
+    assert result.window_seconds == 86400
+    assert retained == [(_message_key("malformed-reservation"),)]
 
 
 def test_training_candidate_dry_run_matches_ordered_cleanup(

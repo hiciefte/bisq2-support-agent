@@ -9,6 +9,7 @@ database writes, file rewrites, cache invalidation, or compaction.
 | Store | Retention action |
 | --- | --- |
 | Feedback, conversation context, reactions, ChatOps audit, and trust-monitor records | Delete out-of-window rows; anonymize an old parent only when a newer child still requires its key |
+| Hashed channel-delivery canary reservations | Delete reservations older than two days, or the shorter configured privacy window, through the scheduled job and compact `feedback.db` |
 | Escalations and consumed rating tokens | Delete every out-of-window row, including unresolved escalations |
 | Training candidates, thread messages, state transitions, knowledge proposals, and review feedback | Delete out-of-window rows; anonymize old candidate or thread keys when a newer linked row remains |
 | Learning review history | Remove individual out-of-window review entries; retain threshold aggregates |

@@ -10,6 +10,44 @@ from app.channels.response_dispatcher import (
     format_escalation_notice,
 )
 from app.prompts.runtime_policy import SAFETY_REFLEX_WARNING
+from app.services.channel_launch_control_service import ChannelLaunchControlService
+
+
+class _AllowingLaunchControl:
+    def authorize_autonomous_delivery(self, channel_id, message_id):
+        return SimpleNamespace(allowed=True, reason="test_allowed")
+
+    def review_only_reason(self, channel_id):
+        return None
+
+    def secondary_delivery_block_reason(self, channel_id):
+        return None
+
+
+ALLOWING_LAUNCH_CONTROL = _AllowingLaunchControl()
+
+
+def _launch_incoming(message_id: str):
+    return SimpleNamespace(
+        message_id=message_id,
+        question="How does Bisq Easy work?",
+        channel_metadata={"room_id": "support-room"},
+        user=SimpleNamespace(user_id="user-1", channel_user_id="alice"),
+    )
+
+
+def _launch_response():
+    return SimpleNamespace(
+        answer="Bisq Easy is a trade protocol.",
+        original_question="How does Bisq Easy work?",
+        sources=[],
+        requires_human=False,
+        metadata=SimpleNamespace(
+            routing_action="auto_send",
+            routing_reason="high confidence",
+            confidence_score=0.95,
+        ),
+    )
 
 
 @pytest.mark.unit
@@ -24,11 +62,305 @@ async def test_dispatch_autosend_returns_failed_when_transport_raises():
     channel.get_delivery_target.return_value = "target-1"
     channel.send_message = AsyncMock(side_effect=RuntimeError("network failure"))
 
-    dispatcher = ChannelResponseDispatcher(channel=channel, channel_id="bisq2")
+    dispatcher = ChannelResponseDispatcher(
+        channel=channel,
+        channel_id="bisq2",
+        launch_control_service=ALLOWING_LAUNCH_CONTROL,
+    )
     outcome = await dispatcher.dispatch(incoming, response)
 
     assert outcome is DispatchOutcome.FAILED
     channel.send_message.assert_awaited_once_with("target-1", response)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_shadow_mode_queues_would_have_sent_without_delivery(tmp_path):
+    launch_control = ChannelLaunchControlService(
+        str(tmp_path / "feedback.db"), environment_enabled=True
+    )
+    launch_control.set_autonomous_delivery_enabled(True)
+    channel = MagicMock()
+    channel.runtime = None
+    channel.send_message = AsyncMock(return_value=True)
+    escalation_service = AsyncMock()
+    escalation_service.create_escalation = AsyncMock(
+        return_value=SimpleNamespace(id=401)
+    )
+    dispatcher = ChannelResponseDispatcher(
+        channel=channel,
+        channel_id="matrix",
+        escalation_service=escalation_service,
+        launch_control_service=launch_control,
+    )
+
+    outcome = await dispatcher.dispatch(
+        _launch_incoming("shadow-1"), _launch_response()
+    )
+
+    assert outcome is DispatchOutcome.QUEUED
+    channel.send_message.assert_not_awaited()
+    payload = escalation_service.create_escalation.await_args.args[0]
+    assert payload.routing_action == "auto_send"
+    assert payload.routing_reason == (
+        "launch_control=shadow_mode; would_have_sent=auto_send"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_kill_switch_is_checked_for_each_message(tmp_path):
+    launch_control = ChannelLaunchControlService(
+        str(tmp_path / "feedback.db"), environment_enabled=True
+    )
+    launch_control.set_autonomous_delivery_enabled(True)
+    launch_control.set_channel_policy("matrix", shadow_mode=False)
+    channel = MagicMock()
+    channel.runtime = None
+    channel.get_delivery_target.return_value = "support-room"
+    channel.send_message = AsyncMock(return_value=True)
+    escalation_service = AsyncMock()
+    escalation_service.create_escalation = AsyncMock(
+        return_value=SimpleNamespace(id=402)
+    )
+    dispatcher = ChannelResponseDispatcher(
+        channel=channel,
+        channel_id="matrix",
+        escalation_service=escalation_service,
+        launch_control_service=launch_control,
+    )
+
+    first = await dispatcher.dispatch(_launch_incoming("kill-1"), _launch_response())
+    launch_control.set_autonomous_delivery_enabled(False)
+    second = await dispatcher.dispatch(_launch_incoming("kill-2"), _launch_response())
+
+    assert first is DispatchOutcome.SENT
+    assert second is DispatchOutcome.QUEUED
+    assert channel.send_message.await_count == 1
+    payload = escalation_service.create_escalation.await_args.args[0]
+    assert payload.routing_reason == (
+        "launch_control=kill_switch; would_have_sent=auto_send"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_canary_over_cap_routes_to_review_without_delivery(tmp_path):
+    launch_control = ChannelLaunchControlService(
+        str(tmp_path / "feedback.db"), environment_enabled=True
+    )
+    launch_control.set_autonomous_delivery_enabled(True)
+    launch_control.set_channel_policy(
+        "bisq2",
+        shadow_mode=False,
+        canary_enabled=True,
+        canary_hourly_limit=1,
+        canary_daily_limit=1,
+    )
+    channel = MagicMock()
+    channel.runtime = None
+    channel.get_delivery_target.return_value = "support-room"
+    channel.send_message = AsyncMock(return_value=True)
+    escalation_service = AsyncMock()
+    escalation_service.create_escalation = AsyncMock(
+        return_value=SimpleNamespace(id=403)
+    )
+    dispatcher = ChannelResponseDispatcher(
+        channel=channel,
+        channel_id="bisq2",
+        escalation_service=escalation_service,
+        launch_control_service=launch_control,
+    )
+
+    first = await dispatcher.dispatch(_launch_incoming("canary-1"), _launch_response())
+    second = await dispatcher.dispatch(_launch_incoming("canary-2"), _launch_response())
+
+    assert first is DispatchOutcome.SENT
+    assert second is DispatchOutcome.QUEUED
+    assert channel.send_message.await_count == 1
+    payload = escalation_service.create_escalation.await_args.args[0]
+    assert payload.routing_reason == (
+        "launch_control=canary_hourly_limit; would_have_sent=auto_send"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_canary_suppresses_unreserved_review_notice(tmp_path):
+    launch_control = ChannelLaunchControlService(
+        str(tmp_path / "feedback.db"), environment_enabled=True
+    )
+    launch_control.set_autonomous_delivery_enabled(True)
+    launch_control.set_channel_policy(
+        "matrix",
+        shadow_mode=False,
+        canary_enabled=True,
+        canary_hourly_limit=1,
+        canary_daily_limit=1,
+    )
+    incoming = _launch_incoming("canary-review")
+    response = SimpleNamespace(
+        answer="A staff-reviewed response is required.",
+        original_question=incoming.question,
+        sources=[],
+        requires_human=True,
+        metadata=SimpleNamespace(
+            routing_action="needs_human",
+            routing_reason="manual_review",
+            confidence_score=0.2,
+        ),
+    )
+    channel = MagicMock()
+    channel.runtime = None
+    channel.send_message = AsyncMock(return_value=True)
+    escalation_service = AsyncMock()
+    escalation_service.create_escalation = AsyncMock(
+        return_value=SimpleNamespace(id=408)
+    )
+    dispatcher = ChannelResponseDispatcher(
+        channel=channel,
+        channel_id="matrix",
+        escalation_service=escalation_service,
+        launch_control_service=launch_control,
+    )
+    dispatcher._notify_review_queued = AsyncMock(return_value=True)
+
+    outcome = await dispatcher.dispatch(incoming, response)
+
+    assert outcome is DispatchOutcome.QUEUED
+    escalation_service.create_escalation.assert_awaited_once()
+    dispatcher._notify_review_queued.assert_not_awaited()
+    channel.send_message.assert_not_awaited()
+    assert launch_control.reservation_count("matrix") == 0
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_missing_launch_control_queues_autonomous_response() -> None:
+    channel = MagicMock()
+    channel.runtime = None
+    channel.send_message = AsyncMock(return_value=True)
+    escalation_service = AsyncMock()
+    escalation_service.create_escalation = AsyncMock(
+        return_value=SimpleNamespace(id=404)
+    )
+    dispatcher = ChannelResponseDispatcher(
+        channel=channel,
+        channel_id="matrix",
+        escalation_service=escalation_service,
+    )
+
+    outcome = await dispatcher.dispatch(
+        _launch_incoming("missing-control"), _launch_response()
+    )
+
+    assert outcome is DispatchOutcome.QUEUED
+    channel.send_message.assert_not_awaited()
+    payload = escalation_service.create_escalation.await_args.args[0]
+    assert payload.routing_reason == (
+        "launch_control=launch_control_unavailable; would_have_sent=auto_send"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_malformed_launch_control_service_queues_autonomous_response() -> None:
+    channel = MagicMock()
+    channel.runtime = None
+    channel.send_message = AsyncMock(return_value=True)
+    escalation_service = AsyncMock()
+    escalation_service.create_escalation = AsyncMock(
+        return_value=SimpleNamespace(id=406)
+    )
+    dispatcher = ChannelResponseDispatcher(
+        channel=channel,
+        channel_id="matrix",
+        escalation_service=escalation_service,
+        launch_control_service=SimpleNamespace(),
+    )
+
+    outcome = await dispatcher.dispatch(
+        _launch_incoming("malformed-service"), _launch_response()
+    )
+
+    assert outcome is DispatchOutcome.QUEUED
+    channel.send_message.assert_not_awaited()
+    payload = escalation_service.create_escalation.await_args.args[0]
+    assert payload.routing_reason == (
+        "launch_control=launch_control_invalid_service; would_have_sent=auto_send"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_malformed_launch_control_result_queues_autonomous_response() -> None:
+    malformed_control = SimpleNamespace(
+        authorize_autonomous_delivery=lambda channel_id, message_id: SimpleNamespace(
+            allowed="yes",
+            reason="not-a-valid-decision",
+        ),
+        review_only_reason=lambda channel_id: None,
+    )
+    channel = MagicMock()
+    channel.runtime = None
+    channel.send_message = AsyncMock(return_value=True)
+    escalation_service = AsyncMock()
+    escalation_service.create_escalation = AsyncMock(
+        return_value=SimpleNamespace(id=405)
+    )
+    dispatcher = ChannelResponseDispatcher(
+        channel=channel,
+        channel_id="bisq2",
+        escalation_service=escalation_service,
+        launch_control_service=malformed_control,
+    )
+
+    outcome = await dispatcher.dispatch(
+        _launch_incoming("malformed-control"), _launch_response()
+    )
+
+    assert outcome is DispatchOutcome.QUEUED
+    channel.send_message.assert_not_awaited()
+    payload = escalation_service.create_escalation.await_args.args[0]
+    assert payload.routing_reason == (
+        "launch_control=launch_control_invalid_result; would_have_sent=auto_send"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_failing_launch_control_queues_autonomous_response() -> None:
+    def fail_authorization(channel_id, message_id):
+        raise RuntimeError("launch guard unavailable")
+
+    failing_control = SimpleNamespace(
+        authorize_autonomous_delivery=fail_authorization,
+        review_only_reason=lambda channel_id: None,
+    )
+    channel = MagicMock()
+    channel.runtime = None
+    channel.send_message = AsyncMock(return_value=True)
+    escalation_service = AsyncMock()
+    escalation_service.create_escalation = AsyncMock(
+        return_value=SimpleNamespace(id=407)
+    )
+    dispatcher = ChannelResponseDispatcher(
+        channel=channel,
+        channel_id="matrix",
+        escalation_service=escalation_service,
+        launch_control_service=failing_control,
+    )
+
+    outcome = await dispatcher.dispatch(
+        _launch_incoming("failing-control"), _launch_response()
+    )
+
+    assert outcome is DispatchOutcome.QUEUED
+    channel.send_message.assert_not_awaited()
+    payload = escalation_service.create_escalation.await_args.args[0]
+    assert payload.routing_reason == (
+        "launch_control=launch_control_error; would_have_sent=auto_send"
+    )
 
 
 @pytest.mark.unit
@@ -200,6 +532,7 @@ async def test_dispatch_falls_back_to_buffered_when_native_stream_fails(monkeypa
         channel=channel,
         channel_id="matrix",
         delivery_planner=planner,
+        launch_control_service=ALLOWING_LAUNCH_CONTROL,
     )
 
     sent = await dispatcher.dispatch(incoming, response)
@@ -256,6 +589,7 @@ async def test_dispatch_suppresses_public_escalation_notice_for_group_channels_b
         channel=channel,
         channel_id="matrix",
         escalation_service=escalation_service,
+        launch_control_service=ALLOWING_LAUNCH_CONTROL,
     )
 
     sent = await dispatcher.dispatch(incoming, response)
@@ -301,6 +635,7 @@ async def test_queued_dispatch_stays_terminal_when_review_notice_delivery_raises
         channel=channel,
         channel_id="matrix",
         escalation_service=escalation_service,
+        launch_control_service=ALLOWING_LAUNCH_CONTROL,
     )
 
     outcome = await dispatcher.dispatch(incoming, response)
@@ -415,6 +750,7 @@ async def test_public_escalation_notice_preserves_exact_static_safety_warning():
         channel=channel,
         channel_id="matrix",
         escalation_service=escalation_service,
+        launch_control_service=ALLOWING_LAUNCH_CONTROL,
     )
 
     await dispatcher.dispatch(incoming, response)
@@ -474,6 +810,7 @@ async def test_dispatch_uses_user_notice_when_escalation_notification_channel_is
         channel=channel,
         channel_id="matrix",
         escalation_service=escalation_service,
+        launch_control_service=ALLOWING_LAUNCH_CONTROL,
     )
 
     sent = await dispatcher.dispatch(incoming, response)
@@ -532,6 +869,7 @@ async def test_user_escalation_notice_preserves_exact_static_safety_warning(chan
         channel=channel,
         channel_id=channel_id,
         escalation_service=escalation_service,
+        launch_control_service=ALLOWING_LAUNCH_CONTROL,
     )
 
     await dispatcher.dispatch(incoming, response)
@@ -594,6 +932,7 @@ async def test_dispatch_sends_staff_room_notice_when_configured():
         channel=channel,
         channel_id="matrix",
         escalation_service=escalation_service,
+        launch_control_service=ALLOWING_LAUNCH_CONTROL,
     )
 
     sent = await dispatcher.dispatch(incoming, response)
@@ -679,6 +1018,7 @@ async def test_dispatch_staff_room_can_be_silent_to_user_when_notice_mode_is_non
         channel=channel,
         channel_id="matrix",
         escalation_service=escalation_service,
+        launch_control_service=ALLOWING_LAUNCH_CONTROL,
     )
 
     sent = await dispatcher.dispatch(incoming, response)
@@ -750,6 +1090,7 @@ async def test_dispatch_staff_room_notice_includes_copyable_source_links():
         channel=channel,
         channel_id="matrix",
         escalation_service=escalation_service,
+        launch_control_service=ALLOWING_LAUNCH_CONTROL,
     )
 
     sent = await dispatcher.dispatch(incoming, response)
@@ -819,6 +1160,7 @@ async def test_staff_room_notice_includes_internal_code_enrichment_without_repla
         channel=channel,
         channel_id="matrix",
         escalation_service=escalation_service,
+        launch_control_service=ALLOWING_LAUNCH_CONTROL,
     )
 
     sent = await dispatcher.dispatch(incoming, response)
@@ -922,6 +1264,7 @@ async def test_dispatch_falls_back_to_message_for_unsupported_user_notice_mode()
         channel=channel,
         channel_id="matrix",
         escalation_service=escalation_service,
+        launch_control_service=ALLOWING_LAUNCH_CONTROL,
     )
 
     sent = await dispatcher.dispatch(incoming, response)
@@ -988,6 +1331,7 @@ async def test_dispatch_resolves_staff_room_from_channel_method():
         channel=channel,
         channel_id="matrix",
         escalation_service=escalation_service,
+        launch_control_service=ALLOWING_LAUNCH_CONTROL,
     )
 
     sent = await dispatcher.dispatch(incoming, response)
@@ -1001,7 +1345,11 @@ async def test_dispatch_resolves_staff_room_from_channel_method():
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_notify_review_queued_reports_success_when_staff_notice_sends():
-    dispatcher = ChannelResponseDispatcher(channel=MagicMock(), channel_id="matrix")
+    dispatcher = ChannelResponseDispatcher(
+        channel=MagicMock(),
+        channel_id="matrix",
+        launch_control_service=ALLOWING_LAUNCH_CONTROL,
+    )
     dispatcher._notification_channel_mode = MagicMock(return_value="staff_room")
     dispatcher._send_user_escalation_notice = AsyncMock(return_value=False)
     dispatcher._send_staff_room_escalation_notice = AsyncMock(return_value=True)

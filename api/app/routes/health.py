@@ -85,6 +85,19 @@ async def _bisq_api_ready(request: Request) -> bool:
         return False
 
 
+def _channel_launch_control_ready(request: Request) -> bool:
+    """Check persistent delivery controls without exposing their state."""
+    service = getattr(request.app.state, "channel_launch_control_service", None)
+    check_readiness = getattr(service, "check_readiness", None)
+    if not callable(check_readiness):
+        return False
+    try:
+        return check_readiness() is True
+    except Exception:
+        logger.warning("Channel launch-control readiness check failed", exc_info=True)
+        return False
+
+
 @router.get("/health")
 async def health_check(request: Request):
     """
@@ -146,6 +159,10 @@ async def readiness_check(request: Request) -> JSONResponse:
     settings = getattr(request.app.state, "settings", None)
     rag_service = getattr(request.app.state, "rag_service", None)
     rag_ready = _rag_initialized(rag_service)
+    launch_control_ready = _channel_launch_control_ready(request)
+    launch_control_required = bool(
+        getattr(settings, "AUTONOMOUS_DELIVERY_ENABLED", False)
+    )
 
     matrix_required = bool(getattr(settings, "MATRIX_SYNC_ENABLED", False))
     matrix_ready = _matrix_session_ready(request) if matrix_required else False
@@ -170,6 +187,10 @@ async def readiness_check(request: Request) -> JSONResponse:
             "status": "ready" if vector_ready else "unavailable",
             "required": True,
         },
+        "channel_launch_control": {
+            "status": "ready" if launch_control_ready else "unavailable",
+            "required": launch_control_required,
+        },
         "matrix": {
             "status": (
                 "ready"
@@ -190,6 +211,7 @@ async def readiness_check(request: Request) -> JSONResponse:
     ready = bool(
         rag_ready
         and vector_ready
+        and (not launch_control_required or launch_control_ready)
         and (not matrix_required or matrix_ready)
         and (not bisq_required or bisq_ready)
     )

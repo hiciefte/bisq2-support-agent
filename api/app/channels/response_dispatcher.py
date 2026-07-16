@@ -24,6 +24,7 @@ from app.channels.policy import (
 from app.channels.streaming import deliver_buffered_stream, deliver_native_stream
 from app.models.escalation import EscalationCreate
 from app.prompts.runtime_policy import SAFETY_REFLEX_WARNING
+from app.services.channel_launch_control_service import LAUNCH_CONTROLLED_CHANNELS
 
 logger = logging.getLogger(__name__)
 
@@ -177,11 +178,13 @@ class ChannelResponseDispatcher:
         channel_id: str,
         escalation_service: Any | None = None,
         delivery_planner: DeliveryPlanner | None = None,
+        launch_control_service: Any | None = None,
     ) -> None:
         self.channel = channel
         self.channel_id = channel_id
         self.escalation_service = escalation_service
         self.delivery_planner = delivery_planner or DeliveryPlanner()
+        self.launch_control_service = launch_control_service
 
     async def dispatch(self, incoming: Any, response: Any) -> DispatchOutcome:
         """Dispatch one response.
@@ -190,7 +193,20 @@ class ChannelResponseDispatcher:
             SENT when delivered, QUEUED when persisted for staff review, and
             FAILED when neither action completed.
         """
-        if self.should_autosend_response(response):
+        should_autosend = self.should_autosend_response(response)
+        review_only_reason: str | None = None
+        if should_autosend:
+            allowed, launch_reason = self._authorize_autonomous_delivery(incoming)
+            if not allowed:
+                return await self._queue_launch_review(
+                    incoming,
+                    response,
+                    reason=launch_reason,
+                )
+        else:
+            review_only_reason = self._secondary_delivery_block_reason()
+
+        if should_autosend:
             if self.channel is None:
                 logger.debug(
                     "Skipping %s message %s because channel instance is unavailable",
@@ -250,7 +266,15 @@ class ChannelResponseDispatcher:
             escalation = await self.create_escalation_for_review(incoming, response)
             if escalation is None:
                 return DispatchOutcome.FAILED
-            await self._notify_review_queued(incoming, response, escalation)
+            if review_only_reason is None:
+                await self._notify_review_queued(incoming, response, escalation)
+            else:
+                logger.warning(
+                    "Suppressed %s review notification message_id=%s launch_control=%s",
+                    self.channel_id,
+                    getattr(incoming, "message_id", "<unknown>"),
+                    review_only_reason,
+                )
             logger.debug(
                 "Queued %s message_id=%s for support review (routing_action=%s)",
                 self.channel_id,
@@ -322,7 +346,12 @@ class ChannelResponseDispatcher:
         return None
 
     async def create_escalation_for_review(
-        self, incoming: Any, response: Any
+        self,
+        incoming: Any,
+        response: Any,
+        *,
+        routing_action_override: str | None = None,
+        routing_reason_override: str | None = None,
     ) -> Any | None:
         escalation_service = self._resolve_escalation_service()
         if escalation_service is None:
@@ -335,7 +364,13 @@ class ChannelResponseDispatcher:
 
         metadata = getattr(response, "metadata", None)
         routing_action = (
-            str(getattr(metadata, "routing_action", "") or "").strip().lower()
+            str(
+                routing_action_override
+                if routing_action_override is not None
+                else getattr(metadata, "routing_action", "") or ""
+            )
+            .strip()
+            .lower()
         )
         routing_action = routing_action or "needs_human"
         confidence = getattr(metadata, "confidence_score", None)
@@ -368,7 +403,11 @@ class ChannelResponseDispatcher:
         user = getattr(incoming, "user", None)
         user_id = str(getattr(user, "user_id", "") or "").strip() or "unknown"
         username = str(getattr(user, "channel_user_id", "") or "").strip() or user_id
-        routing_reason = getattr(metadata, "routing_reason", None)
+        routing_reason = (
+            routing_reason_override
+            if routing_reason_override is not None
+            else getattr(metadata, "routing_reason", None)
+        )
         localized_answer = str(getattr(response, "answer", "") or "").strip()
         raw_canonical_answer = getattr(metadata, "canonical_answer_en", None)
         canonical_answer = (
@@ -432,6 +471,139 @@ class ChannelResponseDispatcher:
             )
             return None
 
+    async def _queue_launch_review(
+        self,
+        incoming: Any,
+        response: Any,
+        *,
+        reason: str,
+    ) -> DispatchOutcome:
+        metadata = getattr(response, "metadata", None)
+        would_have_sent = (
+            str(getattr(metadata, "routing_action", "") or "").strip().lower()
+            or "unknown"
+        )
+        routing_reason = f"launch_control={reason}; would_have_sent={would_have_sent}"
+        escalation = await self.create_escalation_for_review(
+            incoming,
+            response,
+            routing_action_override=would_have_sent,
+            routing_reason_override=routing_reason,
+        )
+        if escalation is None:
+            return DispatchOutcome.FAILED
+        logger.warning(
+            "Queued autonomous %s response message_id=%s launch_control=%s would_have_sent=%s",
+            self.channel_id,
+            getattr(incoming, "message_id", "<unknown>"),
+            reason,
+            would_have_sent,
+        )
+        return DispatchOutcome.QUEUED
+
+    def _authorize_autonomous_delivery(self, incoming: Any) -> tuple[bool, str]:
+        if not self._launch_control_applies():
+            return True, "launch_control_not_applicable"
+        service = self._resolve_launch_control_service()
+        if service is None:
+            reason = (
+                "launch_control_unavailable"
+                if self.launch_control_service is None
+                else "launch_control_invalid_service"
+            )
+            logger.error(
+                "Autonomous delivery blocked because launch control is %s channel=%s",
+                reason,
+                self.channel_id,
+            )
+            return False, reason
+        try:
+            decision = service.authorize_autonomous_delivery(
+                self.channel_id,
+                str(getattr(incoming, "message_id", "") or ""),
+            )
+            allowed = getattr(decision, "allowed", None)
+            reason = getattr(decision, "reason", None)
+            if not isinstance(allowed, bool) or not isinstance(reason, str):
+                logger.error(
+                    "Autonomous delivery blocked because launch control returned "
+                    "an invalid result channel=%s",
+                    self.channel_id,
+                )
+                return False, "launch_control_invalid_result"
+            normalized_reason = reason.strip()
+            if not normalized_reason:
+                logger.error(
+                    "Autonomous delivery blocked because launch control returned "
+                    "an empty reason channel=%s",
+                    self.channel_id,
+                )
+                return False, "launch_control_invalid_result"
+            return allowed, normalized_reason
+        except Exception:
+            logger.exception(
+                "Autonomous delivery blocked because launch control failed channel=%s",
+                self.channel_id,
+            )
+            return False, "launch_control_error"
+
+    def _secondary_delivery_block_reason(self) -> str | None:
+        if not self._launch_control_applies():
+            return None
+        service = self._resolve_launch_control_service()
+        if service is None:
+            reason = (
+                "launch_control_unavailable"
+                if self.launch_control_service is None
+                else "launch_control_invalid_service"
+            )
+            logger.error(
+                "Automatic review notification blocked because launch control is "
+                "%s channel=%s",
+                reason,
+                self.channel_id,
+            )
+            return reason
+        guard = getattr(service, "secondary_delivery_block_reason", None)
+        if not callable(guard):
+            logger.error(
+                "Secondary automatic delivery blocked because launch control is "
+                "malformed channel=%s",
+                self.channel_id,
+            )
+            return "launch_control_invalid_service"
+        try:
+            reason = guard(self.channel_id)
+        except Exception:
+            logger.exception(
+                "Review notification blocked because launch control failed channel=%s",
+                self.channel_id,
+            )
+            return "launch_control_error"
+        if reason is None:
+            return None
+        if not isinstance(reason, str) or not reason.strip():
+            logger.error(
+                "Automatic review notification blocked because launch control "
+                "returned an invalid guard result channel=%s",
+                self.channel_id,
+            )
+            return "launch_control_invalid_result"
+        return reason.strip()
+
+    def _resolve_launch_control_service(self) -> Any | None:
+        candidate = self.launch_control_service
+        if candidate is None:
+            return None
+        if not callable(getattr(candidate, "authorize_autonomous_delivery", None)):
+            return None
+        if not callable(getattr(candidate, "review_only_reason", None)):
+            return None
+        return candidate
+
+    def _launch_control_applies(self) -> bool:
+        return str(self.channel_id or "").strip().lower() in LAUNCH_CONTROLLED_CHANNELS
+
     async def _notify_review_queued(
         self,
         incoming: Any,
@@ -470,6 +642,15 @@ class ChannelResponseDispatcher:
         escalation: Any,
     ) -> bool:
         """Public wrapper for sending escalation notices after queueing."""
+        reason = self._secondary_delivery_block_reason()
+        if reason is not None:
+            logger.warning(
+                "Suppressed %s review notification message_id=%s launch_control=%s",
+                self.channel_id,
+                getattr(incoming, "message_id", "<unknown>"),
+                reason,
+            )
+            return False
         return await self._notify_review_queued(incoming, response, escalation)
 
     async def _send_public_escalation_notice(

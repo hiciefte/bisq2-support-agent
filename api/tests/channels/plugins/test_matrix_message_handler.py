@@ -1,11 +1,26 @@
 """Tests for Matrix message push handler."""
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from app.channels.plugins.matrix import message_handler as matrix_message_handler_module
 from app.channels.plugins.matrix.message_handler import MatrixMessageHandler
+
+
+class _AllowingLaunchControl:
+    def authorize_autonomous_delivery(self, channel_id, message_id):
+        return SimpleNamespace(allowed=True, reason="test_allowed")
+
+    def review_only_reason(self, channel_id):
+        return None
+
+    def secondary_delivery_block_reason(self, channel_id):
+        return None
+
+
+ALLOWING_LAUNCH_CONTROL = _AllowingLaunchControl()
 
 
 def _matrix_event(
@@ -74,6 +89,22 @@ def _enabled_policy_service() -> MagicMock:
         hitl_approval_timeout_seconds=3600,
     )
     return svc
+
+
+def test_dispatcher_receives_matrix_launch_control_service() -> None:
+    launch_control = MagicMock()
+    channel = MagicMock()
+    handler = MatrixMessageHandler(
+        client=MagicMock(),
+        connection_manager=MagicMock(),
+        channel=channel,
+        launch_control_service=launch_control,
+    )
+
+    dispatcher = handler._get_dispatcher()
+
+    assert dispatcher is not None
+    assert dispatcher.launch_control_service is launch_control
 
 
 @pytest.mark.asyncio
@@ -288,6 +319,7 @@ async def test_on_message_dispatches_to_channel() -> None:
         connection_manager=connection_manager,
         channel=channel,
         autoresponse_policy_service=_enabled_policy_service(),
+        launch_control_service=ALLOWING_LAUNCH_CONTROL,
         allowed_room_ids=["!room:server"],
         channel_id="matrix",
     )
@@ -374,6 +406,7 @@ async def test_on_message_decrypts_encrypted_event_before_dispatch(monkeypatch) 
         connection_manager=connection_manager,
         channel=channel,
         autoresponse_policy_service=_enabled_policy_service(),
+        launch_control_service=ALLOWING_LAUNCH_CONTROL,
         allowed_room_ids=["!room:server"],
         channel_id="matrix",
     )
@@ -417,6 +450,7 @@ async def test_on_message_skips_on_encrypted_decrypt_error(monkeypatch) -> None:
         connection_manager=connection_manager,
         channel=channel,
         autoresponse_policy_service=_enabled_policy_service(),
+        launch_control_service=ALLOWING_LAUNCH_CONTROL,
         allowed_room_ids=["!room:server"],
     )
 
@@ -461,6 +495,7 @@ async def test_on_message_treats_staff_resolver_failures_as_non_staff() -> None:
         connection_manager=connection_manager,
         channel=channel,
         autoresponse_policy_service=_enabled_policy_service(),
+        launch_control_service=ALLOWING_LAUNCH_CONTROL,
         allowed_room_ids=["!room:server"],
         channel_id="matrix",
     )
@@ -516,6 +551,7 @@ async def test_on_message_queues_when_autosend_disabled() -> None:
         connection_manager=connection_manager,
         channel=channel,
         autoresponse_policy_service=policy_service,
+        launch_control_service=ALLOWING_LAUNCH_CONTROL,
         allowed_room_ids=["!room:server"],
         channel_id="matrix",
     )

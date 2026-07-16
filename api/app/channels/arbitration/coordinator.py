@@ -25,6 +25,7 @@ from app.channels.policy import (
     get_timer_jitter_max_seconds,
 )
 from app.channels.response_dispatcher import ChannelResponseDispatcher, DispatchOutcome
+from app.services.channel_launch_control_service import LAUNCH_CONTROLLED_CHANNELS
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,7 @@ class ArbitrationCoordinator:
         self,
         *,
         policy_service: Any | None = None,
+        launch_control_service: Any | None = None,
         escalation_service: Any | None = None,
         staff_assist_service: Any | None = None,
         max_concurrent_threads: int = 500,
@@ -83,6 +85,7 @@ class ArbitrationCoordinator:
         dispatch_retry_delay_seconds: float = 5.0,
     ) -> None:
         self.policy_service = policy_service
+        self.launch_control_service = launch_control_service
         self.escalation_service = escalation_service
         self.staff_assist_service = staff_assist_service
         self.max_concurrent_threads = max(1, int(max_concurrent_threads))
@@ -540,6 +543,7 @@ class ArbitrationCoordinator:
             channel=channel,
             channel_id=str(getattr(incoming.channel, "value", incoming.channel) or ""),
             escalation_service=self.escalation_service,
+            launch_control_service=self.launch_control_service,
         )
         escalation = await dispatcher.create_escalation_for_review(incoming, response)
         if escalation is not None:
@@ -578,6 +582,9 @@ class ArbitrationCoordinator:
         channel: Any | None,
         incoming: IncomingMessage,
     ) -> None:
+        channel_id = str(getattr(incoming.channel, "value", incoming.channel) or "")
+        if self._secondary_delivery_block_reason(channel_id) is not None:
+            return
         if channel is None:
             return
         get_delivery_target = getattr(channel, "get_delivery_target", None)
@@ -633,6 +640,8 @@ class ArbitrationCoordinator:
         incoming: IncomingMessage,
         channel_id: str,
     ) -> None:
+        if self._secondary_delivery_block_reason(channel_id) is not None:
+            return
         if channel is None:
             return
         get_delivery_target = getattr(channel, "get_delivery_target", None)
@@ -685,6 +694,8 @@ class ArbitrationCoordinator:
         incoming: IncomingMessage,
         channel_id: str,
     ) -> None:
+        if self._secondary_delivery_block_reason(channel_id) is not None:
+            return
         if channel is None:
             return
         mode = get_acknowledgment_mode(self.policy_service, channel_id)
@@ -760,6 +771,52 @@ class ArbitrationCoordinator:
                 incoming.message_id,
                 exc_info=True,
             )
+
+    def _secondary_delivery_block_reason(self, channel_id: str) -> str | None:
+        normalized_channel = str(channel_id or "").strip().lower()
+        if normalized_channel not in LAUNCH_CONTROLLED_CHANNELS:
+            return None
+        service = self.launch_control_service
+        if service is None:
+            logger.error(
+                "Automatic channel notice blocked because launch control is "
+                "unavailable channel=%s",
+                normalized_channel,
+            )
+            return "launch_control_unavailable"
+        secondary_guard = getattr(service, "secondary_delivery_block_reason", None)
+        if not callable(secondary_guard):
+            logger.error(
+                "Automatic channel notice blocked because launch control is "
+                "malformed channel=%s",
+                normalized_channel,
+            )
+            return "launch_control_invalid_service"
+        try:
+            reason = secondary_guard(normalized_channel)
+        except Exception:
+            logger.exception(
+                "Automatic channel notice blocked because launch control failed "
+                "channel=%s",
+                channel_id,
+            )
+            return "launch_control_error"
+        if reason is None:
+            return None
+        if not isinstance(reason, str) or not reason.strip():
+            logger.error(
+                "Automatic channel notice blocked because launch control returned "
+                "an invalid guard result channel=%s",
+                normalized_channel,
+            )
+            return "launch_control_invalid_result"
+        normalized = reason.strip()
+        logger.warning(
+            "Suppressed automatic channel notice channel=%s launch_control=%s",
+            channel_id,
+            normalized,
+        )
+        return normalized
 
     def _compute_wait_delay_seconds(
         self, *, channel_id: str, base_delay_seconds: int

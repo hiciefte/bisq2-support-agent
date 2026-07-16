@@ -144,6 +144,10 @@ When Bisq2 API is configured with `authorizationRequired=true`, the support-agen
 * **`BISQ2_STAFF_NOTIFICATION_TARGET`**
   * Description: Optional Bisq2 channel ID used when the Bisq2 Internal Notice Target is set to `staff_room`.
   * Default: empty
+* **`AUTONOMOUS_DELIVERY_ENABLED`**
+  * Description: Environment guard for the global autonomous-delivery switch. `false` forces the persisted admin switch off at startup and prevents an admin enable. `true` permits an admin enable but never overwrites a persisted admin stop.
+  * Default: `false`
+  * Keep false during shadow validation and until canary limits and rollback ownership are approved. See `docs/runbooks/channel-launch.md`.
 
 Notes:
 * On first startup with auth enabled, support-agent can read pairing QR/code, pair once, then persist credentials/session to `BISQ_API_AUTH_STATE_FILE`.

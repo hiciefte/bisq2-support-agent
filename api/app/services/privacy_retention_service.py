@@ -18,6 +18,9 @@ from app.metrics.privacy_metrics import (
     record_privacy_retention_failure,
     record_privacy_retention_run,
 )
+from app.services.channel_launch_control_service import (
+    DELIVERY_RESERVATION_RETENTION_DAYS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -366,6 +369,52 @@ class PrivacyRetentionService:
         )
         return RetentionStoreResult(count, oldest, window_seconds)
 
+    def _cleanup_epoch_table(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        table: str,
+        timestamp_column: str,
+        now: datetime,
+        dry_run: bool,
+        retention_days: int,
+    ) -> RetentionStoreResult:
+        window_seconds = float(retention_days * 86400)
+        if not self._table_exists(connection, table):
+            return RetentionStoreResult(0, None, window_seconds)
+
+        numeric_timestamp = f"typeof({timestamp_column}) IN ('integer', 'real')"
+        cutoff_epoch = (now - timedelta(days=retention_days)).timestamp()
+        condition = f"({numeric_timestamp}) AND {timestamp_column} < ?"
+        count = int(
+            connection.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE {condition}",
+                (cutoff_epoch,),
+            ).fetchone()[0]
+        )
+        if count and not dry_run:
+            connection.execute(
+                f"DELETE FROM {table} WHERE {condition}",
+                (cutoff_epoch,),
+            )
+
+        oldest_row = connection.execute(
+            f"SELECT MIN({timestamp_column}) FROM {table} " f"WHERE {numeric_timestamp}"
+        ).fetchone()
+        oldest = (
+            max(0.0, now.timestamp() - float(oldest_row[0]))
+            if oldest_row is not None and oldest_row[0] is not None
+            else None
+        )
+        unknown = int(
+            connection.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE NOT ({numeric_timestamp})"
+            ).fetchone()[0]
+        )
+        if unknown:
+            oldest = max(oldest or 0.0, window_seconds + 1.0)
+        return RetentionStoreResult(count, oldest, window_seconds)
+
     @staticmethod
     def _fsync_directory(path: Path) -> None:
         descriptor = os.open(
@@ -593,7 +642,16 @@ class PrivacyRetentionService:
         report: PrivacyRetentionReport,
     ) -> None:
         path = self.data_dir / "feedback.db"
+        reservation_retention_days = min(
+            self.retention_days,
+            DELIVERY_RESERVATION_RETENTION_DAYS,
+        )
         if not path.exists():
+            report.stores["channel_delivery_reservations"] = RetentionStoreResult(
+                0,
+                None,
+                float(reservation_retention_days * 86400),
+            )
             for name in (
                 "feedback",
                 "feedback_conversations",
@@ -615,6 +673,17 @@ class PrivacyRetentionService:
 
         connection = self._connect(path)
         try:
+            reservation_result = self._cleanup_epoch_table(
+                connection,
+                table="channel_delivery_reservations",
+                timestamp_column="reserved_at",
+                now=now,
+                dry_run=dry_run,
+                retention_days=reservation_retention_days,
+            )
+            report.stores["channel_delivery_reservations"] = reservation_result
+            changed = reservation_result.deleted_rows
+
             plans = (
                 (
                     "feedback_conversations",
@@ -642,7 +711,6 @@ class PrivacyRetentionService:
                 ),
                 ("chatops_audit", "chatops_action_audit", "created_at", None),
             )
-            changed = 0
             for label, table, timestamp_expression, orphan_condition in plans:
                 result = self._cleanup_text_table(
                     connection,

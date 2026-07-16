@@ -3,10 +3,26 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from app.channels.plugins.bisq2.services.live_chat_service import Bisq2LiveChatService
+from app.services.channel_launch_control_service import ChannelLaunchControlService
+
+
+class _AllowingLaunchControl:
+    def authorize_autonomous_delivery(self, channel_id, message_id):
+        return SimpleNamespace(allowed=True, reason="test_allowed")
+
+    def review_only_reason(self, channel_id):
+        return None
+
+    def secondary_delivery_block_reason(self, channel_id):
+        return None
+
+
+ALLOWING_LAUNCH_CONTROL = _AllowingLaunchControl()
 
 
 def _incoming(message_id: str = "m-1", conversation_id: str = "support.support"):
@@ -57,6 +73,7 @@ async def test_run_once_polls_and_sends_responses() -> None:
     service = Bisq2LiveChatService(
         channel=channel,
         autoresponse_policy_service=_policy_service(),
+        launch_control_service=ALLOWING_LAUNCH_CONTROL,
         poll_interval_seconds=0.01,
     )
 
@@ -66,6 +83,42 @@ async def test_run_once_polls_and_sends_responses() -> None:
     channel.poll_conversations.assert_awaited_once()
     channel.handle_incoming.assert_awaited_once_with(incoming)
     channel.send_message.assert_awaited_once_with("support.support", outgoing)
+
+
+@pytest.mark.asyncio
+async def test_run_once_shadow_mode_queues_without_sending(tmp_path) -> None:
+    channel = MagicMock()
+    channel.channel_id = "bisq2"
+    channel.runtime = None
+    incoming = _incoming(message_id="shadow-bisq")
+    outgoing = _outgoing(routing_action="auto_send")
+    channel.poll_conversations = AsyncMock(return_value=[incoming])
+    channel.handle_incoming = AsyncMock(return_value=outgoing)
+    channel.get_delivery_target = MagicMock(return_value="test-conversation")
+    channel.send_message = AsyncMock(return_value=True)
+    escalation_service = MagicMock()
+    escalation_service.create_escalation = AsyncMock(return_value=MagicMock(id=124))
+    launch_control = ChannelLaunchControlService(
+        str(tmp_path / "feedback.db"), environment_enabled=True
+    )
+    launch_control.set_autonomous_delivery_enabled(True)
+    service = Bisq2LiveChatService(
+        channel=channel,
+        autoresponse_policy_service=_policy_service(),
+        launch_control_service=launch_control,
+        escalation_service=escalation_service,
+        poll_interval_seconds=0.01,
+    )
+
+    processed = await service.run_once()
+
+    assert processed == 0
+    channel.send_message.assert_not_awaited()
+    payload = escalation_service.create_escalation.await_args.args[0]
+    assert payload.routing_action == "auto_send"
+    assert payload.routing_reason == (
+        "launch_control=shadow_mode; would_have_sent=auto_send"
+    )
 
 
 @pytest.mark.asyncio
@@ -83,6 +136,7 @@ async def test_run_once_skips_message_without_delivery_target() -> None:
     service = Bisq2LiveChatService(
         channel=channel,
         autoresponse_policy_service=_policy_service(),
+        launch_control_service=ALLOWING_LAUNCH_CONTROL,
         poll_interval_seconds=0.01,
     )
 
@@ -109,6 +163,7 @@ async def test_run_once_creates_escalation_for_non_autosend_routing_actions() ->
     service = Bisq2LiveChatService(
         channel=channel,
         autoresponse_policy_service=_policy_service(),
+        launch_control_service=ALLOWING_LAUNCH_CONTROL,
         escalation_service=escalation_service,
         poll_interval_seconds=0.01,
     )
@@ -144,6 +199,7 @@ async def test_run_once_sends_clarification_messages_without_escalation() -> Non
     service = Bisq2LiveChatService(
         channel=channel,
         autoresponse_policy_service=_policy_service(),
+        launch_control_service=ALLOWING_LAUNCH_CONTROL,
         escalation_service=escalation_service,
         poll_interval_seconds=0.01,
     )
@@ -177,6 +233,7 @@ async def test_run_once_queues_missing_or_unknown_routing_action(
     service = Bisq2LiveChatService(
         channel=channel,
         autoresponse_policy_service=_policy_service(),
+        launch_control_service=ALLOWING_LAUNCH_CONTROL,
         escalation_service=escalation_service,
         poll_interval_seconds=0.01,
     )
@@ -272,6 +329,7 @@ async def test_run_once_queues_for_review_when_generation_enabled_and_autosend_d
     service = Bisq2LiveChatService(
         channel=channel,
         autoresponse_policy_service=policy_service,
+        launch_control_service=ALLOWING_LAUNCH_CONTROL,
         escalation_service=escalation_service,
         poll_interval_seconds=0.01,
     )

@@ -233,6 +233,9 @@ class ChannelBootstrapper:
                     policy_service=runtime.resolve_optional(
                         "channel_autoresponse_policy_service"
                     ),
+                    launch_control_service=runtime.resolve_optional(
+                        "channel_launch_control_service"
+                    ),
                     escalation_service=runtime.resolve_optional("escalation_service"),
                     staff_assist_service=runtime.resolve_optional(
                         "staff_assist_service"
@@ -317,6 +320,9 @@ class ChannelBootstrapper:
         coordinator = FeedbackFollowupCoordinator(
             feedback_service=runtime.feedback_service,
             channel_registry=registry,
+            launch_control_service=runtime.resolve_optional(
+                "channel_launch_control_service"
+            ),
             ttl_seconds=getattr(
                 self.settings,
                 "REACTION_FEEDBACK_FOLLOWUP_TTL_SECONDS",

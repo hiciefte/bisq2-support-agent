@@ -187,6 +187,9 @@ class MatrixChannel(ChannelBase):
                 autoresponse_policy_service=runtime.resolve_optional(
                     "channel_autoresponse_policy_service"
                 ),
+                launch_control_service=runtime.resolve_optional(
+                    "channel_launch_control_service"
+                ),
                 allowed_room_ids=allowed_room_ids,
                 staff_command_room_ids=reaction_allowed_room_ids,
                 channel_id="matrix",

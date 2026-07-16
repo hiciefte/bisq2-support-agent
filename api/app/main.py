@@ -45,6 +45,7 @@ from app.services.bisq_startup_self_test_service import BisqStartupSelfTestServi
 from app.services.channel_autoresponse_policy_service import (
     ChannelAutoResponsePolicyService,
 )
+from app.services.channel_launch_control_service import ChannelLaunchControlService
 from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
 from app.services.mcp.mcp_http_server import router as mcp_router
@@ -96,6 +97,20 @@ logger = logging.getLogger("app.main")
 # For local debugging, manually inspect specific variables as needed
 
 
+def _initialize_channel_launch_control(
+    settings: Settings,
+) -> ChannelLaunchControlService | None:
+    """Initialize launch controls without taking manual support offline."""
+    try:
+        return ChannelLaunchControlService(
+            db_path=os.path.join(settings.DATA_DIR, "feedback.db"),
+            environment_enabled=settings.AUTONOMOUS_DELIVERY_ENABLED,
+        )
+    except Exception:
+        logger.critical("Channel launch control initialization failed", exc_info=True)
+        return None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
@@ -117,6 +132,7 @@ async def lifespan(app: FastAPI):
     app.state.bisq2_live_chat_service = None
     app.state.matrix_channel = None
     app.state.channel_autoresponse_policy_service = None
+    app.state.channel_launch_control_service = None
     app.state.trust_monitor_policy_service = None
     app.state.trust_monitor_service = None
     app.state.chatops_audit_store = None
@@ -148,6 +164,9 @@ async def lifespan(app: FastAPI):
 
     app.state.channel_autoresponse_policy_service = ChannelAutoResponsePolicyService(
         db_path=os.path.join(settings.DATA_DIR, "feedback.db"),
+    )
+    app.state.channel_launch_control_service = _initialize_channel_launch_control(
+        settings
     )
     app.state.trust_monitor_policy_service = TrustMonitorPolicyService(
         db_path=os.path.join(settings.DATA_DIR, "feedback.db"),
@@ -397,6 +416,7 @@ async def lifespan(app: FastAPI):
         shared_services={
             "feedback_service": feedback_service,
             "channel_autoresponse_policy_service": app.state.channel_autoresponse_policy_service,
+            "channel_launch_control_service": app.state.channel_launch_control_service,
             "trust_monitor_policy_service": app.state.trust_monitor_policy_service,
             "trust_monitor_service": app.state.trust_monitor_service,
             "chatops_audit_store": app.state.chatops_audit_store,
@@ -483,6 +503,7 @@ async def lifespan(app: FastAPI):
         polling_service = LivePollingService(
             channel=channel,
             autoresponse_policy_service=app.state.channel_autoresponse_policy_service,
+            launch_control_service=app.state.channel_launch_control_service,
             escalation_service=getattr(app.state, "escalation_service", None),
             channel_id=channel_id,
         )
