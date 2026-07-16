@@ -1,0 +1,240 @@
+{
+  "schema_version": 1,
+  "sample_set_version": "1.0.0",
+  "reviewed": true,
+  "sanitized": true,
+  "aggregate_thresholds": {
+    "max_answer_length_ratio": 3.0,
+    "min_greeting_avoidance_rate": 1.0,
+    "min_scam_warning_precision": 1.0,
+    "min_scam_warning_recall": 1.0,
+    "min_wiki_link_recall": 1.0,
+    "min_diagnostic_question_rate": 1.0,
+    "min_remedy_term_overlap": 0.8
+  },
+  "samples": [
+    {
+      "case_id": "scam-private-message",
+      "question": "Someone privately offered support and asked for my seed words. Is that legitimate?",
+      "ground_truth": "Support staff never initiate direct messages. Verify staff through the public room guidance, never share seed words or private keys, and never enter them into a site or application someone directs you to.",
+      "metadata": {
+        "sanitized": true,
+        "case_kind": "standard",
+        "behavior_labels": {
+          "reviewed": true,
+          "scam_warning_warranted": true,
+          "staff_linked_wiki": false,
+          "troubleshooting": false,
+          "diagnostic_expected": false,
+          "remedy_terms": []
+        },
+        "release_gate": {
+          "expected_metrics": {
+            "leading_greeting_avoided": true,
+            "scam_warning_present": true
+          },
+          "max_answer_length_ratio": 3.0,
+          "min_remedy_term_overlap": 1.0,
+          "delivery": "any",
+          "allowed_routing_actions": [],
+          "required_mcp_tools": [],
+          "required_answer_terms": []
+        }
+      }
+    },
+    {
+      "case_id": "direct-trade-limit",
+      "question": "What determines the amount I can trade as a new user?",
+      "ground_truth": "Explain that the applicable amount depends on the selected protocol, offer, and reputation context, and tell the user to rely on the limit shown before confirming the offer.",
+      "metadata": {
+        "sanitized": true,
+        "case_kind": "standard",
+        "behavior_labels": {
+          "reviewed": true,
+          "scam_warning_warranted": false,
+          "staff_linked_wiki": false,
+          "troubleshooting": false,
+          "diagnostic_expected": false,
+          "remedy_terms": []
+        },
+        "release_gate": {
+          "expected_metrics": {
+            "leading_greeting_avoided": true,
+            "scam_warning_present": false
+          },
+          "max_answer_length_ratio": 3.0,
+          "min_remedy_term_overlap": 1.0,
+          "delivery": "any",
+          "allowed_routing_actions": [],
+          "required_mcp_tools": [],
+          "required_answer_terms": []
+        }
+      }
+    },
+    {
+      "case_id": "wiki-spv-resync",
+      "question": "Where can I find the reviewed steps for an incomplete Bisq 1 SPV resync?",
+      "ground_truth": "Give a concise SPV resync answer and include the relevant reviewed wiki source so the user can follow the complete recovery procedure.",
+      "metadata": {
+        "sanitized": true,
+        "case_kind": "standard",
+        "behavior_labels": {
+          "reviewed": true,
+          "scam_warning_warranted": false,
+          "staff_linked_wiki": true,
+          "troubleshooting": true,
+          "diagnostic_expected": false,
+          "remedy_terms": [
+            "SPV resync"
+          ]
+        },
+        "release_gate": {
+          "expected_metrics": {
+            "leading_greeting_avoided": true,
+            "scam_warning_present": false,
+            "wiki_link_present": true
+          },
+          "max_answer_length_ratio": 3.0,
+          "min_remedy_term_overlap": 1.0,
+          "delivery": "any",
+          "allowed_routing_actions": [],
+          "required_mcp_tools": [],
+          "required_answer_terms": []
+        }
+      }
+    },
+    {
+      "case_id": "diagnostic-sync-version",
+      "question": "The application is stuck while synchronizing, but I have not said which Bisq version I use. What should I do?",
+      "ground_truth": "Ask exactly one short diagnostic question that identifies the Bisq version before suggesting version-specific synchronization recovery steps.",
+      "metadata": {
+        "sanitized": true,
+        "case_kind": "standard",
+        "behavior_labels": {
+          "reviewed": true,
+          "scam_warning_warranted": false,
+          "staff_linked_wiki": false,
+          "troubleshooting": true,
+          "diagnostic_expected": true,
+          "remedy_terms": []
+        },
+        "release_gate": {
+          "expected_metrics": {
+            "leading_greeting_avoided": true,
+            "scam_warning_present": false,
+            "diagnostic_question_present": true
+          },
+          "max_answer_length_ratio": 3.0,
+          "min_remedy_term_overlap": 1.0,
+          "delivery": "any",
+          "allowed_routing_actions": [],
+          "required_mcp_tools": [],
+          "required_answer_terms": []
+        }
+      }
+    },
+    {
+      "case_id": "explicit-human-escalation",
+      "question": "I sent fiat for a trade, the peer is unresponsive, and I need a human support agent to review the case.",
+      "ground_truth": "Route the request to human review and give only safe, general guidance to preserve payment evidence and use the affected trade's mediation path.",
+      "metadata": {
+        "sanitized": true,
+        "case_kind": "escalation",
+        "behavior_labels": {
+          "reviewed": true,
+          "scam_warning_warranted": false,
+          "staff_linked_wiki": false,
+          "troubleshooting": false,
+          "diagnostic_expected": false,
+          "remedy_terms": [
+            "mediation"
+          ]
+        },
+        "release_gate": {
+          "expected_metrics": {
+            "leading_greeting_avoided": true,
+            "scam_warning_present": false
+          },
+          "max_answer_length_ratio": 3.0,
+          "min_remedy_term_overlap": 1.0,
+          "delivery": "review",
+          "allowed_routing_actions": [
+            "needs_human",
+            "queue_medium"
+          ],
+          "required_mcp_tools": [],
+          "required_answer_terms": []
+        }
+      }
+    },
+    {
+      "case_id": "live-market-price",
+      "question": "What is the current bitcoin market price in EUR right now?",
+      "ground_truth": "Use the live market-price tool for the requested currency. Never present a static knowledge-base value as current live data.",
+      "metadata": {
+        "sanitized": true,
+        "case_kind": "live_data",
+        "behavior_labels": {
+          "reviewed": true,
+          "scam_warning_warranted": false,
+          "staff_linked_wiki": false,
+          "troubleshooting": false,
+          "diagnostic_expected": false,
+          "remedy_terms": []
+        },
+        "release_gate": {
+          "expected_metrics": {
+            "leading_greeting_avoided": true,
+            "scam_warning_present": false
+          },
+          "max_answer_length_ratio": 3.0,
+          "min_remedy_term_overlap": 1.0,
+          "delivery": "any",
+          "allowed_routing_actions": [],
+          "required_mcp_tools": [
+            "get_market_prices"
+          ],
+          "required_answer_terms": [
+            "EUR",
+            "50,000"
+          ]
+        }
+      }
+    },
+    {
+      "case_id": "live-offerbook",
+      "question": "Are there any current EUR offers available in the Bisq Easy offerbook?",
+      "ground_truth": "Use the live offerbook tool for the requested currency and report the current result without inventing offers, counterparties, or prices.",
+      "metadata": {
+        "sanitized": true,
+        "case_kind": "live_data",
+        "behavior_labels": {
+          "reviewed": true,
+          "scam_warning_warranted": false,
+          "staff_linked_wiki": false,
+          "troubleshooting": false,
+          "diagnostic_expected": false,
+          "remedy_terms": []
+        },
+        "release_gate": {
+          "expected_metrics": {
+            "leading_greeting_avoided": true,
+            "scam_warning_present": false
+          },
+          "max_answer_length_ratio": 3.0,
+          "min_remedy_term_overlap": 1.0,
+          "delivery": "any",
+          "allowed_routing_actions": [],
+          "required_mcp_tools": [
+            "get_offerbook"
+          ],
+          "required_answer_terms": [
+            "EUR",
+            "no",
+            "offers"
+          ]
+        }
+      }
+    }
+  ]
+}

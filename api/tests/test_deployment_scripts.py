@@ -914,6 +914,39 @@ def test_update_repository_aborts_before_git_work_when_preservation_fails(
     assert "Failed to preserve production data" in result.stdout + result.stderr
 
 
+def test_release_update_rejects_patch_before_stash_or_git_work(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "bisq-support-test"
+    repo.mkdir()
+    init_git_repo(repo)
+    tracked = repo / "tracked.txt"
+    tracked.write_text("reviewed\n", encoding="utf-8")
+    run_git(repo, "add", "tracked.txt")
+    run_git(repo, "commit", "-m", "base")
+    tracked.write_text("local patch\n", encoding="utf-8")
+    mutation_marker = tmp_path / "git-work-started"
+
+    result = run_bash(
+        f"""
+        source "{GIT_UTILS_SH}"
+        ensure_repository_update_safe() {{ return 0; }}
+        preserve_production_data() {{ touch "{mutation_marker}"; return 0; }}
+        fetch_remote() {{ touch "{mutation_marker}"; return 0; }}
+        if update_repository "{repo}" origin main false; then
+            exit 99
+        fi
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert tracked.read_text(encoding="utf-8") == "local patch\n"
+    assert not mutation_marker.exists()
+    assert run_git(repo, "stash", "list").stdout == ""
+    assert "Release updates require a clean source tree" in result.stdout
+
+
 def test_validate_runtime_configuration_requires_trust_monitor_secret() -> None:
     result = run_bash(
         f"""
@@ -958,6 +991,48 @@ def test_ensure_repository_update_safe_rejects_unmerged_paths(tmp_path: Path) ->
 
     assert result.returncode != 0
     assert "Repository has unmerged paths" in result.stdout
+
+
+def test_release_source_tree_guard_rejects_local_build_inputs(tmp_path: Path) -> None:
+    init_git_repo(tmp_path)
+    tracked = tmp_path / "tracked.txt"
+    tracked.write_text("reviewed\n", encoding="utf-8")
+    (tmp_path / ".gitignore").write_text("runtime/\n", encoding="utf-8")
+    run_git(tmp_path, "add", "tracked.txt", ".gitignore")
+    run_git(tmp_path, "commit", "-m", "base")
+
+    clean = run_bash(
+        f'source "{GIT_UTILS_SH}"; ensure_release_source_tree_clean "{tmp_path}"',
+        cwd=REPO_ROOT,
+    )
+    assert clean.returncode == 0, clean.stderr
+
+    tracked.write_text("local change\n", encoding="utf-8")
+    changed = run_bash(
+        f'source "{GIT_UTILS_SH}"; ensure_release_source_tree_clean "{tmp_path}"',
+        cwd=REPO_ROOT,
+    )
+    assert changed.returncode == 1
+    assert "tracked local changes" in changed.stdout
+
+    run_git(tmp_path, "restore", "tracked.txt")
+    (tmp_path / "untracked.txt").write_text("local input\n", encoding="utf-8")
+    untracked = run_bash(
+        f'source "{GIT_UTILS_SH}"; ensure_release_source_tree_clean "{tmp_path}"',
+        cwd=REPO_ROOT,
+    )
+    assert untracked.returncode == 1
+    assert "untracked local inputs" in untracked.stdout
+
+    (tmp_path / "untracked.txt").unlink()
+    ignored_runtime = tmp_path / "runtime" / "state.db"
+    ignored_runtime.parent.mkdir()
+    ignored_runtime.write_text("runtime data\n", encoding="utf-8")
+    ignored = run_bash(
+        f'source "{GIT_UTILS_SH}"; ensure_release_source_tree_clean "{tmp_path}"',
+        cwd=REPO_ROOT,
+    )
+    assert ignored.returncode == 0, ignored.stderr
 
 
 def test_stash_changes_returns_noop_when_no_new_stash_is_created(

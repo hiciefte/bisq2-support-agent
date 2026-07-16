@@ -161,11 +161,28 @@ rate, and remedy-term overlap. It also emits count-only `divergence_counts` for
 the flagged feedback-guidance mechanism. Per-sample output contains safe case IDs
 and metrics, not the question, either answer, sender identities, or event IDs.
 
-This command exits nonzero when a quality floor fails. CI and the scheduled job run
-it only against the sanitized, precomputed fixture. That validates the scorer,
-schema, and checked-in baseline; it does **not** generate fresh model answers or
-claim to detect live-model drift. To evaluate fresh answers, generate them locally,
-review and label the resulting rows, then pass that artifact to this offline command.
+This command exits nonzero when a quality floor fails. The ordinary CI job runs it
+only against the sanitized, precomputed fixture. That keeps a cheap scorer/schema
+regression in the pull-request path; by itself it does **not** detect live-model
+drift.
+
+Release branches, scheduled drift checks, and explicit release runs use the
+separate fresh-answer harness. Version tags verify the exact commit/model result
+from that harness without receiving the provider credential:
+
+```bash
+PYTHONPATH=api LLM_TEMPERATURE=0 \
+  python -m app.scripts.release_ai_quality_gate \
+  --samples api/data/evaluation/release_ai_quality_samples_v1.json \
+  --output api/data/evaluation/release_ai_quality.summary.json
+```
+
+The release workflow supplies the reviewed production model and a running isolated
+API stack. The versioned input contains no generated answers. The archived output
+is sanitized and binds its aggregate and per-case results to the commit, model
+digest, sample SHA, and prompt SHA. See `docs/release-ai-quality-gate.md` for
+protected-environment handling, release triggers, pass markers, and deployment
+enforcement.
 
 ## Strict Reproducible Pipeline (Lockfile)
 

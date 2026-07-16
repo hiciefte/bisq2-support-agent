@@ -1,0 +1,34 @@
+{
+  "name": "AI quality marker lifecycle",
+  "target": "tag",
+  "enforcement": "active",
+  "bypass_actors": [
+    {
+      "actor_id": 0,
+      "actor_type": "User",
+      "bypass_mode": "always"
+    }
+  ],
+  "conditions": {
+    "ref_name": {
+      "include": [
+        "refs/tags/release-ai-quality/**/*"
+      ],
+      "exclude": []
+    }
+  },
+  "rules": [
+    {
+      "type": "creation"
+    },
+    {
+      "type": "update",
+      "parameters": {
+        "update_allows_fetch_and_merge": false
+      }
+    },
+    {
+      "type": "deletion"
+    }
+  ]
+}

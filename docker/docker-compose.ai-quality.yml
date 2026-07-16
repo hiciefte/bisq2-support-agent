@@ -1,0 +1,55 @@
+services:
+  quality-bisq-stub:
+    image: ${BISQ_SUPPORT_API_IMAGE:-bisq-support-agent-api:local}
+    entrypoint:
+      - python
+      - -m
+      - http.server
+      - "8090"
+      - --directory
+      - /quality-stub
+    command: []
+    user: "1001:1001"
+    read_only: true
+    volumes:
+      - ../api/data/evaluation/release_ai_quality_stub:/quality-stub:ro
+    expose:
+      - "8090"
+    networks:
+      - bisq-support-network
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - -fsS
+        - --max-time
+        - "5"
+        - http://localhost:8090/api/v1/openapi.json
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  api:
+    environment:
+      ENVIRONMENT: production
+      LLM_TEMPERATURE: "0"
+      LLM_CLASSIFICATION_TEMPERATURE: "0"
+      MATRIX_SYNC_ENABLED: "false"
+      MATRIX_CHATOPS_ENABLED: "false"
+      BISQ2_CHANNEL_ENABLED: "false"
+      BISQ2_CHATOPS_ENABLED: "false"
+      ESCALATION_BISQ2_WS_ENABLED: "false"
+      ENABLE_BISQ_MCP_INTEGRATION: "true"
+      BISQ_API_URL: http://quality-bisq-stub:8090
+      BISQ_API_AUTH_ENABLED: "false"
+      MCP_HTTP_URL: http://localhost:8000/mcp
+      RELEASE_AI_QUALITY_COMMIT: ${RELEASE_AI_QUALITY_COMMIT}
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      quality-bisq-stub:
+        condition: service_healthy

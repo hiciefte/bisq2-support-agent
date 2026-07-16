@@ -2,8 +2,9 @@
 set -Eeuo pipefail
 
 # Maintenance script for Bisq Support Assistant
-# This script updates the application while preserving local changes
-# and rebuilds/restarts containers as needed
+# This script updates the application from a reviewed release tree and
+# rebuilds/restarts containers as needed. Local source changes are rejected;
+# ignored runtime data remains outside the release source boundary.
 
 # Source library functions
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
@@ -218,10 +219,11 @@ perform_update() {
         exit 1
     }
 
-    # Update repository with stash handling
+    # Release updates deliberately reject local source changes. Stashing and
+    # restoring them would make the built tree differ from the evaluated commit.
     local update_status
     set +e
-    update_repository "$INSTALL_DIR" "$GIT_REMOTE" "$GIT_BRANCH"
+    update_repository "$INSTALL_DIR" "$GIT_REMOTE" "$GIT_BRANCH" false
     update_status=$?
     set -e
 
@@ -241,6 +243,24 @@ perform_update() {
     export NO_REPO_UPDATES
 
     log_success "Repository updated successfully"
+}
+
+verify_release_ai_quality_gate() {
+    local verifier="$INSTALL_DIR/scripts/verify-release-ai-quality-gate.sh"
+
+    log_info "Verifying the release AI-quality gate..."
+    if [ ! -x "$verifier" ]; then
+        log_error "Release AI-quality verifier is unavailable"
+        return 1
+    fi
+    if ! "$verifier" \
+        --repository "$INSTALL_DIR" \
+        --remote "$GIT_REMOTE" \
+        --env-file "$DOCKER_DIR/.env"; then
+        log_error "Release AI-quality gate is missing or failed"
+        return 1
+    fi
+    log_success "Release AI-quality gate verified"
 }
 
 # Determine update requirements
@@ -686,6 +706,12 @@ verify_feedback_persistence() {
 
 # Main execution flow
 main() {
+    # Reject source changes before backups, fetches, resets, or stash handling.
+    if ! ensure_release_source_tree_clean "$INSTALL_DIR"; then
+        log_error "Release update requires a clean source tree"
+        exit 1
+    fi
+
     # Validate environment
     validate_environment
 
@@ -694,6 +720,19 @@ main() {
 
     # Update repository
     perform_update
+
+    # Never build or restart a commit that lacks a fresh-answer pass marker.
+    if ! verify_release_ai_quality_gate; then
+        if [ "${NO_REPO_UPDATES:-false}" = "true" ]; then
+            exit 1
+        fi
+        rollback_update "Release AI-quality gate verification failed"
+    fi
+
+    # Keep every migration-like hook behind the evaluated release boundary.
+    if ! run_faq_migration "$INSTALL_DIR"; then
+        log_warning "FAQ migration verification had issues, but continuing deployment"
+    fi
 
     # Analyze what needs to be updated
     analyze_changes
