@@ -1,0 +1,320 @@
+name: Release AI Quality Gate
+
+on:
+  push:
+    branches:
+      - "release/*"
+    tags:
+      - "v*"
+  schedule:
+    - cron: "43 4 * * 2"
+  workflow_dispatch:
+
+concurrency:
+  # Branch and tag events can target the same commit. Serialize by object ID so
+  # a passing run cannot race a later failing run for the same release.
+  group: release-ai-quality-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  invalidate-pass-marker:
+    name: Invalidate Prior AI Quality Marker
+    if: >-
+      (github.event_name == 'push' &&
+       startsWith(github.ref, 'refs/heads/release/')) ||
+      (github.event_name == 'schedule' &&
+       github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' &&
+       (github.ref == 'refs/heads/main' ||
+        startsWith(github.ref, 'refs/heads/release/')))
+    runs-on: ubuntu-latest
+    environment: release-ai-quality
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ secrets.AI_QUALITY_GATE_MARKER_TOKEN }}
+    outputs:
+      model_sha256: ${{ steps.model.outputs.model_sha256 }}
+    steps:
+      - name: Remove prior markers for this commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "AI quality marker credential is not configured" >&2
+            exit 1
+          fi
+          endpoint="repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/release-ai-quality/${GITHUB_SHA}"
+          refs=$(gh api --paginate "$endpoint" --jq '.[].ref')
+          while IFS= read -r ref; do
+            [ -n "$ref" ] || continue
+            if [ "$ref" != "refs/tags/release-ai-quality/${GITHUB_SHA}" ] \
+              && [[ ! "$ref" =~ ^refs/tags/release-ai-quality/${GITHUB_SHA}/[0-9a-f]{64}$ ]]; then
+              echo "Refusing to delete an unexpected quality marker" >&2
+              exit 1
+            fi
+            gh api --silent --method DELETE \
+              "repos/${GITHUB_REPOSITORY}/git/${ref}"
+          done <<< "$refs"
+
+      - name: Validate and hash release model
+        id: model
+        shell: bash
+        env:
+          OPENAI_MODEL: ${{ vars.AI_QUALITY_GATE_OPENAI_MODEL }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$OPENAI_MODEL" =~ ^openai:[A-Za-z0-9][A-Za-z0-9._-]{0,99}$ ]]; then
+            echo "AI quality gate production model is missing or invalid" >&2
+            exit 1
+          fi
+          model_sha256=$(printf '%s' "$OPENAI_MODEL" | sha256sum | awk '{print $1}')
+          echo "model_sha256=${model_sha256}" >> "$GITHUB_OUTPUT"
+
+  release-ai-quality:
+    name: Fresh-Answer AI Quality Gate
+    needs: invalidate-pass-marker
+    runs-on: ubuntu-latest
+    environment: release-ai-quality
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      RELEASE_AI_QUALITY_COMMIT: ${{ github.sha }}
+      COMPOSE_FILES: >-
+        -f docker/docker-compose.yml
+        -f docker/docker-compose.ai-quality.yml
+
+    steps:
+      - name: Check out release candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Clear prior quality report
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -c 'from pathlib import Path; Path("api/data/evaluation/release_ai_quality.summary.json").unlink(missing_ok=True)'
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11.11"
+
+      - name: Confirm release model identity
+        shell: bash
+        env:
+          OPENAI_MODEL: ${{ vars.AI_QUALITY_GATE_OPENAI_MODEL }}
+          EXPECTED_MODEL_SHA256: ${{ needs.invalidate-pass-marker.outputs.model_sha256 }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$OPENAI_MODEL" =~ ^openai:[A-Za-z0-9][A-Za-z0-9._-]{0,99}$ ]]; then
+            echo "AI quality gate production model is missing or invalid" >&2
+            exit 1
+          fi
+          actual_model_sha256=$(printf '%s' "$OPENAI_MODEL" | sha256sum | awk '{print $1}')
+          if [ "$actual_model_sha256" != "$EXPECTED_MODEL_SHA256" ]; then
+            echo "AI quality gate model identity changed during the workflow" >&2
+            exit 1
+          fi
+
+      - name: Build release-candidate API image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose $COMPOSE_FILES build api
+
+      - name: Prepare isolated quality-gate environment
+        shell: bash
+        env:
+          OPENAI_MODEL: ${{ vars.AI_QUALITY_GATE_OPENAI_MODEL }}
+          EXPECTED_MODEL_SHA256: ${{ needs.invalidate-pass-marker.outputs.model_sha256 }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import os
+          import secrets
+          from pathlib import Path
+
+          model_id = os.environ["OPENAI_MODEL"]
+          model_sha256 = hashlib.sha256(model_id.encode("utf-8")).hexdigest()
+          if model_sha256 != os.environ["EXPECTED_MODEL_SHA256"]:
+              raise SystemExit("AI quality gate model binding changed")
+
+          env_path = Path("docker/.env")
+          lines = Path("docker/.env.example").read_text(encoding="utf-8").splitlines()
+          values = {
+              "OPENAI_API_KEY": "",
+              "OPENAI_MODEL": os.environ["OPENAI_MODEL"],
+              "OPENAI_EMBEDDING_MODEL": "text-embedding-3-small",
+              "LLM_TEMPERATURE": "0",
+              "LLM_CLASSIFICATION_TEMPERATURE": "0",
+              "ADMIN_API_KEY": secrets.token_urlsafe(32),
+              "GRAFANA_ADMIN_PASSWORD": secrets.token_urlsafe(32),
+              "GRAFANA_DATASOURCE_API_KEY": secrets.token_urlsafe(32),
+              "REACTOR_IDENTITY_SALT": secrets.token_urlsafe(32),
+              "COOKIE_SECURE": "false",
+              "TRUST_MONITOR_ENABLED": "false",
+              "MATRIX_SYNC_ENABLED": "false",
+              "MATRIX_CHATOPS_ENABLED": "false",
+              "BISQ2_CHANNEL_ENABLED": "false",
+              "BISQ2_CHATOPS_ENABLED": "false",
+              "ESCALATION_BISQ2_WS_ENABLED": "false",
+              "ENABLE_BISQ_MCP_INTEGRATION": "true",
+              "BISQ_API_AUTH_ENABLED": "false",
+              "RELEASE_AI_QUALITY_COMMIT": os.environ["RELEASE_AI_QUALITY_COMMIT"],
+          }
+          seen = set()
+          rendered = []
+          for line in lines:
+              key = line.split("=", 1)[0] if "=" in line else ""
+              if key in values:
+                  rendered.append(f"{key}={values[key]}")
+                  seen.add(key)
+              else:
+                  rendered.append(line)
+          for key in sorted(set(values).difference(seen)):
+              rendered.append(f"{key}={values[key]}")
+          env_path.write_text("\n".join(rendered) + "\n", encoding="utf-8")
+          env_path.chmod(0o600)
+          PY
+
+      - name: Start isolated release-candidate stack
+        shell: bash
+        env:
+          OPENAI_API_KEY: ${{ secrets.AI_QUALITY_GATE_OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${OPENAI_API_KEY:-}" ]; then
+            echo "AI quality gate API credential is not configured" >&2
+            exit 1
+          fi
+          docker compose $COMPOSE_FILES up --no-build -d \
+            quality-bisq-stub qdrant api
+          for attempt in $(seq 1 120); do
+            if curl -fsS --max-time 5 http://localhost:8000/health/ready >/dev/null; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Release-candidate API did not become ready" >&2
+          exit 1
+
+      - name: Generate and score fresh answers
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose $COMPOSE_FILES exec -T api \
+            python -m app.scripts.release_ai_quality_gate \
+            --samples /data/evaluation/release_ai_quality_samples_v1.json \
+            --output /data/evaluation/release_ai_quality.summary.json \
+            --api-url http://localhost:8000
+
+      - name: Ensure a sanitized result exists
+        id: report_safety
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python api/app/scripts/release_ai_quality_report.py ensure \
+            --report api/data/evaluation/release_ai_quality.summary.json \
+            --commit "$GITHUB_SHA" \
+            --model-sha256 "${{ needs.invalidate-pass-marker.outputs.model_sha256 }}"
+
+      - name: Stop isolated release-candidate stack
+        if: always()
+        shell: bash
+        run: |
+          docker compose $COMPOSE_FILES down --volumes --remove-orphans || true
+          python -c 'from pathlib import Path; Path("docker/.env").unlink(missing_ok=True)'
+
+      - name: Archive sanitized quality report
+        if: ${{ always() && steps.report_safety.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-ai-quality-${{ github.sha }}
+          path: api/data/evaluation/release_ai_quality.summary.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Require a passing quality report
+        if: ${{ always() && steps.report_safety.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python api/app/scripts/release_ai_quality_report.py require-pass \
+            --report api/data/evaluation/release_ai_quality.summary.json \
+            --commit "$GITHUB_SHA" \
+            --model-sha256 "${{ needs.invalidate-pass-marker.outputs.model_sha256 }}"
+
+  publish-pass-marker:
+    name: Publish AI Quality Pass Marker
+    needs:
+      - invalidate-pass-marker
+      - release-ai-quality
+    runs-on: ubuntu-latest
+    environment: release-ai-quality
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ secrets.AI_QUALITY_GATE_MARKER_TOKEN }}
+      MODEL_SHA256: ${{ needs.invalidate-pass-marker.outputs.model_sha256 }}
+    steps:
+      - name: Bind quality result to release commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "AI quality marker credential is not configured" >&2
+            exit 1
+          fi
+          if [[ ! "$MODEL_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "Release model identity is unavailable" >&2
+            exit 1
+          fi
+          marker="release-ai-quality/${GITHUB_SHA}/${MODEL_SHA256}"
+          endpoint="repos/${GITHUB_REPOSITORY}/git/ref/tags/${marker}"
+          if existing=$(gh api "$endpoint" --jq '.object.sha' 2>/dev/null); then
+            if [ "$existing" != "$GITHUB_SHA" ]; then
+              echo "Existing AI quality marker does not match the release commit" >&2
+              exit 1
+            fi
+            exit 0
+          fi
+          gh api --silent --method POST \
+            "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f "ref=refs/tags/${marker}" \
+            -f "sha=${GITHUB_SHA}"
+
+  verify-version-tag:
+    name: Verify Version Tag AI Quality Gate
+    if: >-
+      github.event_name == 'push' &&
+      startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      OPENAI_MODEL: ${{ vars.AI_QUALITY_GATE_OPENAI_MODEL }}
+    steps:
+      - name: Require the exact commit and model marker
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$OPENAI_MODEL" =~ ^openai:[A-Za-z0-9][A-Za-z0-9._-]{0,99}$ ]]; then
+            echo "AI quality gate production model is missing or invalid" >&2
+            exit 1
+          fi
+          model_sha256=$(printf '%s' "$OPENAI_MODEL" | sha256sum | awk '{print $1}')
+          marker="release-ai-quality/${GITHUB_SHA}/${model_sha256}"
+          marker_commit=$(
+            gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${marker}" \
+              --jq '.object.sha'
+          )
+          if [ "$marker_commit" != "$GITHUB_SHA" ]; then
+            echo "Version tag has no matching AI quality marker" >&2
+            exit 1
+          fi

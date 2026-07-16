@@ -160,6 +160,8 @@ api/data/matrix_session.json
 # Generated evaluation and experiment outputs
 api/data/evaluation/qdrant_prompt_refactor*.json
 api/data/evaluation/staff_alignment_behavior*.summary.json
+api/data/evaluation/release_ai_quality.summary.json
+api/data/evaluation/.release_ai_quality.summary.json.*.tmp
 api/data/evaluation/matrix_realistic_qa_samples*.json
 api/data/evaluation/matrix_realistic_qa_review*.json
 api/data/evaluation/matrix_staff_behavior_review*.json

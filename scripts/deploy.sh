@@ -114,6 +114,13 @@ if ! check_command "curl"; then
     apt-get install -y curl
 fi
 
+# Check for jq (required by the fail-closed release workflow verifier)
+if ! check_command "jq"; then
+    echo -e "${BLUE}Installing jq...${NC}"
+    apt-get update
+    apt-get install -y jq
+fi
+
 # Check for ufw
 if ! check_command "ufw"; then
     echo -e "${BLUE}Installing ufw...${NC}"
@@ -330,6 +337,16 @@ update_env_var "REACTOR_IDENTITY_SALT" "$REACTOR_IDENTITY_SALT"
 # Set Bisq API URL in .env file using the Docker service name
 # This allows containers to reach the Bisq2 API service within the Docker network
 update_env_var "BISQ_API_URL" "http://bisq2-api:8090"
+
+# Bind deployment approval to both the checked-out commit and the protected
+# runtime model before building or starting any application service.
+if ! "$INSTALL_DIR/scripts/verify-release-ai-quality-gate.sh" \
+    --repository "$INSTALL_DIR" \
+    --remote "${GIT_REMOTE:-origin}" \
+    --env-file "$DOCKER_DIR/.env"; then
+    echo -e "${RED}Release AI-quality gate is missing or failed; refusing deployment.${NC}"
+    exit 1
+fi
 
 # Create a dedicated directory for runtime secrets if it doesn't exist
 RUNTIME_SECRETS_DIR="$INSTALL_DIR/runtime_secrets"

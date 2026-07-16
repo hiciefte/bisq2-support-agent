@@ -58,6 +58,37 @@ check_local_changes() {
     fi
 }
 
+# Release builds must come from the exact reviewed commit. Runtime data is
+# ignored by git, but tracked changes and nonignored untracked paths can alter
+# the source or Compose topology and must block an update.
+ensure_release_source_tree_clean() {
+    local repo_dir="${1:-.}"
+    local untracked_found=false
+
+    cd "$repo_dir" || {
+        log_error "Failed to change to repository directory: $repo_dir"
+        return 1
+    }
+
+    if ! validate_git_repo "$repo_dir"; then
+        return 1
+    fi
+    if ! git diff --quiet HEAD --; then
+        log_error "Release source tree has tracked local changes"
+        return 1
+    fi
+    while IFS= read -r -d '' _path; do
+        untracked_found=true
+        break
+    done < <(git ls-files --others --exclude-standard -z)
+    if [ "$untracked_found" = true ]; then
+        log_error "Release source tree has untracked local inputs"
+        return 1
+    fi
+
+    return 0
+}
+
 has_unmerged_paths() {
     local repo_dir="${1:-.}"
 
@@ -414,6 +445,7 @@ update_repository() {
     local repo_dir="${1:-.}"
     local remote="${2:-${GIT_REMOTE:-origin}}"
     local branch="${3:-${GIT_BRANCH:-main}}"
+    local allow_local_changes="${4:-true}"
     local stashed=false
     local data_backup_dir=""
 
@@ -431,6 +463,12 @@ update_repository() {
         return 1
     fi
 
+    if [ "$allow_local_changes" != true ] \
+        && ! ensure_release_source_tree_clean "$repo_dir"; then
+        log_error "Release updates require a clean source tree"
+        return 1
+    fi
+
     # CRITICAL: Preserve production data BEFORE any git operations
     if ! data_backup_dir=$(preserve_production_data "$repo_dir"); then
         log_error "Failed to preserve production data; aborting repository update"
@@ -439,6 +477,10 @@ update_repository() {
 
     # Check for local changes and stash if needed
     if check_local_changes "$repo_dir"; then
+        if [ "$allow_local_changes" != true ]; then
+            log_error "Release source changed during update preparation"
+            return 1
+        fi
         local stash_status
         stash_changes "$repo_dir"
         stash_status=$?
@@ -511,11 +553,6 @@ update_repository() {
     log_success "Updates pulled successfully!"
     log_info "Changes in this update:"
     git log --oneline --no-merges --max-count=10 "${PREV_HEAD}..HEAD"
-
-    # Run FAQ schema migration after code update
-    if ! run_faq_migration "$repo_dir"; then
-        log_warning "FAQ migration had issues, but continuing deployment"
-    fi
 
     # Restore stashed changes after update
     if $stashed; then
@@ -925,6 +962,7 @@ get_build_id() {
 
 # Export all functions
 export -f check_local_changes
+export -f ensure_release_source_tree_clean
 export -f has_unmerged_paths
 export -f has_pending_git_operation
 export -f ensure_repository_update_safe
