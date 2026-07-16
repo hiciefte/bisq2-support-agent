@@ -151,6 +151,13 @@ class Settings(BaseSettings):
     # Channel plugin enablement flags
     WEB_CHANNEL_ENABLED: bool = True
     BISQ2_CHANNEL_ENABLED: bool = False
+    AUTONOMOUS_DELIVERY_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "Environment guard for global autonomous delivery; false forces "
+            "the persisted admin switch off and prevents runtime enable"
+        ),
+    )
     BISQ2_STAFF_NOTIFICATION_TARGET: str = ""  # Bisq2 channel ID for staff notices
     BISQ2_CHATOPS_ENABLED: bool = False
     BISQ2_CHATOPS_CHANNEL_IDS: str | list[str] = ""

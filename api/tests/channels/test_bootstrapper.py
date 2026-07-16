@@ -305,6 +305,30 @@ class TestChannelBootstrapper:
         assert staff_assist_service.grounding_brief_service is grounding_service
 
     @pytest.mark.unit
+    def test_bootstrap_injects_launch_control_into_arbitration(self, tmp_path):
+        from app.channels.bootstrapper import ChannelBootstrapper
+
+        settings = MagicMock()
+        settings.CHANNEL_PLUGINS = []
+        settings.WEB_CHANNEL_ENABLED = False
+        settings.MATRIX_SYNC_ENABLED = False
+        settings.BISQ2_CHANNEL_ENABLED = False
+        settings.DATA_DIR = str(tmp_path)
+        launch_control = MagicMock()
+
+        bootstrapper = ChannelBootstrapper(
+            settings,
+            MagicMock(),
+            shared_services={"channel_launch_control_service": launch_control},
+        )
+        result = bootstrapper.bootstrap()
+
+        arbitration = result.runtime.resolve("arbitration_service")
+        followup = result.runtime.resolve("feedback_followup_coordinator")
+        assert arbitration.launch_control_service is launch_control
+        assert followup.launch_control_service is launch_control
+
+    @pytest.mark.unit
     def test_bootstrap_injects_grounding_service_into_shared_staff_assist(
         self, tmp_path
     ):

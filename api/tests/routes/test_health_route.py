@@ -10,9 +10,13 @@ def _set_disabled_optional_integrations(test_client, test_settings) -> None:
     test_settings.MATRIX_SYNC_ENABLED = False
     test_settings.BISQ2_CHANNEL_ENABLED = False
     test_settings.ENABLE_BISQ_MCP_INTEGRATION = False
+    test_settings.AUTONOMOUS_DELIVERY_ENABLED = False
     test_client.app.state.settings = test_settings
     test_client.app.state.matrix_channel = None
     test_client.app.state.bisq_mcp_service = None
+    test_client.app.state.channel_launch_control_service = SimpleNamespace(
+        check_readiness=lambda: True
+    )
 
 
 def _ready_rag_service(*, vector_ready: bool = True):
@@ -74,6 +78,7 @@ class TestHealthRoute:
             "components": {
                 "rag": {"status": "ready", "required": True},
                 "vector_store": {"status": "ready", "required": True},
+                "channel_launch_control": {"status": "ready", "required": False},
                 "matrix": {"status": "disabled", "required": False},
                 "bisq2_api": {"status": "disabled", "required": False},
             },
@@ -94,6 +99,7 @@ class TestHealthRoute:
             "components": {
                 "rag": {"status": "unavailable", "required": True},
                 "vector_store": {"status": "unavailable", "required": True},
+                "channel_launch_control": {"status": "ready", "required": False},
                 "matrix": {"status": "disabled", "required": False},
                 "bisq2_api": {"status": "disabled", "required": False},
             },
@@ -111,6 +117,58 @@ class TestHealthRoute:
         assert response.json()["status"] == "degraded"
         assert response.json()["components"]["rag"]["status"] == "ready"
         assert response.json()["components"]["vector_store"]["status"] == "unavailable"
+
+    def test_readiness_keeps_manual_ui_available_when_launch_control_is_unavailable(
+        self, test_client, test_settings
+    ):
+        _set_disabled_optional_integrations(test_client, test_settings)
+        test_client.app.state.rag_service = _ready_rag_service()
+        test_client.app.state.channel_launch_control_service = None
+
+        response = test_client.get("/health/ready")
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "ready"
+        assert response.json()["components"]["channel_launch_control"] == {
+            "status": "unavailable",
+            "required": False,
+        }
+
+    def test_readiness_returns_503_when_permitted_launch_control_is_unavailable(
+        self, test_client, test_settings
+    ):
+        _set_disabled_optional_integrations(test_client, test_settings)
+        test_settings.AUTONOMOUS_DELIVERY_ENABLED = True
+        test_client.app.state.rag_service = _ready_rag_service()
+        test_client.app.state.channel_launch_control_service = None
+
+        response = test_client.get("/health/ready")
+
+        assert response.status_code == 503
+        assert response.json()["status"] == "degraded"
+        assert response.json()["components"]["channel_launch_control"] == {
+            "status": "unavailable",
+            "required": True,
+        }
+
+    def test_readiness_hides_launch_control_exception_details(
+        self, test_client, test_settings
+    ):
+        _set_disabled_optional_integrations(test_client, test_settings)
+        test_settings.AUTONOMOUS_DELIVERY_ENABLED = True
+        private_detail = "private launch-control storage failure"
+        test_client.app.state.rag_service = _ready_rag_service()
+        launch_control = MagicMock()
+        launch_control.check_readiness.side_effect = RuntimeError(private_detail)
+        test_client.app.state.channel_launch_control_service = launch_control
+
+        response = test_client.get("/health/ready")
+
+        assert response.status_code == 503
+        assert private_detail not in response.text
+        assert response.json()["components"]["channel_launch_control"]["status"] == (
+            "unavailable"
+        )
 
     def test_readiness_requires_an_enabled_matrix_session(
         self, test_client, test_settings

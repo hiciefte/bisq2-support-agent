@@ -52,6 +52,7 @@ class MatrixMessageHandler:
         connection_manager: Any,
         channel: Any | None = None,
         autoresponse_policy_service: Any | None = None,
+        launch_control_service: Any | None = None,
         allowed_room_ids: Any | None = None,
         staff_command_room_ids: Any | None = None,
         channel_id: str = "matrix",
@@ -62,6 +63,7 @@ class MatrixMessageHandler:
         self.connection_manager = connection_manager
         self.channel = channel
         self.autoresponse_policy_service = autoresponse_policy_service
+        self.launch_control_service = launch_control_service
         self.channel_id = str(channel_id or "matrix").strip().lower() or "matrix"
         self.allowed_room_ids = normalize_room_ids(allowed_room_ids)
         if staff_command_room_ids is None:
@@ -216,6 +218,7 @@ class MatrixMessageHandler:
             self._dispatcher = ChannelResponseDispatcher(
                 channel=self.channel,
                 channel_id=self.channel_id,
+                launch_control_service=self.launch_control_service,
             )
         return self._dispatcher
 

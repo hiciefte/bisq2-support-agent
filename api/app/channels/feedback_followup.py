@@ -16,6 +16,7 @@ from app.channels.models import (
     ResponseMetadata,
     UserContext,
 )
+from app.services.channel_launch_control_service import LAUNCH_CONTROLLED_CHANNELS
 
 logger = logging.getLogger(__name__)
 
@@ -57,10 +58,12 @@ class FeedbackFollowupCoordinator:
         feedback_service: Any,
         *,
         channel_registry: Any | None = None,
+        launch_control_service: Any | None = None,
         ttl_seconds: float = 900.0,
     ) -> None:
         self.feedback_service = feedback_service
         self.channel_registry = channel_registry
+        self.launch_control_service = launch_control_service
         self.ttl_seconds = max(30.0, float(ttl_seconds))
         self._pending_by_context: Dict[str, PendingFollowup] = {}
         self._context_by_reaction_key: Dict[str, str] = {}
@@ -130,6 +133,10 @@ class FeedbackFollowupCoordinator:
             user_id=reactor_id,
             text=prompt_text,
             routing_action="feedback_followup_prompt",
+            launch_message_id=(
+                f"feedback-followup-prompt:{external_message_id}:"
+                f"{reactor_identity_hash}"
+            ),
         )
         if not sent:
             async with self._lock:
@@ -251,6 +258,7 @@ class FeedbackFollowupCoordinator:
             text=ack_text,
             routing_action="feedback_followup_ack",
             in_reply_to=incoming.message_id,
+            launch_message_id=f"feedback-followup-ack:{incoming.message_id}",
         )
         return True
 
@@ -300,8 +308,22 @@ class FeedbackFollowupCoordinator:
         user_id: str,
         text: str,
         routing_action: str,
+        launch_message_id: str,
         in_reply_to: str = "",
     ) -> bool:
+        allowed, reason = self._authorize_automated_send(
+            channel_id=channel_id,
+            message_id=launch_message_id,
+        )
+        if not allowed:
+            logger.warning(
+                "Suppressed feedback follow-up system message channel=%s "
+                "launch_control=%s",
+                channel_id,
+                reason,
+            )
+            return False
+
         channel_type = self._channel_type_from_id(channel_id)
         message = OutgoingMessage(
             message_id=str(uuid.uuid4()),
@@ -340,6 +362,49 @@ class FeedbackFollowupCoordinator:
                 target,
             )
             return False
+
+    def _authorize_automated_send(
+        self,
+        *,
+        channel_id: str,
+        message_id: str,
+    ) -> tuple[bool, str]:
+        normalized_channel = str(channel_id or "").strip().lower()
+        if normalized_channel not in LAUNCH_CONTROLLED_CHANNELS:
+            return True, "launch_control_not_applicable"
+
+        service = self.launch_control_service
+        authorize = getattr(service, "authorize_autonomous_delivery", None)
+        if not callable(authorize):
+            logger.error(
+                "Feedback follow-up send blocked because launch control is "
+                "unavailable or malformed channel=%s",
+                normalized_channel,
+            )
+            return False, "launch_control_unavailable"
+        try:
+            decision = authorize(normalized_channel, message_id)
+        except Exception:
+            logger.exception(
+                "Feedback follow-up send blocked because launch control failed "
+                "channel=%s",
+                normalized_channel,
+            )
+            return False, "launch_control_error"
+
+        allowed = getattr(decision, "allowed", None)
+        reason = getattr(decision, "reason", None)
+        if not isinstance(allowed, bool) or not isinstance(reason, str):
+            logger.error(
+                "Feedback follow-up send blocked because launch control returned "
+                "an invalid result channel=%s",
+                normalized_channel,
+            )
+            return False, "launch_control_invalid_result"
+        normalized_reason = reason.strip()
+        if not normalized_reason:
+            return False, "launch_control_invalid_result"
+        return allowed, normalized_reason
 
     @staticmethod
     def _channel_type_from_id(channel_id: str) -> ChannelType:

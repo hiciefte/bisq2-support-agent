@@ -15,6 +15,7 @@ from app.routes.admin import (
     analytics,
     auth,
     channel_autoresponse,
+    channel_launch,
     escalations,
     faqs,
     feedback,
@@ -48,12 +49,14 @@ def include_admin_routers(app: FastAPI) -> None:
     app.include_router(reports.router)
     app.include_router(signals.router)
     app.include_router(channel_autoresponse.router)
+    app.include_router(channel_launch.router)
     app.include_router(trust_monitor.router)
 
 
 __all__ = [
     "analytics",
     "auth",
+    "channel_launch",
     "channel_autoresponse",
     "escalations",
     "faqs",

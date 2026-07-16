@@ -13,6 +13,26 @@ from app.channels.models import (
     UserContext,
 )
 from app.channels.response_dispatcher import DispatchOutcome
+from app.services.channel_launch_control_service import ChannelLaunchControlService
+
+
+class _AllowingLaunchControl:
+    def authorize_autonomous_delivery(self, channel_id, message_id):
+        return SimpleNamespace(allowed=True, reason="test_allowed")
+
+    def review_only_reason(self, channel_id):
+        return None
+
+    def secondary_delivery_block_reason(self, channel_id):
+        return None
+
+
+class _FailingLaunchControl:
+    def secondary_delivery_block_reason(self, channel_id):
+        raise RuntimeError("guard unavailable")
+
+
+ALLOWING_LAUNCH_CONTROL = _AllowingLaunchControl()
 
 
 def _incoming(
@@ -135,6 +155,7 @@ async def test_zero_delay_failed_retry_escalates_and_notifies() -> None:
     channel.send_message = AsyncMock(return_value=True)
     coordinator = ArbitrationCoordinator(
         policy_service=_policy_service(delay=0),
+        launch_control_service=ALLOWING_LAUNCH_CONTROL,
         escalation_service=escalation_service,
         dispatch_retry_delay_seconds=0,
     )
@@ -184,6 +205,7 @@ async def test_zero_delay_queued_dispatch_is_terminal() -> None:
 async def test_overflow_failed_retry_escalates_and_notifies() -> None:
     coordinator = ArbitrationCoordinator(
         policy_service=_policy_service(delay=60),
+        launch_control_service=ALLOWING_LAUNCH_CONTROL,
         escalation_service=MagicMock(),
         max_concurrent_threads=1,
         dispatch_retry_delay_seconds=0,
@@ -300,6 +322,7 @@ async def test_hitl_timeout_escalates_and_notifies_user_without_auto_dispatch() 
     channel.send_message = AsyncMock(return_value=True)
     coordinator = ArbitrationCoordinator(
         policy_service=_policy_service(mode="hitl", hitl_timeout=60),
+        launch_control_service=ALLOWING_LAUNCH_CONTROL,
         escalation_service=escalation_service,
     )
 
@@ -332,6 +355,127 @@ async def test_hitl_timeout_escalates_and_notifies_user_without_auto_dispatch() 
     sent_notice = channel.send_message.call_args.args[1]
     assert "team member's attention" in sent_notice.answer
     assert coordinator._threads == {}
+
+
+@pytest.mark.asyncio
+async def test_shadow_mode_suppresses_arbitration_channel_notices(tmp_path) -> None:
+    incoming = _incoming()
+    response = _outgoing(incoming)
+    escalation_service = MagicMock()
+    escalation_service.create_escalation = AsyncMock(
+        return_value=SimpleNamespace(id=104)
+    )
+    channel = MagicMock()
+    channel.runtime = None
+    channel.get_delivery_target = MagicMock(return_value="!room:server")
+    channel.send_reaction = AsyncMock(return_value=True)
+    channel.send_message = AsyncMock(return_value=True)
+    launch_control = ChannelLaunchControlService(
+        str(tmp_path / "feedback.db"), environment_enabled=True
+    )
+    launch_control.set_autonomous_delivery_enabled(True)
+    coordinator = ArbitrationCoordinator(
+        policy_service=_policy_service(mode="hitl", hitl_timeout=60),
+        launch_control_service=launch_control,
+        escalation_service=escalation_service,
+    )
+
+    await coordinator.enqueue(
+        incoming=incoming,
+        thread_id=("!room:server", "@user:server"),
+        room_or_conversation_id="!room:server",
+        on_release=AsyncMock(return_value=response),
+        on_dispatch=AsyncMock(return_value=True),
+        channel=channel,
+    )
+    await coordinator._on_wait_timer_elapsed(
+        thread_id="!room:server::@user:server",
+        generation=1,
+    )
+    await coordinator._on_hitl_timeout(
+        thread_id="!room:server::@user:server",
+        generation=1,
+        incoming=incoming,
+        response=response,
+        channel=channel,
+    )
+
+    escalation_service.create_escalation.assert_awaited_once()
+    channel.send_reaction.assert_not_awaited()
+    channel.send_message.assert_not_awaited()
+    assert coordinator._threads == {}
+
+
+@pytest.mark.asyncio
+async def test_canary_suppresses_unreserved_arbitration_notices(tmp_path) -> None:
+    incoming = _incoming()
+    launch_control = ChannelLaunchControlService(
+        str(tmp_path / "feedback.db"), environment_enabled=True
+    )
+    launch_control.set_autonomous_delivery_enabled(True)
+    launch_control.set_channel_policy(
+        "matrix",
+        shadow_mode=False,
+        canary_enabled=True,
+        canary_hourly_limit=2,
+        canary_daily_limit=2,
+    )
+    channel = MagicMock()
+    channel.get_delivery_target = MagicMock(return_value="!room:server")
+    channel.send_reaction = AsyncMock(return_value=True)
+    channel.send_message = AsyncMock(return_value=True)
+    coordinator = ArbitrationCoordinator(
+        policy_service=_policy_service(),
+        launch_control_service=launch_control,
+    )
+
+    await coordinator._send_acknowledgment(
+        channel=channel,
+        incoming=incoming,
+        channel_id="matrix",
+    )
+    await coordinator._send_hitl_timeout_notice(channel=channel, incoming=incoming)
+    await coordinator._send_dispatch_failure_notice(
+        channel=channel,
+        incoming=incoming,
+        channel_id="matrix",
+    )
+
+    channel.send_reaction.assert_not_awaited()
+    channel.send_message.assert_not_awaited()
+    assert launch_control.reservation_count("matrix") == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "launch_control",
+    [
+        None,
+        SimpleNamespace(),
+        SimpleNamespace(secondary_delivery_block_reason=lambda channel_id: True),
+        _FailingLaunchControl(),
+    ],
+)
+async def test_missing_malformed_invalid_or_failing_launch_guard_suppresses_notices(
+    launch_control,
+) -> None:
+    channel = MagicMock()
+    channel.get_delivery_target = MagicMock(return_value="room-id")
+    channel.send_reaction = AsyncMock(return_value=True)
+    channel.send_message = AsyncMock(return_value=True)
+    coordinator = ArbitrationCoordinator(
+        policy_service=_policy_service(),
+        launch_control_service=launch_control,
+    )
+
+    await coordinator._send_acknowledgment(
+        channel=channel,
+        incoming=_incoming(),
+        channel_id="matrix",
+    )
+
+    channel.send_reaction.assert_not_awaited()
+    channel.send_message.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -378,6 +522,7 @@ async def test_hitl_timeout_routes_to_staff_room_only_when_user_notice_mode_is_n
     channel.send_message = AsyncMock(return_value=True)
     coordinator = ArbitrationCoordinator(
         policy_service=policy_service,
+        launch_control_service=ALLOWING_LAUNCH_CONTROL,
         escalation_service=escalation_service,
     )
 
@@ -463,6 +608,7 @@ async def test_autonomous_dispatch_retries_once_before_dead_letter_escalation() 
     channel.send_message = AsyncMock(return_value=True)
     coordinator = ArbitrationCoordinator(
         policy_service=_policy_service(mode="autonomous"),
+        launch_control_service=ALLOWING_LAUNCH_CONTROL,
         escalation_service=escalation_service,
     )
 

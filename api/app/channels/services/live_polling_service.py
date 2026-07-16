@@ -26,6 +26,7 @@ class LivePollingService:
         self,
         channel: Any,
         autoresponse_policy_service: Any | None = None,
+        launch_control_service: Any | None = None,
         escalation_service: Any | None = None,
         channel_id: str = "",
         poll_interval_seconds: float = 3.0,
@@ -34,6 +35,7 @@ class LivePollingService:
     ) -> None:
         self.channel = channel
         self.autoresponse_policy_service = autoresponse_policy_service
+        self.launch_control_service = launch_control_service
         self.escalation_service = escalation_service
         self.channel_id = str(channel_id or getattr(channel, "channel_id", "")).strip()
         self.poll_interval_seconds = poll_interval_seconds
@@ -44,6 +46,7 @@ class LivePollingService:
             channel=channel,
             channel_id=self.channel_id,
             escalation_service=escalation_service,
+            launch_control_service=launch_control_service,
         )
         self.orchestrator = orchestrator or InboundMessageOrchestrator(
             channel=channel,
