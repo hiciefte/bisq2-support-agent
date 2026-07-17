@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import logging
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
@@ -237,6 +238,185 @@ class TestProcessFlow:
         result = await processor.process(event)
         assert not result
         feedback_service.store_reaction_feedback.assert_not_called()
+
+    @pytest.mark.asyncio()
+    async def test_bisq_reaction_uses_exact_native_origin_not_generic_user_id(
+        self, feedback_service
+    ):
+        tracker = SentMessageTracker(ttl_hours=24)
+        tracker.track(
+            channel_id="bisq2",
+            external_message_id="message-1",
+            internal_message_id="internal-1",
+            question="Q",
+            answer="A",
+            user_id="model-safe-user",
+            delivery_target="Exact-Channel",
+            origin_sender_profile_id="Exact-Profile",
+        )
+        processor = ReactionProcessor(tracker, feedback_service)
+
+        result = await processor.process(
+            ReactionEvent(
+                channel_id="bisq2",
+                external_message_id="message-1",
+                reactor_id="Exact-Profile",
+                rating=ReactionRating.POSITIVE,
+                raw_reaction="THUMBS_UP",
+                timestamp=datetime.now(timezone.utc),
+                metadata={"delivery_target": "Exact-Channel"},
+            )
+        )
+
+        assert result
+        feedback_service.store_reaction_feedback.assert_called_once()
+
+    @pytest.mark.asyncio()
+    async def test_bisq_cross_channel_reaction_is_blocked_before_mutation(
+        self, feedback_service, followup_coordinator
+    ):
+        tracker = SentMessageTracker(ttl_hours=24)
+        tracker.track(
+            channel_id="bisq2",
+            external_message_id="message-1",
+            internal_message_id="internal-1",
+            question="Q",
+            answer="A",
+            user_id="model-safe-user",
+            delivery_target="Exact-Channel",
+            origin_sender_profile_id="Exact-Profile",
+            confidence_score=0.99,
+            routing_action="auto_send",
+        )
+        escalation_service = AsyncMock()
+        processor = ReactionProcessor(
+            tracker,
+            feedback_service,
+            escalation_service=escalation_service,
+            followup_coordinator=followup_coordinator,
+        )
+
+        result = await processor.process(
+            ReactionEvent(
+                channel_id="bisq2",
+                external_message_id="message-1",
+                reactor_id="Exact-Profile",
+                rating=ReactionRating.NEGATIVE,
+                raw_reaction="THUMBS_DOWN",
+                timestamp=datetime.now(timezone.utc),
+                metadata={"delivery_target": "Different-Channel"},
+            )
+        )
+
+        assert not result
+        assert processor._active_reactions == {}
+        feedback_service.store_reaction_feedback.assert_not_called()
+        escalation_service.create_escalation.assert_not_awaited()
+        followup_coordinator.start_followup.assert_not_awaited()
+
+    @pytest.mark.asyncio()
+    async def test_bisq_generic_user_id_cannot_substitute_for_origin_profile(
+        self, feedback_service
+    ):
+        tracker = SentMessageTracker(ttl_hours=24)
+        tracker.track(
+            channel_id="bisq2",
+            external_message_id="message-1",
+            internal_message_id="internal-1",
+            question="Q",
+            answer="A",
+            user_id="model-safe-user",
+            delivery_target="Exact-Channel",
+            origin_sender_profile_id="Exact-Profile",
+        )
+        processor = ReactionProcessor(tracker, feedback_service)
+
+        result = await processor.process(
+            ReactionEvent(
+                channel_id="bisq2",
+                external_message_id="message-1",
+                reactor_id="model-safe-user",
+                rating=ReactionRating.POSITIVE,
+                raw_reaction="THUMBS_UP",
+                timestamp=datetime.now(timezone.utc),
+                metadata={"delivery_target": "Exact-Channel"},
+            )
+        )
+
+        assert not result
+        feedback_service.store_reaction_feedback.assert_not_called()
+
+    @pytest.mark.asyncio()
+    async def test_bisq_reaction_log_omits_protected_profiles(
+        self, feedback_service, caplog
+    ):
+        caplog.set_level(logging.DEBUG)
+        protected_origin = "protected-origin-profile"
+        protected_reactor = "protected-reactor-profile"
+        tracker = SentMessageTracker(ttl_hours=24)
+        tracker.track(
+            channel_id="bisq2",
+            external_message_id="message-1",
+            internal_message_id="internal-1",
+            question="Q",
+            answer="A",
+            user_id="model-safe-user",
+            delivery_target="Exact-Channel",
+            origin_sender_profile_id=protected_origin,
+        )
+        processor = ReactionProcessor(tracker, feedback_service)
+
+        await processor.process(
+            ReactionEvent(
+                channel_id="bisq2",
+                external_message_id="message-1",
+                reactor_id=protected_reactor,
+                rating=ReactionRating.POSITIVE,
+                raw_reaction="THUMBS_UP",
+                timestamp=datetime.now(timezone.utc),
+                metadata={"delivery_target": "Exact-Channel"},
+            )
+        )
+
+        assert protected_origin not in caplog.text
+        assert protected_reactor not in caplog.text
+
+    @pytest.mark.asyncio()
+    async def test_bisq_feedback_exception_log_omits_protected_profile(
+        self, feedback_service, caplog
+    ):
+        protected_profile = "protected-origin-profile"
+        tracker = SentMessageTracker(ttl_hours=24)
+        tracker.track(
+            channel_id="bisq2",
+            external_message_id="message-1",
+            internal_message_id="internal-1",
+            question="Q",
+            answer="A",
+            user_id="model-safe-user",
+            delivery_target="Exact-Channel",
+            origin_sender_profile_id=protected_profile,
+        )
+        feedback_service.store_reaction_feedback.side_effect = RuntimeError(
+            protected_profile
+        )
+        processor = ReactionProcessor(tracker, feedback_service)
+
+        result = await processor.process(
+            ReactionEvent(
+                channel_id="bisq2",
+                external_message_id="message-1",
+                reactor_id=protected_profile,
+                rating=ReactionRating.POSITIVE,
+                raw_reaction="THUMBS_UP",
+                timestamp=datetime.now(timezone.utc),
+                metadata={"delivery_target": "Exact-Channel"},
+            )
+        )
+
+        assert not result
+        assert "RuntimeError" in caplog.text
+        assert protected_profile not in caplog.text
 
     @pytest.mark.asyncio()
     async def test_conflicting_reactions_clear_projection(
@@ -494,6 +674,54 @@ class TestAutoEscalation:
         result = await processor_with_esc.process(event)
         assert result  # ProcessResult truthy
         assert escalation_service.create_escalation.call_count == 1
+
+    @pytest.mark.asyncio()
+    async def test_bisq_negative_escalation_preserves_reviewed_delivery_provenance(
+        self, feedback_service, escalation_service
+    ):
+        tracker = SentMessageTracker(ttl_hours=24)
+        tracker.track(
+            channel_id="bisq2",
+            external_message_id="message-1",
+            internal_message_id="internal-1",
+            question="Q",
+            answer="A",
+            user_id="model-safe-user",
+            delivery_target="Exact-Channel",
+            origin_sender_profile_id="Exact-Profile",
+            confidence_score=0.97,
+            routing_action="auto_send",
+            requires_human=False,
+        )
+        processor = ReactionProcessor(
+            tracker,
+            feedback_service,
+            escalation_service=escalation_service,
+        )
+
+        result = await processor.process(
+            ReactionEvent(
+                channel_id="bisq2",
+                external_message_id="message-1",
+                reactor_id="Exact-Profile",
+                rating=ReactionRating.NEGATIVE,
+                raw_reaction="THUMBS_DOWN",
+                timestamp=datetime.now(timezone.utc),
+                metadata={"delivery_target": "Exact-Channel"},
+            )
+        )
+
+        assert result.escalation_created is True
+        escalation_data = escalation_service.create_escalation.await_args.args[0]
+        assert escalation_data.user_id == "model-safe-user"
+        assert escalation_data.username == "model-safe-user"
+        assert escalation_data.channel_metadata == {
+            "channel_id": "Exact-Channel",
+            "conversation_id": "Exact-Channel",
+            "delivery_target": "Exact-Channel",
+            "origin_sender_profile_id": "Exact-Profile",
+            "sender_profile_id": "Exact-Profile",
+        }
 
     @pytest.mark.asyncio()
     async def test_positive_does_not_escalate(
@@ -1003,6 +1231,8 @@ class TestStaffResponseRatings:
             user_id="user-1",
             routing_action="staff_response",
             in_reply_to="550e8400-e29b-41d4-a716-446655440000",
+            delivery_target="Exact-Channel",
+            origin_sender_profile_id="user-1",
         )
         escalation = type(
             "Escalation",
@@ -1031,6 +1261,7 @@ class TestStaffResponseRatings:
             rating=ReactionRating.POSITIVE,
             raw_reaction="THUMBS_UP",
             timestamp=datetime.now(timezone.utc),
+            metadata={"delivery_target": "Exact-Channel"},
         )
 
         await processor.process(event)

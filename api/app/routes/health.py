@@ -5,6 +5,10 @@ import time
 from typing import Any
 
 import psutil
+from app.channels.plugins.bisq2.test_scope import (
+    Bisq2TestScope,
+    resolve_bisq2_test_scope,
+)
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
@@ -80,8 +84,83 @@ async def _bisq_api_ready(request: Request) -> bool:
             and isinstance(readiness, dict)
             and readiness.get("status") == "healthy"
         )
-    except Exception:
-        logger.warning("Bisq API readiness check failed", exc_info=True)
+    except Exception as exc:
+        logger.warning("Bisq API readiness check failed (%s)", type(exc).__name__)
+        return False
+
+
+def _bisq_test_scope_ready(
+    request: Request,
+    configured_scope: Bisq2TestScope,
+) -> bool:
+    """Verify every active Bisq boundary shares the configured test scope."""
+    if not configured_scope.ready:
+        return False
+    try:
+        registry = getattr(request.app.state, "channel_registry", None)
+        get_channel = getattr(registry, "get", None)
+        channel = get_channel("bisq2") if callable(get_channel) else None
+        if channel is None or getattr(channel, "is_connected", False) is not True:
+            return False
+        if getattr(channel, "test_scope_rebaseline_complete", False) is not True:
+            return False
+        if getattr(channel, "test_scope_persistence_capable", False) is not True:
+            return False
+        if getattr(channel, "test_scope_persistence_healthy", False) is not True:
+            return False
+        if getattr(channel, "test_scope_websocket_ready", False) is not True:
+            return False
+
+        channel_scope = getattr(channel, "_test_scope", None)
+        runtime = getattr(channel, "runtime", None)
+        resolve_optional = getattr(runtime, "resolve_optional", None)
+        bisq_api = resolve_optional("bisq2_api") if callable(resolve_optional) else None
+        api_scope = getattr(bisq_api, "_test_scope", None)
+        reaction_handler = (
+            resolve_optional("bisq2_reaction_handler")
+            if callable(resolve_optional)
+            else None
+        )
+        if reaction_handler is None:
+            return False
+        if getattr(reaction_handler, "is_listening", False) is not True:
+            return False
+        chatops_adapter = (
+            resolve_optional("bisq2_chatops_adapter")
+            if callable(resolve_optional)
+            else None
+        )
+        settings = getattr(request.app.state, "settings", None)
+        if (
+            getattr(settings, "BISQ2_CHATOPS_ENABLED", False) is True
+            and chatops_adapter is None
+        ):
+            return False
+        active_scopes = [
+            channel_scope,
+            api_scope,
+            getattr(reaction_handler, "_test_scope", None),
+        ]
+        if chatops_adapter is not None:
+            active_scopes.append(getattr(chatops_adapter, "_test_scope", None))
+        for active_scope in active_scopes:
+            if not isinstance(active_scope, Bisq2TestScope):
+                return False
+            if not active_scope.ready:
+                return False
+            if active_scope.allowed_channel_ids != configured_scope.allowed_channel_ids:
+                return False
+            if (
+                active_scope.allowed_sender_profile_ids
+                != configured_scope.allowed_sender_profile_ids
+            ):
+                return False
+        return True
+    except Exception as exc:
+        logger.warning(
+            "Bisq production-test scope readiness check failed (%s)",
+            type(exc).__name__,
+        )
         return False
 
 
@@ -167,9 +246,16 @@ async def readiness_check(request: Request) -> JSONResponse:
     matrix_required = bool(getattr(settings, "MATRIX_SYNC_ENABLED", False))
     matrix_ready = _matrix_session_ready(request) if matrix_required else False
 
+    bisq_channel_required = bool(getattr(settings, "BISQ2_CHANNEL_ENABLED", False))
+    bisq_scope = resolve_bisq2_test_scope(settings)
+    bisq_export_required = bool(bisq_channel_required or bisq_scope.ready)
     bisq_required = bool(
-        getattr(settings, "BISQ2_CHANNEL_ENABLED", False)
-        or getattr(settings, "ENABLE_BISQ_MCP_INTEGRATION", False)
+        bisq_export_required or getattr(settings, "ENABLE_BISQ_MCP_INTEGRATION", False)
+    )
+    bisq_scope_ready = bool(
+        _bisq_test_scope_ready(request, bisq_scope)
+        if bisq_channel_required
+        else bisq_scope.ready
     )
     vector_task = (
         asyncio.create_task(_vector_store_ready(rag_service)) if rag_ready else None
@@ -207,6 +293,16 @@ async def readiness_check(request: Request) -> JSONResponse:
             ),
             "required": bisq_required,
         },
+        "bisq2_test_scope": {
+            "status": (
+                "ready"
+                if bisq_export_required and bisq_scope_ready
+                else "unavailable" if bisq_export_required else "disabled"
+            ),
+            "required": bisq_export_required,
+            "channel_count": bisq_scope.channel_count,
+            "sender_profile_count": bisq_scope.sender_profile_count,
+        },
     }
     ready = bool(
         rag_ready
@@ -214,6 +310,7 @@ async def readiness_check(request: Request) -> JSONResponse:
         and (not launch_control_required or launch_control_ready)
         and (not matrix_required or matrix_ready)
         and (not bisq_required or bisq_ready)
+        and (not bisq_export_required or bisq_scope_ready)
     )
     return JSONResponse(
         status_code=200 if ready else 503,

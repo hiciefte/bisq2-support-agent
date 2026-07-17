@@ -42,6 +42,7 @@ class PendingFollowup:
 
     channel_id: str
     delivery_target: str
+    origin_sender_profile_id: Optional[str]
     reactor_id: str
     reactor_identity_hash: str
     internal_message_id: str
@@ -79,12 +80,34 @@ class FeedbackFollowupCoordinator:
         reactor_identity_hash: str,
     ) -> bool:
         """Register and send a clarification prompt for a negative reaction."""
-        if not reactor_id:
-            return False
-
-        delivery_target = str(getattr(record, "delivery_target", "") or "").strip()
-        if not delivery_target:
-            return False
+        origin_sender_profile_id: Optional[str] = None
+        if channel_id == "bisq2":
+            raw_delivery_target = getattr(record, "delivery_target", None)
+            raw_origin_sender_profile_id = getattr(
+                record, "origin_sender_profile_id", None
+            )
+            if not (
+                isinstance(raw_delivery_target, str)
+                and raw_delivery_target
+                and isinstance(raw_origin_sender_profile_id, str)
+                and raw_origin_sender_profile_id
+                and isinstance(reactor_id, str)
+                and reactor_id
+                and raw_origin_sender_profile_id == reactor_id
+            ):
+                return False
+            delivery_target = raw_delivery_target
+            origin_sender_profile_id = raw_origin_sender_profile_id
+            model_user_id = str(getattr(record, "user_id", "") or "").strip()
+            if not model_user_id:
+                return False
+        else:
+            if not reactor_id:
+                return False
+            delivery_target = str(getattr(record, "delivery_target", "") or "").strip()
+            if not delivery_target:
+                return False
+            model_user_id = reactor_id
 
         context_key = self._context_key(channel_id, delivery_target, reactor_id)
         reaction_key = self._reaction_key(
@@ -96,6 +119,7 @@ class FeedbackFollowupCoordinator:
         pending = PendingFollowup(
             channel_id=channel_id,
             delivery_target=delivery_target,
+            origin_sender_profile_id=origin_sender_profile_id,
             reactor_id=reactor_id,
             reactor_identity_hash=reactor_identity_hash,
             internal_message_id=str(
@@ -130,7 +154,8 @@ class FeedbackFollowupCoordinator:
             channel=channel,
             channel_id=channel_id,
             target=delivery_target,
-            user_id=reactor_id,
+            user_id=model_user_id,
+            origin_sender_profile_id=origin_sender_profile_id,
             text=prompt_text,
             routing_action="feedback_followup_prompt",
             launch_message_id=(
@@ -174,14 +199,32 @@ class FeedbackFollowupCoordinator:
         delivery_target = ""
         get_target = getattr(channel, "get_delivery_target", None)
         if callable(get_target):
-            delivery_target = str(
-                get_target(incoming.channel_metadata or {}) or ""
-            ).strip()
+            resolved_target = get_target(incoming.channel_metadata or {})
+            if channel_id == "bisq2":
+                if isinstance(resolved_target, str):
+                    delivery_target = resolved_target
+            else:
+                delivery_target = str(resolved_target or "").strip()
         if not delivery_target:
             return False
 
-        reactor_id = str(getattr(incoming.user, "user_id", "") or "").strip()
-        if not reactor_id:
+        if channel_id == "bisq2":
+            user_metadata = getattr(incoming.user, "metadata", None)
+            raw_reactor_id = (
+                user_metadata.get("bisq2_sender_profile_id")
+                if isinstance(user_metadata, dict)
+                else None
+            )
+            reactor_id = (
+                raw_reactor_id
+                if isinstance(raw_reactor_id, str) and raw_reactor_id
+                else ""
+            )
+            model_user_id = str(getattr(incoming.user, "user_id", "") or "").strip()
+        else:
+            reactor_id = str(getattr(incoming.user, "user_id", "") or "").strip()
+            model_user_id = reactor_id
+        if not reactor_id or not model_user_id:
             return False
 
         context_key = self._context_key(channel_id, delivery_target, reactor_id)
@@ -189,6 +232,8 @@ class FeedbackFollowupCoordinator:
         async with self._lock:
             pending = self._pending_by_context.get(context_key)
             if pending is None:
+                return False
+            if channel_id == "bisq2" and pending.origin_sender_profile_id != reactor_id:
                 return False
             if pending.expires_at <= datetime.now(timezone.utc):
                 self._pending_by_context.pop(context_key, None)
@@ -211,8 +256,11 @@ class FeedbackFollowupCoordinator:
         if callable(analyze_fn):
             try:
                 issues = await analyze_fn(explanation)
-            except Exception:
-                logger.debug("Failed to analyze feedback follow-up text", exc_info=True)
+            except Exception as exc:
+                logger.debug(
+                    "Failed to analyze feedback follow-up text (%s)",
+                    type(exc).__name__,
+                )
                 issues = []
 
         update_fn = getattr(self.feedback_service, "update_feedback_entry", None)
@@ -225,11 +273,9 @@ class FeedbackFollowupCoordinator:
                 explanation=explanation,
                 issues=issues,
             )
-        except Exception:
-            logger.exception(
-                "Failed to persist feedback clarification: channel=%s message_id=%s",
-                channel_id,
-                pending.internal_message_id,
+        except Exception as exc:
+            logger.warning(
+                "Failed to persist feedback clarification (%s)", type(exc).__name__
             )
             return False
 
@@ -254,7 +300,8 @@ class FeedbackFollowupCoordinator:
             channel=channel,
             channel_id=channel_id,
             target=delivery_target,
-            user_id=reactor_id,
+            user_id=model_user_id,
+            origin_sender_profile_id=pending.origin_sender_profile_id,
             text=ack_text,
             routing_action="feedback_followup_ack",
             in_reply_to=incoming.message_id,
@@ -264,8 +311,11 @@ class FeedbackFollowupCoordinator:
 
     @staticmethod
     def _context_key(channel_id: str, delivery_target: str, reactor_id: str) -> str:
+        normalized_channel = str(channel_id or "").strip().lower()
+        if normalized_channel == "bisq2":
+            return f"bisq2::{delivery_target}::{reactor_id}"
         return (
-            f"{str(channel_id or '').strip().lower()}::"
+            f"{normalized_channel}::"
             f"{str(delivery_target or '').strip()}::"
             f"{str(reactor_id or '').strip()}"
         )
@@ -291,11 +341,10 @@ class FeedbackFollowupCoordinator:
             return None
         try:
             return getter(channel_id)
-        except Exception:
+        except Exception as exc:
             logger.debug(
-                "Failed to resolve channel adapter for follow-up: channel=%s",
-                channel_id,
-                exc_info=True,
+                "Failed to resolve channel adapter for follow-up (%s)",
+                type(exc).__name__,
             )
             return None
 
@@ -306,6 +355,7 @@ class FeedbackFollowupCoordinator:
         channel_id: str,
         target: str,
         user_id: str,
+        origin_sender_profile_id: Optional[str],
         text: str,
         routing_action: str,
         launch_message_id: str,
@@ -325,6 +375,13 @@ class FeedbackFollowupCoordinator:
             return False
 
         channel_type = self._channel_type_from_id(channel_id)
+        user_metadata: Dict[str, str] = {}
+        if channel_id == "bisq2":
+            if not (
+                isinstance(origin_sender_profile_id, str) and origin_sender_profile_id
+            ):
+                return False
+            user_metadata["bisq2_sender_profile_id"] = origin_sender_profile_id
         message = OutgoingMessage(
             message_id=str(uuid.uuid4()),
             in_reply_to=str(in_reply_to or ""),
@@ -335,6 +392,7 @@ class FeedbackFollowupCoordinator:
                 user_id=user_id,
                 session_id=None,
                 channel_user_id=user_id,
+                metadata=user_metadata,
                 auth_token=None,
             ),
             metadata=ResponseMetadata(
@@ -355,11 +413,10 @@ class FeedbackFollowupCoordinator:
         )
         try:
             return bool(await channel.send_message(target, message))
-        except Exception:
-            logger.exception(
-                "Failed to send feedback follow-up system message: channel=%s target=%s",
-                channel_id,
-                target,
+        except Exception as exc:
+            logger.warning(
+                "Failed to send feedback follow-up system message (%s)",
+                type(exc).__name__,
             )
             return False
 
@@ -384,11 +441,10 @@ class FeedbackFollowupCoordinator:
             return False, "launch_control_unavailable"
         try:
             decision = authorize(normalized_channel, message_id)
-        except Exception:
-            logger.exception(
-                "Feedback follow-up send blocked because launch control failed "
-                "channel=%s",
-                normalized_channel,
+        except Exception as exc:
+            logger.warning(
+                "Feedback follow-up send blocked because launch control failed (%s)",
+                type(exc).__name__,
             )
             return False, "launch_control_error"
 

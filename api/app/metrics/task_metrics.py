@@ -503,8 +503,12 @@ def _safe_persist(func: Callable[[], None]) -> Callable[[], None]:
     def wrapper() -> None:
         try:
             func()
-        except Exception:  # noqa: BLE001
-            logger.exception(f"Failed to persist metrics in {func.__name__}")
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "Failed to persist metrics in %s (%s)",
+                func.__name__,
+                type(exc).__name__,
+            )
 
     return wrapper
 

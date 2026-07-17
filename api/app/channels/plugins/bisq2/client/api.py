@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import struct
 import time
 from datetime import datetime, timezone
@@ -12,6 +13,10 @@ from typing import Any, Dict, Optional
 from urllib.parse import ParseResult, urlparse, urlunparse
 
 import aiohttp
+from app.channels.plugins.bisq2.test_scope import (
+    Bisq2TestScope,
+    resolve_bisq2_test_scope,
+)
 from app.core.config import Settings
 from cryptography.fernet import Fernet, InvalidToken
 
@@ -20,6 +25,15 @@ logger = logging.getLogger(__name__)
 PAIRING_PROTOCOL_VERSION = 1
 CLIENT_ID_HEADER = "Bisq-Client-Id"
 SESSION_ID_HEADER = "Bisq-Session-Id"
+_SAFE_REACTION_MESSAGE_ID = re.compile(r"[A-Za-z0-9_$:.-]{1,256}")
+_VALID_REACTION_IDS = frozenset(range(6))
+
+
+def _is_safe_reaction_message_id(message_id: Any) -> bool:
+    """Return whether a message ID is safe to interpolate into an API path."""
+    if not isinstance(message_id, str) or message_id in {".", ".."}:
+        return False
+    return _SAFE_REACTION_MESSAGE_ID.fullmatch(message_id) is not None
 
 
 def _record_bisq2_api_health(is_healthy: bool, response_time: Optional[float] = None):
@@ -28,8 +42,11 @@ def _record_bisq2_api_health(is_healthy: bool, response_time: Optional[float] = 
         from app.metrics.task_metrics import record_bisq2_api_health
 
         record_bisq2_api_health(is_healthy, response_time)
-    except Exception as e:
-        logger.debug(f"Could not record bisq2 API health metric: {e}")
+    except Exception as exc:
+        logger.debug(
+            "Could not record Bisq2 API health metric (%s)",
+            type(exc).__name__,
+        )
 
 
 def _record_bisq2_api_auth_failure(reason: str) -> None:
@@ -38,8 +55,11 @@ def _record_bisq2_api_auth_failure(reason: str) -> None:
         from app.metrics.task_metrics import record_bisq2_api_auth_failure
 
         record_bisq2_api_auth_failure(reason)
-    except Exception as e:
-        logger.debug(f"Could not record bisq2 API auth failure metric: {e}")
+    except Exception as exc:
+        logger.debug(
+            "Could not record Bisq2 API auth failure metric (%s)",
+            type(exc).__name__,
+        )
 
 
 class Bisq2API:
@@ -47,6 +67,7 @@ class Bisq2API:
 
     def __init__(self, settings: Settings):
         self.settings = settings
+        self._test_scope: Bisq2TestScope = resolve_bisq2_test_scope(settings)
         self.base_urls = self._build_base_url_candidates(settings.BISQ_API_URL)
         self.base_url = self.base_urls[0]
         self._session: Optional[aiohttp.ClientSession] = None
@@ -208,10 +229,10 @@ class Bisq2API:
             if pairing_code_id:
                 logger.info("Loaded Bisq pairing code ID from QR file")
             return pairing_code_id
-        except Exception:
-            logger.exception(
-                "Failed to parse Bisq pairing QR payload from %s",
-                path,
+        except Exception as exc:
+            logger.warning(
+                "Failed to parse Bisq pairing QR payload (%s)",
+                type(exc).__name__,
             )
             return ""
 
@@ -252,8 +273,11 @@ class Bisq2API:
                 logger.info("Loaded Bisq API auth state from %s", path)
             if was_plaintext and client_id and client_secret:
                 self._save_auth_state()
-        except Exception:
-            logger.exception("Failed to load Bisq API auth state from %s", path)
+        except Exception as exc:
+            logger.warning(
+                "Failed to load Bisq API auth state (%s)",
+                type(exc).__name__,
+            )
 
     def _save_auth_state(self) -> None:
         if not self._auth_state_file:
@@ -282,8 +306,11 @@ class Bisq2API:
             )
             temp_path.write_bytes(encrypted)
             temp_path.replace(path)
-        except Exception:
-            logger.exception("Failed to persist Bisq API auth state to %s", path)
+        except Exception as exc:
+            logger.warning(
+                "Failed to persist Bisq API auth state (%s)",
+                type(exc).__name__,
+            )
             if temp_path.exists():
                 temp_path.unlink()
 
@@ -493,7 +520,7 @@ class Bisq2API:
         if not self._session:
             await self.setup()
 
-        last_connection_error: Optional[aiohttp.ClientConnectionError] = None
+        had_connection_error = False
         is_access_endpoint = self._is_access_endpoint(endpoint)
         saw_not_found = False
         for index, base_url in enumerate(self.base_urls):
@@ -514,8 +541,7 @@ class Bisq2API:
                             saw_not_found = True
                             if index < len(self.base_urls) - 1:
                                 logger.warning(
-                                    "Bisq2 API returned 404 at %s; trying next candidate",
-                                    base_url,
+                                    "Bisq2 API returned 404; trying next candidate"
                                 )
                             break
                         if (
@@ -539,25 +565,27 @@ class Bisq2API:
                         ):
                             return await response.json()
                         return {"content": await response.text()}
-            except aiohttp.ClientConnectionError as e:
-                last_connection_error = e
+            except aiohttp.ClientConnectionError:
+                had_connection_error = True
                 logger.warning(
-                    "Connection to Bisq2 API failed at %s; trying next candidate if available: %s",
-                    base_url,
-                    e,
+                    "Bisq2 API connection failed; trying next candidate if available"
                 )
                 continue
             except aiohttp.ClientError as e:
-                logger.error(f"Error making request to Bisq2 API: {e}", exc_info=True)
-                raise
+                status = getattr(e, "status", None)
+                logger.error(
+                    "Bisq2 API request failed (method=%s status=%s)",
+                    method,
+                    status if isinstance(status, int) else "unknown",
+                )
+                raise aiohttp.ClientError(
+                    "Bisq2 API request failed"
+                    + (f" (status={status})" if isinstance(status, int) else "")
+                ) from None
 
-        if last_connection_error:
-            logger.error(
-                "All Bisq2 API URL candidates failed: %s",
-                ", ".join(self.base_urls),
-                exc_info=True,
-            )
-            raise last_connection_error
+        if had_connection_error:
+            logger.error("All Bisq2 API connection candidates failed")
+            raise aiohttp.ClientConnectionError("Bisq2 API connection failed") from None
         if saw_not_found:
             return {}
         return {}
@@ -612,27 +640,30 @@ class Bisq2API:
                 _record_bisq2_api_health(bool(result), response_time)
                 return result
 
-            except aiohttp.ClientError as e:
+            except aiohttp.ClientError as exc:
                 response_time = time.time() - start_time
                 logger.warning(
-                    f"Attempt {attempt + 1}/{max_retries}: Failed to export chat messages: {str(e)}"
+                    "Bisq chat export attempt %s/%s failed (%s)",
+                    attempt + 1,
+                    max_retries,
+                    type(exc).__name__,
                 )
                 if attempt < max_retries - 1:
                     await asyncio.sleep(retry_delay)
                     continue
                 logger.error(
-                    f"Failed to export chat messages after {max_retries} attempts: {str(e)}",
-                    exc_info=True,
+                    "Bisq chat export failed after %s attempts (%s)",
+                    max_retries,
+                    type(exc).__name__,
                 )
                 # Final attempt failed - record unhealthy
                 _record_bisq2_api_health(False, response_time)
                 return {}
-            except Exception as e:
+            except Exception as exc:
                 response_time = time.time() - start_time
                 logger.error(
-                    "Failed to export chat messages due to non-HTTP error: %s",
-                    e,
-                    exc_info=True,
+                    "Bisq chat export failed due to a non-HTTP error (%s)",
+                    type(exc).__name__,
                 )
                 _record_bisq2_api_health(False, response_time)
                 return {}
@@ -645,6 +676,10 @@ class Bisq2API:
         channel_id: str,
         text: str,
         citation: Optional[str] = None,
+        *,
+        origin_sender_profile_id: str,
+        citation_author_user_profile_id: Optional[str] = None,
+        citation_message_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Send a support message to a Bisq2 channel.
 
@@ -652,6 +687,9 @@ class Bisq2API:
             channel_id: Bisq2 channel ID (e.g. "support.support").
             text: Message text to send.
             citation: Optional citation text (original question).
+            origin_sender_profile_id: Approved profile that originated the flow.
+            citation_author_user_profile_id: Exact author of the cited message.
+            citation_message_id: Exact ID of the cited message.
 
         Returns:
             Response dict with messageId and timestamp, or empty dict on 404.
@@ -659,10 +697,40 @@ class Bisq2API:
         Raises:
             aiohttp.ClientError: On connection/HTTP errors.
         """
+        if not self._test_scope.allows_outbound(
+            channel_id,
+            origin_sender_profile_id,
+        ):
+            logger.warning("Blocked Bisq2 support send outside production-test scope")
+            return {}
+
         endpoint = f"/api/v1/support/channels/{channel_id}/messages"
         body: Dict[str, Any] = {"text": text}
         if citation is not None:
+            citation_author = (
+                citation_author_user_profile_id
+                if isinstance(citation_author_user_profile_id, str)
+                and citation_author_user_profile_id
+                else ""
+            )
+            cited_message = (
+                citation_message_id
+                if isinstance(citation_message_id, str) and citation_message_id
+                else ""
+            )
+            if (
+                not citation_author
+                or not cited_message
+                or citation_author != origin_sender_profile_id
+                or not self._test_scope.allows_sender_profile(citation_author)
+            ):
+                logger.warning(
+                    "Blocked Bisq2 support send with incomplete citation provenance"
+                )
+                return {}
             body["citation"] = citation
+            body["citationAuthorUserProfileId"] = citation_author
+            body["citationMessageId"] = cited_message
 
         response = await self._make_request("POST", endpoint, json=body)
         if self._has_message_id(response):
@@ -720,10 +788,7 @@ class Bisq2API:
                     headers=headers,
                 )
                 if selected_profile:
-                    logger.info(
-                        "Selected existing Bisq2 user identity: %s",
-                        primary_identity_id,
-                    )
+                    logger.info("Selected existing Bisq2 user identity")
                     return True
 
             key_material = await self._make_request(
@@ -782,16 +847,16 @@ class Bisq2API:
                         headers=headers,
                     )
                     if selected_profile:
-                        logger.info(
-                            "Selected fallback Bisq2 user identity after bootstrap: %s",
-                            fallback_id.strip(),
-                        )
+                        logger.info("Selected fallback Bisq2 user identity")
                         return True
 
             logger.warning("Failed to ensure selected Bisq2 user identity")
             return False
-        except Exception:
-            logger.exception("Failed to ensure selected Bisq2 user identity")
+        except Exception as exc:
+            logger.warning(
+                "Failed to ensure selected Bisq2 user identity (%s)",
+                type(exc).__name__,
+            )
             return False
 
     async def send_reaction(
@@ -800,6 +865,8 @@ class Bisq2API:
         message_id: str,
         reaction_id: int,
         is_removed: bool = False,
+        *,
+        origin_sender_profile_id: str,
     ) -> Dict[str, Any]:
         """Send a reaction to a message in a Bisq2 channel.
 
@@ -808,6 +875,7 @@ class Bisq2API:
             message_id: ID of the message to react to.
             reaction_id: Bisq2 Reaction enum ordinal (0=THUMBS_UP, etc.).
             is_removed: Whether to remove the reaction.
+            origin_sender_profile_id: Approved profile that originated the flow.
 
         Returns:
             Response dict (usually empty on 204).
@@ -815,6 +883,26 @@ class Bisq2API:
         Raises:
             aiohttp.ClientError: On connection/HTTP errors.
         """
+        if not self._test_scope.allows_outbound(
+            channel_id,
+            origin_sender_profile_id,
+        ):
+            logger.warning("Blocked Bisq2 reaction send outside production-test scope")
+            return {}
+        if not _is_safe_reaction_message_id(message_id):
+            logger.warning("Blocked Bisq2 reaction send with invalid message ID")
+            return {}
+        if (
+            not isinstance(reaction_id, int)
+            or isinstance(reaction_id, bool)
+            or reaction_id not in _VALID_REACTION_IDS
+        ):
+            logger.warning("Blocked Bisq2 reaction send with invalid reaction ID")
+            return {}
+        if not isinstance(is_removed, bool):
+            logger.warning("Blocked Bisq2 reaction send with invalid removal flag")
+            return {}
+
         endpoint = f"/api/v1/support/channels/{channel_id}/{message_id}/reactions"
         body: Dict[str, Any] = {
             "reactionId": reaction_id,

@@ -7,6 +7,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.channels.chatops import ChatOpsAuthorizer, ChatOpsDispatcher, ChatOpsParser
+from app.channels.plugins.bisq2.test_scope import (
+    Bisq2TestScope,
+    resolve_bisq2_test_scope,
+)
 from app.channels.staff import resolve_channel_staff_resolver
 from app.metrics.operator_metrics import record_chatops_auth, record_chatops_parse
 
@@ -26,6 +30,9 @@ class Bisq2ChatOpsAdapter:
         dispatcher: ChatOpsDispatcher | None = None,
     ) -> None:
         self.runtime = runtime
+        self._test_scope: Bisq2TestScope = resolve_bisq2_test_scope(
+            getattr(runtime, "settings", None)
+        )
         self.enabled = bool(enabled)
         self.allowed_channel_ids = {
             str(channel_id or "").strip()
@@ -40,6 +47,10 @@ class Bisq2ChatOpsAdapter:
         )
 
     async def handle_message(self, payload: dict[str, Any]) -> bool:
+        if not self.enabled:
+            return False
+        if not self._test_scope.allows_payload(payload):
+            return False
         text = str(payload.get("message", "") or "").strip()
         channel_id = str(payload.get("channelId", "") or "").strip()
         conversation_id = str(payload.get("conversationId", channel_id) or "").strip()
@@ -79,6 +90,8 @@ class Bisq2ChatOpsAdapter:
                 target=conversation_id or channel_id,
                 body=parsed.error_message or "Invalid command.",
                 citation=text or None,
+                origin_sender_profile_id=sender_profile_id,
+                citation_message_id=message_id,
             )
             return True
         record_chatops_parse(channel="bisq2", result="parsed")
@@ -111,28 +124,30 @@ class Bisq2ChatOpsAdapter:
                 target=conversation_id or channel_id,
                 body=auth_result.message,
                 citation=text or None,
+                origin_sender_profile_id=sender_profile_id,
+                citation_message_id=message_id,
             )
             return True
         record_chatops_auth(channel="bisq2", result="authorized")
 
         try:
             result = await self.dispatcher.dispatch(parsed.command)
-        except Exception:
-            logger.exception(
-                "Bisq2 ChatOps dispatch failed for channel=%s actor=%s",
-                channel_id,
-                sender_profile_id,
-            )
+        except Exception as exc:
+            logger.warning("Bisq2 ChatOps dispatch failed (%s)", type(exc).__name__)
             await self._send_notice(
                 target=conversation_id or channel_id,
                 body="Command failed to execute.",
                 citation=text or None,
+                origin_sender_profile_id=sender_profile_id,
+                citation_message_id=message_id,
             )
             return True
         await self._send_notice(
             target=conversation_id or channel_id,
             body=result.message,
             citation=text or None,
+            origin_sender_profile_id=sender_profile_id,
+            citation_message_id=message_id,
         )
         return True
 
@@ -141,7 +156,9 @@ class Bisq2ChatOpsAdapter:
         *,
         target: str,
         body: str,
+        origin_sender_profile_id: str,
         citation: str | None = None,
+        citation_message_id: str | None = None,
     ) -> None:
         bisq_api = self.runtime.resolve_optional("bisq2_api")
         if bisq_api is None:
@@ -149,8 +166,20 @@ class Bisq2ChatOpsAdapter:
         send_support_message = getattr(bisq_api, "send_support_message", None)
         if not callable(send_support_message):
             return
+        channel_id = target if isinstance(target, str) else ""
+        sender_profile_id = (
+            origin_sender_profile_id
+            if isinstance(origin_sender_profile_id, str)
+            else ""
+        )
+        cited_message_id = (
+            citation_message_id if isinstance(citation_message_id, str) else None
+        )
         await send_support_message(
-            channel_id=str(target or "").strip(),
+            channel_id=channel_id,
             text=str(body or "").strip(),
             citation=str(citation or "").strip() or None,
+            origin_sender_profile_id=sender_profile_id,
+            citation_author_user_profile_id=sender_profile_id or None,
+            citation_message_id=cited_message_id or None,
         )

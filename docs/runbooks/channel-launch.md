@@ -11,6 +11,44 @@ production change.
 - Matrix and Bisq launch policies start in shadow mode.
 - Existing Matrix and Bisq generation and autoresponse policies remain disabled
   until a human explicitly starts the relevant phase.
+- Bisq live ingress, reactions, reviewed sends, ChatOps notices, and autonomous
+  sends require an exact match in both `BISQ2_ALLOWED_CHANNEL_IDS` and
+  `BISQ2_ALLOWED_SENDER_PROFILE_IDS`. Either list being empty, malformed, or
+  missing denies all access. Conflicting identifier aliases also deny access.
+  These allowlists narrow scope; they never enable generation, autoresponse, or
+  autonomous delivery.
+- The same Bisq allowlists gate scheduled/admin FAQ-training ingestion even when
+  the live Bisq channel is disabled. A blank scope intentionally makes that sync
+  a no-op during the soak; this is a safety state, not a scheduler fault. Once
+  both lists are valid and nonempty, the export API becomes a required readiness
+  dependency even while the live channel stays disabled.
+- A Bisq support channel is a group, not a private user conversation. Replies
+  are visible to its participants. Use a dedicated upstream test channel/feed
+  with only approved participants whenever possible; the sender-profile list is
+  still mandatory as a second boundary.
+- Every configured Bisq staff profile must also be in the sender-profile
+  allowlist. When ChatOps is enabled, both its channel list and its in-scope
+  staff-profile list must be nonempty. Staff authorization uses the immutable,
+  case-sensitive profile ID; a display name or case-folded alias has no authority.
+- Bisq training pairs a question and staff answer only within one exact allowed
+  channel, using immutable profile provenance. Nested citation text is discarded;
+  only a same-channel reference to another verified in-scope message survives.
+- Bisq feedback reactions must match the exact native channel and originating
+  sender recorded for the delivered answer. Follow-ups and reviewed escalation
+  replies carry that provenance separately from the model-safe user ID.
+- Bisq readiness requires the complete durable sync-state interface, a
+  successful atomic state write, a fresh scope baseline, and acknowledged
+  reaction/support WebSocket subscriptions on the current receive loop.
+- Run exactly one API process/replica during this test phase. The Bisq sync-state
+  file is atomic within that process but is not a multi-process coordination
+  database. Horizontal API scaling requires a shared durable inbox first.
+- Bisq ingress deliberately uses at-most-once deduplication for the test phase.
+  An event is durably claimed after pure preprocessing and immediately before
+  staff side effects or return to orchestration. A process loss after that claim
+  is not replayed automatically; resend the approved test event and record the
+  failed drill. This favors no duplicate external action, but it is not a
+  release-grade delivery guarantee. A durable inbox/outbox with end-to-end
+  acknowledgement is required before claiming resilient autonomous delivery.
 - Shadow mode runs the full answer pipeline but persists every direct-delivery
   candidate in the review queue. It sends no answer or queue notification to a
   channel user.
@@ -66,6 +104,12 @@ channel, test-case identifiers, review outcomes, relevant alert names, and the
 final go/no-go decision. Do not copy user messages, credentials, room identifiers,
 service addresses, or session material into the evidence record.
 
+For a long-running production soak, bind every deployed candidate to one exact
+reviewed commit and its fresh quality-gate result. Label it as a soak or release
+candidate; a final release tag is not required until final promotion. Any code,
+model, prompt, retrieval, or tool change starts a new candidate and requires a
+new gate result.
+
 ## Phase 0: preflight
 
 1. Confirm the release-binding AI-quality gate passed for the exact release.
@@ -80,8 +124,34 @@ service addresses, or session material into the evidence record.
    close a synthetic review item.
 7. Confirm the rollback owner can execute the kill-switch command and can disable
    existing channel autoresponse policy independently.
-8. Record the approved test identities and test conversations. Never use an
-   uninvolved user's conversation for a delivery drill.
+8. Record the approved test identities and test channels. Never use a normal
+   public support channel or an uninvolved user's identity for a delivery drill.
+9. Start with Matrix. Keep the Bisq channel disabled until both protected
+   runtime allowlists contain only the dedicated test channel(s) and approved
+   participant profiles. Expect scheduled/admin Bisq FAQ-training sync to process
+   nothing while either list is blank; after configuration, it accepts only rows
+   matching both exact dimensions. Expect the Bisq export startup probe and API
+   readiness component to become required as soon as both lists are configured.
+10. Confirm there is exactly one API process/replica and that the dedicated
+    Bisq sync-state volume is writable. Do not proceed if readiness reports the
+    persistence capability, persistence health, baseline, or subscription state
+    unavailable.
+11. Before enabling Bisq, drain or close every legacy pending Bisq escalation.
+    If a case still needs action, recreate it only from a newly received,
+    in-scope event with verified channel and originating-sender provenance.
+    Never backfill missing origin identity from assumptions, unrelated metadata,
+    or another record.
+12. Before changing either Bisq allowlist, run the kill switch, disable the Bisq
+    channel, and keep Bisq shadow mode on. Recreate the API container (do not
+    merely restart it) after the protected configuration change so Compose
+    reloads the environment, then enable only the Bisq channel and recreate the
+    API container again.
+    Confirm `/health/ready` reports `bisq2_test_scope` ready and that its
+    `channel_count` and `sender_profile_count` equal the two independently
+    reviewed counts. The response must not contain either list's values. Scope
+    activation requires a fresh full baseline snapshot; readiness remains
+    degraded and baseline acquisition retries independently of generation until
+    one is available. Send only new test messages after readiness is green.
 
 No phase transition is allowed while readiness is degraded, alert delivery is
 unverified, the review queue is unavailable, or the rollback owner is absent.
@@ -121,8 +191,35 @@ For every direct-delivery candidate, verify:
 
 ### Shadow exit criteria
 
-The launch owner must define the observation duration and minimum reviewed sample
-before the phase begins. At minimum, require all of the following:
+Measure each channel separately over one contiguous window of seven consecutive
+healthy days. The cohort is every unique direct-delivery candidate generated for
+that channel during the window. Give every candidate exactly one mutually
+exclusive disposition:
+
+- `accepted_unchanged`: accepted with no answer edit;
+- `accepted_non_substantive_edit`: accepted after spelling, grammar, formatting,
+  or another meaning-preserving edit;
+- `accepted_substantive_edit`: accepted only after changing the answer's meaning,
+  instructions, safety guidance, or source-supported facts;
+- `rejected`: not accepted for delivery.
+
+For that channel and window, `reviewed_count` is the number of candidates in the
+cohort, `accepted_count` is the sum of the three accepted dispositions, and
+`substantive_edit_count` is the number marked
+`accepted_substantive_edit`. A substantively edited answer therefore counts in
+both `accepted_count` and `substantive_edit_count`. Evaluate the unrounded integer
+ratios against these approved initial floors:
+
+- `reviewed_count >= 100`;
+- `accepted_count / reviewed_count >= 0.95`;
+- `substantive_edit_count / reviewed_count <= 0.10`.
+
+Any readiness failure or critical alert during the window resets the seven-day
+clock for that channel. The legacy `/admin/training/learning/readiness` endpoint
+is a global learning-calibration signal with a different cohort and thresholds;
+it is not this per-channel shadow promotion gate. These are minimum evidence
+floors, not an automatic promotion: the launch owner must explicitly approve
+every transition. Also require all of the following:
 
 - zero unsafe autonomous-send candidates;
 - zero missing or duplicate review records;
@@ -182,11 +279,18 @@ Run each drill with an approved test identity. Record only sanitized outcomes.
 
 ### Bisq delivery
 
-1. Send one approved, high-confidence test question in the test conversation.
-2. Verify exactly one reply arrives in that conversation.
-3. Verify content, source rendering, and correlation identifiers.
-4. Verify the canary reservation count increases by one.
-5. Verify no other conversation receives a message.
+1. Confirm the Bisq test-scope component is ready and both counts match the two
+   approved runtime-only allowlists.
+2. Send one approved, high-confidence question from an approved profile in the
+   dedicated test channel.
+3. Verify exactly one reply arrives in that group channel and is visible only to
+   its expected test participants.
+4. Verify content, source rendering, and correlation identifiers.
+5. Verify the canary reservation count increases by one.
+6. Verify no other channel receives a message.
+7. Exercise one sanitized out-of-scope fixture through the controlled ingress
+   harness. Verify it creates no cache/history entry, review item, reaction side
+   effect, transport request, or canary reservation.
 
 ### Escalation
 
@@ -241,8 +345,9 @@ Before increasing a cap or disabling canary mode, require:
 - support staffing covers the next observation window;
 - rollback owner and launch owner both approve the new limit in the evidence record.
 
-Canary thresholds, observation duration, acceptance/edit-rate targets, and the
-decision to enter unrestricted delivery remain human decision points.
+Canary thresholds, canary observation duration, and the decision to enter
+unrestricted delivery remain human decision points. Meeting the shadow floors
+does not authorize any canary or autoresponse enablement.
 
 ## Rollback
 
@@ -253,12 +358,21 @@ At the first safety, privacy, routing, duplicate-delivery, or dependency concern
 3. Disable the existing autoresponse policy for every affected channel.
 4. Set the affected channel back to shadow mode.
 5. Disable its canary policy; do not delete reservations or review evidence.
-6. Verify a new direct candidate is queued with no user-facing delivery.
-7. Confirm readiness and alerts, preserve sanitized incident evidence, and notify
+6. For Bisq containment incidents, atomically set
+   `BISQ2_CHANNEL_ENABLED=false` and clear both protected runtime allowlists,
+   then recreate the API while the kill switch remains active. Empty means deny
+   all; disabling the channel keeps overall readiness healthy during rollback.
+7. For an affected channel that remains enabled in shadow, verify a new direct
+   candidate is queued with no user-facing delivery. If Bisq was disabled in step
+   6, use the controlled ingress harness and verify that the fixture creates no
+   candidate, cache/history entry, review item, reaction side effect, transport
+   request, or canary reservation. Confirm the Bisq scope reports `disabled`; do
+   not expect a queued item while the channel is disabled.
+8. Confirm readiness and alerts, preserve sanitized incident evidence, and notify
    the launch and rollback owners.
-8. Revert to the last approved release if the fault is release-specific, following
+9. Revert to the last approved release if the fault is release-specific, following
    the deployment rollback runbook.
-9. Require a root-cause review, regression test, green release-quality gate, and a
+10. Require a root-cause review, regression test, green release-quality gate, and a
    new explicit launch-owner approval before another canary.
 
 Useful rollback commands:

@@ -16,6 +16,26 @@ import pytest
 from app.channels.plugins.bisq2.client.sync_state import BisqSyncStateManager
 from app.channels.plugins.bisq2.services.sync_service import Bisq2SyncService
 
+_TEST_CHANNEL_ID = "test-channel"
+_TEST_SENDERS = ["user1", "user2", "user3", "staff1", "staff2"]
+
+
+def _scoped_message(
+    message_id: str,
+    author: str,
+    message: str,
+    *,
+    channel_id: str = _TEST_CHANNEL_ID,
+    profile_id: str | None = None,
+) -> dict:
+    return {
+        "messageId": message_id,
+        "author": author,
+        "message": message,
+        "channelId": channel_id,
+        "senderUserProfileId": profile_id or author,
+    }
+
 
 class TestBisq2SyncDeduplication:
     """Test that Bisq sync correctly prevents duplicate processing."""
@@ -29,6 +49,12 @@ class TestBisq2SyncDeduplication:
         settings.OPENAI_MODEL = "gpt-4o-mini"
         settings.LLM_TEMPERATURE = 0.1
         settings.MAX_TOKENS = 4096
+        settings.BISQ2_ALLOWED_CHANNEL_IDS = [_TEST_CHANNEL_ID]
+        settings.BISQ2_ALLOWED_SENDER_PROFILE_IDS = _TEST_SENDERS
+        settings.BISQ2_CHATOPS_CHANNEL_IDS = []
+        settings.BISQ2_CHATOPS_ENABLED = False
+        settings.BISQ2_STAFF_PROFILE_IDS = ["staff1", "staff2"]
+        settings.BISQ2_STAFF_NOTIFICATION_TARGET = ""
         return settings
 
     @pytest.fixture
@@ -63,6 +89,123 @@ class TestBisq2SyncDeduplication:
         )
 
     @pytest.mark.asyncio
+    async def test_unready_scope_denies_before_api_io(
+        self,
+        mock_settings,
+        mock_pipeline_service,
+        mock_bisq_api,
+        state_manager,
+    ):
+        mock_settings.BISQ2_ALLOWED_CHANNEL_IDS = []
+        service = Bisq2SyncService(
+            settings=mock_settings,
+            pipeline_service=mock_pipeline_service,
+            bisq_api=mock_bisq_api,
+            state_manager=state_manager,
+        )
+
+        result = await service.sync_conversations()
+
+        assert result == 0
+        mock_bisq_api.export_chat_messages.assert_not_awaited()
+        mock_pipeline_service.extract_faqs_batch.assert_not_awaited()
+        assert state_manager.processed_message_ids == set()
+        assert state_manager.last_sync_timestamp is None
+
+    @pytest.mark.asyncio
+    async def test_filters_unapproved_sender_before_extraction_and_state(
+        self,
+        sync_service,
+        mock_bisq_api,
+        mock_pipeline_service,
+        state_manager,
+    ):
+        allowed = _scoped_message("msg-allowed", "user1", "Allowed question?")
+        blocked = {
+            **_scoped_message("msg-blocked", "user1", "Blocked question?"),
+            "senderUserProfileId": "outside-scope",
+        }
+        mock_bisq_api.export_chat_messages.return_value = {
+            "messages": [blocked, allowed]
+        }
+        mock_pipeline_service.extract_faqs_batch.return_value = []
+        state_manager.mark_processed = MagicMock(wraps=state_manager.mark_processed)
+
+        result = await sync_service.sync_conversations()
+
+        assert result == 0
+        extracted_messages = mock_pipeline_service.extract_faqs_batch.await_args.kwargs[
+            "messages"
+        ]
+        assert extracted_messages == [allowed]
+        state_manager.mark_processed.assert_called_once_with("msg-allowed")
+        assert "msg-allowed" in state_manager.processed_message_ids
+        assert "msg-blocked" not in state_manager.processed_message_ids
+
+    @pytest.mark.asyncio
+    async def test_groups_extraction_by_exact_channel(
+        self,
+        mock_settings,
+        mock_pipeline_service,
+        mock_bisq_api,
+        state_manager,
+    ):
+        mock_settings.BISQ2_ALLOWED_CHANNEL_IDS = ["channel-one", "channel-two"]
+        service = Bisq2SyncService(
+            settings=mock_settings,
+            pipeline_service=mock_pipeline_service,
+            bisq_api=mock_bisq_api,
+            state_manager=state_manager,
+        )
+        question = _scoped_message(
+            "question-one",
+            "same-display-name",
+            "How do I start a trade?",
+            channel_id="channel-one",
+            profile_id="user1",
+        )
+        answer = _scoped_message(
+            "answer-two",
+            "same-display-name",
+            "Open the Trade Wizard to start.",
+            channel_id="channel-two",
+            profile_id="staff1",
+        )
+        mock_bisq_api.export_chat_messages.return_value = {
+            "messages": [question, answer]
+        }
+        mock_pipeline_service.extract_faqs_batch.return_value = []
+
+        await service.sync_conversations()
+
+        assert mock_pipeline_service.extract_faqs_batch.await_count == 2
+        batches = [
+            call.kwargs["messages"]
+            for call in mock_pipeline_service.extract_faqs_batch.await_args_list
+        ]
+        assert batches == [[question], [answer]]
+        assert all(
+            call.kwargs["staff_identifiers"] == ["staff1", "staff2"]
+            for call in mock_pipeline_service.extract_faqs_batch.await_args_list
+        )
+
+    @pytest.mark.asyncio
+    async def test_export_exception_logs_class_only(
+        self,
+        sync_service,
+        mock_bisq_api,
+        caplog,
+    ):
+        secret_error = "sensitive-endpoint-and-profile"
+        mock_bisq_api.export_chat_messages.side_effect = RuntimeError(secret_error)
+
+        with pytest.raises(Exception, match="Failed to fetch messages"):
+            await sync_service.sync_conversations(max_retries=1, retry_delay=0)
+
+        assert secret_error not in caplog.text
+        assert "RuntimeError" in caplog.text
+
+    @pytest.mark.asyncio
     async def test_marks_all_input_messages_as_processed(
         self, sync_service, mock_bisq_api, mock_pipeline_service, state_manager
     ):
@@ -73,11 +216,11 @@ class TestBisq2SyncDeduplication:
         """
         # Arrange: 5 input messages from Bisq API
         input_messages = [
-            {"messageId": "msg-001", "author": "user1", "message": "Question 1?"},
-            {"messageId": "msg-002", "author": "staff1", "message": "Answer 1"},
-            {"messageId": "msg-003", "author": "user2", "message": "Question 2?"},
-            {"messageId": "msg-004", "author": "staff2", "message": "Answer 2"},
-            {"messageId": "msg-005", "author": "user3", "message": "Thanks!"},
+            _scoped_message("msg-001", "user1", "Question 1?"),
+            _scoped_message("msg-002", "staff1", "Answer 1"),
+            _scoped_message("msg-003", "user2", "Question 2?"),
+            _scoped_message("msg-004", "staff2", "Answer 2"),
+            _scoped_message("msg-005", "user3", "Thanks!"),
         ]
         mock_bisq_api.export_chat_messages = AsyncMock(
             return_value={"messages": input_messages}
@@ -113,11 +256,11 @@ class TestBisq2SyncDeduplication:
         """
         # Arrange: Same 5 messages returned on both polls
         input_messages = [
-            {"messageId": "msg-001", "author": "user1", "message": "Question 1?"},
-            {"messageId": "msg-002", "author": "staff1", "message": "Answer 1"},
-            {"messageId": "msg-003", "author": "user2", "message": "Question 2?"},
-            {"messageId": "msg-004", "author": "staff2", "message": "Answer 2"},
-            {"messageId": "msg-005", "author": "user3", "message": "Thanks!"},
+            _scoped_message("msg-001", "user1", "Question 1?"),
+            _scoped_message("msg-002", "staff1", "Answer 1"),
+            _scoped_message("msg-003", "user2", "Question 2?"),
+            _scoped_message("msg-004", "staff2", "Answer 2"),
+            _scoped_message("msg-005", "user3", "Thanks!"),
         ]
         mock_bisq_api.export_chat_messages = AsyncMock(
             return_value={"messages": input_messages}
@@ -164,8 +307,8 @@ class TestBisq2SyncDeduplication:
         """
         # First poll: 2 messages
         first_messages = [
-            {"messageId": "msg-001", "author": "user1", "message": "Question 1?"},
-            {"messageId": "msg-002", "author": "staff1", "message": "Answer 1"},
+            _scoped_message("msg-001", "user1", "Question 1?"),
+            _scoped_message("msg-002", "staff1", "Answer 1"),
         ]
         mock_bisq_api.export_chat_messages = AsyncMock(
             return_value={"messages": first_messages}
@@ -182,14 +325,10 @@ class TestBisq2SyncDeduplication:
 
         # Second poll: Same 2 messages + 2 NEW messages
         second_messages = [
-            {"messageId": "msg-001", "author": "user1", "message": "Question 1?"},
-            {"messageId": "msg-002", "author": "staff1", "message": "Answer 1"},
-            {
-                "messageId": "msg-003",
-                "author": "user2",
-                "message": "Question 2?",
-            },  # NEW
-            {"messageId": "msg-004", "author": "staff2", "message": "Answer 2"},  # NEW
+            _scoped_message("msg-001", "user1", "Question 1?"),
+            _scoped_message("msg-002", "staff1", "Answer 1"),
+            _scoped_message("msg-003", "user2", "Question 2?"),  # NEW
+            _scoped_message("msg-004", "staff2", "Answer 2"),  # NEW
         ]
         mock_bisq_api.export_chat_messages = AsyncMock(
             return_value={"messages": second_messages}
@@ -235,9 +374,9 @@ class TestBisq2SyncDeduplication:
         """
         # Arrange: 3 messages that are just chatter (no Q&A)
         input_messages = [
-            {"messageId": "msg-001", "author": "user1", "message": "Hello!"},
-            {"messageId": "msg-002", "author": "user2", "message": "Hi there!"},
-            {"messageId": "msg-003", "author": "user3", "message": "Good morning!"},
+            _scoped_message("msg-001", "user1", "Hello!"),
+            _scoped_message("msg-002", "user2", "Hi there!"),
+            _scoped_message("msg-003", "user3", "Good morning!"),
         ]
         mock_bisq_api.export_chat_messages = AsyncMock(
             return_value={"messages": input_messages}
@@ -269,16 +408,8 @@ class TestBisq2SyncDeduplication:
         """
         # Same messages on every poll
         input_messages = [
-            {
-                "messageId": "msg-001",
-                "author": "user1",
-                "message": "Is Faster Payments available?",
-            },
-            {
-                "messageId": "msg-002",
-                "author": "staff1",
-                "message": "Yes, FP is available",
-            },
+            _scoped_message("msg-001", "user1", "Is Faster Payments available?"),
+            _scoped_message("msg-002", "staff1", "Yes, FP is available"),
         ]
         mock_bisq_api.export_chat_messages = AsyncMock(
             return_value={"messages": input_messages}

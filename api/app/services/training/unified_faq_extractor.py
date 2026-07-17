@@ -31,8 +31,10 @@ import logging
 import random
 import re
 import time
+from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from app.core.config import Settings
 
@@ -328,6 +330,107 @@ _FAQ_EXTRACTION_JSON_SCHEMA: Dict[str, Any] = {
 }
 
 
+def _resolve_exact_alias(
+    payload: Mapping[str, Any],
+    keys: Sequence[str],
+) -> str:
+    """Return one literal string value, rejecting malformed or conflicting aliases."""
+    values: set[str] = set()
+    for key in keys:
+        if key not in payload:
+            continue
+        value = payload.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            return ""
+        if value:
+            values.add(value)
+    if len(values) != 1:
+        return ""
+    return next(iter(values))
+
+
+def _resolve_valid_bisq_citation(
+    raw_message: Mapping[str, Any],
+    normalized_message: Mapping[str, Any],
+    messages_by_id: Mapping[str, Mapping[str, Any]],
+) -> str:
+    """Resolve a citation only through immutable same-batch provenance."""
+    citation = raw_message.get("citation")
+    nested = citation if isinstance(citation, Mapping) else {}
+
+    nested_message_id = _resolve_exact_alias(
+        nested,
+        (
+            "messageId",
+            "message_id",
+            "chatMessageId",
+            "chat_message_id",
+            "citationMessageId",
+            "citation_message_id",
+        ),
+    )
+    outer_message_id = _resolve_exact_alias(
+        raw_message,
+        ("citationMessageId", "citation_message_id"),
+    )
+    citation_message_ids = {
+        value for value in (nested_message_id, outer_message_id) if value
+    }
+    if len(citation_message_ids) != 1:
+        return ""
+    citation_message_id = next(iter(citation_message_ids))
+
+    nested_author_profile_id = _resolve_exact_alias(
+        nested,
+        (
+            "senderUserProfileId",
+            "sender_user_profile_id",
+            "authorId",
+            "author_id",
+            "senderId",
+            "sender_id",
+        ),
+    )
+    outer_author_profile_id = _resolve_exact_alias(
+        raw_message,
+        (
+            "citationAuthorUserProfileId",
+            "citation_author_user_profile_id",
+            "citationAuthorId",
+            "citation_author_id",
+        ),
+    )
+    citation_author_profile_ids = {
+        value for value in (nested_author_profile_id, outer_author_profile_id) if value
+    }
+    if len(citation_author_profile_ids) != 1:
+        return ""
+    citation_author_profile_id = next(iter(citation_author_profile_ids))
+
+    current_channel = normalized_message.get("channel_id")
+    nested_channel_keys = (
+        "channelId",
+        "channel_id",
+        "conversationId",
+        "conversation_id",
+    )
+    if any(key in nested for key in nested_channel_keys):
+        nested_channel = _resolve_exact_alias(nested, nested_channel_keys)
+        if not nested_channel or nested_channel != current_channel:
+            return ""
+
+    cited_message = messages_by_id.get(citation_message_id)
+    if cited_message is None:
+        return ""
+    if cited_message.get("channel_id") != current_channel:
+        return ""
+    if cited_message.get("author_profile_id") != citation_author_profile_id:
+        return ""
+    return citation_message_id
+
+
 @dataclass
 class ExtractedFAQ:
     """A single extracted FAQ question-answer pair."""
@@ -358,7 +461,14 @@ class FAQExtractionResult:
     processing_time_ms: int = 0
     error: Optional[str] = None
     # Normalized messages for staff_sender lookup by message ID
-    _normalized_messages: List[Dict[str, Any]] = field(default_factory=list)
+    _normalized_messages: List[Dict[str, Any]] = field(
+        default_factory=list,
+        repr=False,
+    )
+    _bisq_staff_profile_ids: frozenset[str] = field(
+        default_factory=frozenset,
+        repr=False,
+    )
 
     def to_pipeline_format(self) -> List[Dict[str, Any]]:
         """Convert extracted FAQs to pipeline-compatible format.
@@ -370,16 +480,27 @@ class FAQExtractionResult:
         lookup via question_msg_id/answer_msg_id instead of trusting LLM's copy,
         because LLM sometimes returns incorrect text.
         """
-        # Build message ID -> author and text lookups
+        # Build message ID -> immutable provenance and text lookups.
         msg_author_map: Dict[str, str] = {}
+        msg_profile_map: Dict[str, str] = {}
+        msg_channel_map: Dict[str, str] = {}
         msg_text_map: Dict[str, str] = {}
+        id_counts = Counter(
+            msg.get("id", "") for msg in self._normalized_messages if msg.get("id")
+        )
         for msg in self._normalized_messages:
             msg_id = msg.get("id", "")
             author = msg.get("author", "")
+            author_profile_id = msg.get("author_profile_id", "")
+            channel_id = msg.get("channel_id", "")
             text = msg.get("text", "")
-            if msg_id:
+            if msg_id and id_counts[msg_id] == 1:
                 if author:
                     msg_author_map[msg_id] = author
+                if author_profile_id:
+                    msg_profile_map[msg_id] = author_profile_id
+                if channel_id:
+                    msg_channel_map[msg_id] = channel_id
                 if text:
                     msg_text_map[msg_id] = text
 
@@ -388,8 +509,36 @@ class FAQExtractionResult:
             question_author = msg_author_map.get(faq.question_msg_id, "")
             answer_author = msg_author_map.get(faq.answer_msg_id, "")
 
+            if self.source == "bisq2":
+                question_profile = msg_profile_map.get(faq.question_msg_id, "")
+                answer_profile = msg_profile_map.get(faq.answer_msg_id, "")
+                question_channel = msg_channel_map.get(faq.question_msg_id, "")
+                answer_channel = msg_channel_map.get(faq.answer_msg_id, "")
+                if not (
+                    question_profile
+                    and answer_profile
+                    and question_channel
+                    and question_channel == answer_channel
+                    and answer_profile in self._bisq_staff_profile_ids
+                    and question_profile not in self._bisq_staff_profile_ids
+                ):
+                    logger.warning(
+                        "Skipping Bisq FAQ with untrusted or conflicting provenance"
+                    )
+                    continue
+                staff_sender = answer_profile
+                source_event_id = f"bisq2:{answer_channel}:{faq.answer_msg_id}"
+            else:
+                staff_sender = answer_author
+                source_event_id = faq.answer_msg_id
+
             # Skip if both IDs resolve to the same author (same person)
-            if question_author and answer_author and question_author == answer_author:
+            if (
+                self.source != "bisq2"
+                and question_author
+                and answer_author
+                and question_author == answer_author
+            ):
                 logger.warning(
                     "Skipping FAQ: question and answer from same author '%s' "
                     "(event %s).",
@@ -424,11 +573,11 @@ class FAQExtractionResult:
                 {
                     "question_text": faq.question_text,
                     "staff_answer": faq.answer_text,
-                    "source_event_id": faq.answer_msg_id,
+                    "source_event_id": source_event_id,
                     "source": self.source,
                     "confidence": faq.confidence,
                     "has_correction": faq.has_correction,
-                    "staff_sender": answer_author,
+                    "staff_sender": staff_sender,
                     "category": faq.category,
                     "original_user_question": orig_question,
                     "original_staff_answer": orig_answer,
@@ -469,7 +618,13 @@ class UnifiedFAQExtractor:
         """
         self.aisuite_client = aisuite_client
         self.settings = settings
+        # Keep Matrix's legacy defaults, but never apply them to Bisq profile trust.
         self.staff_identifiers = staff_identifiers or DEFAULT_STAFF_IDENTIFIERS
+        self.bisq_staff_profile_ids = frozenset(
+            identifier
+            for identifier in (staff_identifiers or [])
+            if isinstance(identifier, str) and identifier
+        )
 
     def _is_staff_author(self, author: str) -> bool:
         """Check if author matches any staff identifier.
@@ -498,6 +653,17 @@ class UnifiedFAQExtractor:
                     return True
 
         return False
+
+    def _is_staff_message(self, message: Mapping[str, Any], source: str) -> bool:
+        """Resolve staff without applying Matrix alias rules to Bisq."""
+        if source == "bisq2":
+            profile_id = message.get("author_profile_id")
+            return bool(
+                isinstance(profile_id, str)
+                and profile_id
+                and profile_id in self.bisq_staff_profile_ids
+            )
+        return self._is_staff_author(str(message.get("author", "") or ""))
 
     async def extract_faqs(
         self,
@@ -528,12 +694,35 @@ class UnifiedFAQExtractor:
         try:
             normalized_messages = self._normalize_messages(messages, source)
 
+            if source == "bisq2":
+                channels = {
+                    msg.get("channel_id", "")
+                    for msg in normalized_messages
+                    if msg.get("channel_id")
+                }
+                if len(channels) != 1:
+                    logger.warning(
+                        "Skipping Bisq batch without one exact channel provenance"
+                    )
+                    return FAQExtractionResult(
+                        source=source,
+                        faqs=[],
+                        total_messages=len(messages),
+                        extracted_count=0,
+                        processing_time_ms=int((time.time() - start_time) * 1000),
+                        _normalized_messages=normalized_messages,
+                        _bisq_staff_profile_ids=self.bisq_staff_profile_ids,
+                    )
+
+            for message in normalized_messages:
+                message["is_staff"] = self._is_staff_message(message, source)
+
             # Without both user and staff messages, the LLM fabricates Q&A
             # pairs by using staff messages as both question and answer.
             has_staff = False
             has_user = False
             for msg in normalized_messages:
-                if self._is_staff_author(msg.get("author", "")):
+                if msg.get("is_staff") is True:
                     has_staff = True
                 else:
                     has_user = True
@@ -553,6 +742,8 @@ class UnifiedFAQExtractor:
                     total_messages=len(messages),
                     extracted_count=0,
                     processing_time_ms=int((time.time() - start_time) * 1000),
+                    _normalized_messages=normalized_messages,
+                    _bisq_staff_profile_ids=self.bisq_staff_profile_ids,
                 )
 
             anonymized_text, username_mapping = self._anonymize_messages(
@@ -560,10 +751,18 @@ class UnifiedFAQExtractor:
             )
 
             # Call LLM to extract Q&A pairs
-            llm_response = await self._call_llm(messages_text=anonymized_text)
+            llm_response = await self._call_llm(
+                messages_text=anonymized_text,
+                redact_errors=source == "bisq2",
+            )
 
             # Parse and validate response
-            faqs = self._parse_llm_response(llm_response)
+            faqs = self._parse_llm_response(
+                llm_response,
+                redact_errors=source == "bisq2",
+            )
+            if source == "bisq2":
+                faqs = self._validate_bisq_faqs(faqs, normalized_messages)
 
             processing_time_ms = int((time.time() - start_time) * 1000)
 
@@ -574,13 +773,19 @@ class UnifiedFAQExtractor:
                 extracted_count=len(faqs),
                 processing_time_ms=processing_time_ms,
                 _normalized_messages=normalized_messages,
+                _bisq_staff_profile_ids=self.bisq_staff_profile_ids,
             )
 
         except asyncio.CancelledError:
             # Re-raise cancellation to preserve async shutdown semantics
             raise
         except Exception as e:
-            logger.exception(f"FAQ extraction error: {e}")
+            if source == "bisq2":
+                logger.warning("Bisq FAQ extraction failed (%s)", type(e).__name__)
+                error = type(e).__name__
+            else:
+                logger.exception(f"FAQ extraction error: {e}")
+                error = str(e)
             processing_time_ms = int((time.time() - start_time) * 1000)
 
             return FAQExtractionResult(
@@ -589,7 +794,8 @@ class UnifiedFAQExtractor:
                 total_messages=len(messages),
                 extracted_count=0,
                 processing_time_ms=processing_time_ms,
-                error=str(e),
+                error=error,
+                _bisq_staff_profile_ids=self.bisq_staff_profile_ids,
             )
 
     def _normalize_messages(
@@ -608,19 +814,57 @@ class UnifiedFAQExtractor:
         Returns:
             List of normalized message dicts with consistent keys
         """
-        normalized = []
+        normalized: List[Dict[str, Any]] = []
+        bisq_inputs: List[tuple[Mapping[str, Any], Dict[str, Any]]] = []
 
         for msg in messages:
             if source == "bisq2":
-                normalized.append(
-                    {
-                        "id": msg.get("messageId", ""),
-                        "author": msg.get("author", ""),
-                        "text": msg.get("message", ""),
-                        "timestamp": msg.get("date", ""),
-                        "citation": msg.get("citation"),
-                    }
+                if not isinstance(msg, Mapping):
+                    continue
+                message_id = _resolve_exact_alias(
+                    msg,
+                    ("messageId", "message_id"),
                 )
+                author_profile_id = _resolve_exact_alias(
+                    msg,
+                    (
+                        "senderUserProfileId",
+                        "sender_user_profile_id",
+                        "authorId",
+                        "author_id",
+                        "senderId",
+                        "sender_id",
+                    ),
+                )
+                channel_id = _resolve_exact_alias(
+                    msg,
+                    (
+                        "channelId",
+                        "channel_id",
+                        "conversationId",
+                        "conversation_id",
+                    ),
+                )
+                text = msg.get("message", "")
+                if not (
+                    message_id
+                    and author_profile_id
+                    and channel_id
+                    and isinstance(text, str)
+                ):
+                    continue
+                author = msg.get("author", "")
+                normalized_message = {
+                    "id": message_id,
+                    "author": author if isinstance(author, str) else "",
+                    "author_profile_id": author_profile_id,
+                    "channel_id": channel_id,
+                    "conversation_id": channel_id,
+                    "text": text,
+                    "timestamp": msg.get("date", ""),
+                }
+                normalized.append(normalized_message)
+                bisq_inputs.append((msg, normalized_message))
             elif source == "matrix":
                 content = msg.get("content", {})
                 body = content.get("body", "") if isinstance(content, dict) else ""
@@ -642,7 +886,61 @@ class UnifiedFAQExtractor:
                     }
                 )
 
+        if source == "bisq2":
+            id_counts = Counter(msg["id"] for msg in normalized)
+            messages_by_id = {
+                msg["id"]: msg for msg in normalized if id_counts[msg["id"]] == 1
+            }
+            for raw_message, normalized_message in bisq_inputs:
+                citation_message_id = _resolve_valid_bisq_citation(
+                    raw_message,
+                    normalized_message,
+                    messages_by_id,
+                )
+                if citation_message_id:
+                    normalized_message["citation_message_id"] = citation_message_id
+
         return normalized
+
+    def _validate_bisq_faqs(
+        self,
+        faqs: Sequence[ExtractedFAQ],
+        messages: Sequence[Mapping[str, Any]],
+    ) -> List[ExtractedFAQ]:
+        """Reject LLM-selected pairs that do not preserve trusted provenance."""
+        id_counts = Counter(msg.get("id", "") for msg in messages if msg.get("id"))
+        messages_by_id = {
+            str(msg["id"]): msg
+            for msg in messages
+            if msg.get("id") and id_counts[msg["id"]] == 1
+        }
+        validated: List[ExtractedFAQ] = []
+        for faq in faqs:
+            question = messages_by_id.get(faq.question_msg_id)
+            answer = messages_by_id.get(faq.answer_msg_id)
+            if question is None or answer is None:
+                logger.warning("Rejected Bisq FAQ with unknown message provenance")
+                continue
+            question_profile = question.get("author_profile_id")
+            answer_profile = answer.get("author_profile_id")
+            question_channel = question.get("channel_id")
+            answer_channel = answer.get("channel_id")
+            if not (
+                isinstance(question_profile, str)
+                and question_profile
+                and isinstance(answer_profile, str)
+                and answer_profile in self.bisq_staff_profile_ids
+                and question_profile not in self.bisq_staff_profile_ids
+                and isinstance(question_channel, str)
+                and question_channel
+                and question_channel == answer_channel
+            ):
+                logger.warning(
+                    "Rejected Bisq FAQ with untrusted or conflicting provenance"
+                )
+                continue
+            validated.append(faq)
+        return validated
 
     def _anonymize_messages(
         self,
@@ -661,20 +959,23 @@ class UnifiedFAQExtractor:
         user_counter = 1
         staff_counter = 1
 
-        def get_anon_name(author: str) -> str:
+        def get_anon_name(identity: str, *, is_staff: bool | None = None) -> str:
             nonlocal user_counter, staff_counter
 
-            if author in user_mapping:
-                return user_mapping[author]
+            if identity in user_mapping:
+                return user_mapping[identity]
 
-            if self._is_staff_author(author):
+            trusted_staff = (
+                self._is_staff_author(identity) if is_staff is None else is_staff
+            )
+            if trusted_staff:
                 anon = f"Staff_{staff_counter}"
                 staff_counter += 1
             else:
                 anon = f"User_{user_counter}"
                 user_counter += 1
 
-            user_mapping[author] = anon
+            user_mapping[identity] = anon
             return anon
 
         # Build a lookup from message ID → message number for threading
@@ -688,36 +989,36 @@ class UnifiedFAQExtractor:
         lines = []
         for i, msg in enumerate(messages):
             author = msg.get("author", "unknown")
+            identity = msg.get("author_profile_id") or author
             text = msg.get("text", "")
             msg_id = msg.get("id", f"msg_{i}")
-            anon_author = get_anon_name(author)
+            trusted_staff = msg.get("is_staff")
+            anon_author = get_anon_name(
+                identity,
+                is_staff=trusted_staff if isinstance(trusted_staff, bool) else None,
+            )
 
             line = f"[Msg #{i+1}] [{anon_author}] (ID: {msg_id}): {text}"
 
             # Add citation/reply info with resolved message number
-            citation = msg.get("citation")
+            citation_message_id = msg.get("citation_message_id")
             reply_to = msg.get("reply_to")
 
-            if citation:
-                cited_author = citation.get("author", "unknown")
-                cited_text = (citation.get("text") or "")[:50]
-                anon_cited = get_anon_name(cited_author)
-                cited_msg_num = None
-                if cited_text:
-                    for mid, num in id_to_msg_number.items():
-                        if num < i + 1:
-                            check_msg = messages[num - 1]
-                            if check_msg.get(
-                                "author"
-                            ) == cited_author and cited_text in check_msg.get(
-                                "text", ""
-                            ):
-                                cited_msg_num = num
-                                break
+            if isinstance(citation_message_id, str):
+                cited_msg_num = id_to_msg_number.get(citation_message_id)
                 if cited_msg_num:
+                    cited_message = messages[cited_msg_num - 1]
+                    cited_identity = cited_message.get(
+                        "author_profile_id"
+                    ) or cited_message.get("author", "unknown")
+                    cited_staff = cited_message.get("is_staff")
+                    anon_cited = get_anon_name(
+                        cited_identity,
+                        is_staff=(
+                            cited_staff if isinstance(cited_staff, bool) else None
+                        ),
+                    )
                     line += f" ← IN REPLY TO [Msg #{cited_msg_num}] [{anon_cited}]"
-                else:
-                    line += f' (replying to {anon_cited}: "{cited_text}...")'
             elif reply_to:
                 replied_msg_num = id_to_msg_number.get(reply_to)
                 if replied_msg_num:
@@ -741,11 +1042,14 @@ class UnifiedFAQExtractor:
     async def _call_llm(
         self,
         messages_text: str,
+        *,
+        redact_errors: bool = False,
     ) -> Dict[str, Any]:
         """Call LLM via AISuite to extract Q&A pairs with retry/backoff.
 
         Args:
             messages_text: Anonymized message transcript
+            redact_errors: Log exception classes only for sensitive sources
 
         Returns:
             Parsed JSON response from LLM
@@ -831,10 +1135,20 @@ Return a JSON object with the extracted FAQ pairs. Only include high-quality Q&A
             except Exception as e:
                 is_rate_limit = "rate limit" in str(e).lower()
                 error_level = logging.WARNING if is_rate_limit else logging.ERROR
-                logger.log(
-                    error_level,
-                    f"Error during LLM API call on attempt {attempt + 1}: {e!s}",
-                )
+                if redact_errors:
+                    logger.log(
+                        error_level,
+                        "LLM API call attempt %s failed (%s)",
+                        attempt + 1,
+                        type(e).__name__,
+                    )
+                else:
+                    logger.log(
+                        error_level,
+                        "Error during LLM API call on attempt %s: %s",
+                        attempt + 1,
+                        e,
+                    )
 
                 if attempt < self.MAX_RETRIES - 1:
                     # Exponential backoff with jitter
@@ -846,13 +1160,18 @@ Return a JSON object with the extracted FAQ pairs. Only include high-quality Q&A
                     logger.info(f"Retrying in {delay:.2f} seconds...")
                     await asyncio.sleep(delay)
                 else:
-                    logger.exception("Max retries reached for LLM API call")
+                    if redact_errors:
+                        logger.warning("Max retries reached for LLM API call")
+                    else:
+                        logger.exception("Max retries reached for LLM API call")
 
         return {"faq_pairs": []}
 
     def _parse_llm_response(
         self,
         response: Dict[str, Any],
+        *,
+        redact_errors: bool = False,
     ) -> List[ExtractedFAQ]:
         """Parse LLM response into ExtractedFAQ objects.
 
@@ -910,8 +1229,14 @@ Return a JSON object with the extracted FAQ pairs. Only include high-quality Q&A
 
                 faqs.append(faq)
 
-            except (KeyError, ValueError, TypeError) as e:
-                logger.warning(f"Failed to parse FAQ pair: {e}")
+            except (KeyError, ValueError, TypeError) as exc:
+                if redact_errors:
+                    logger.warning(
+                        "Failed to parse Bisq FAQ pair (%s)",
+                        type(exc).__name__,
+                    )
+                else:
+                    logger.warning("Failed to parse FAQ pair: %s", exc)
                 continue
 
         return faqs

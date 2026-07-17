@@ -47,6 +47,19 @@ pytestmark = pytest.mark.skipif(
 # Test Data Fixtures
 # =============================================================================
 
+_TEST_CHANNEL_ID = "test-channel"
+
+
+def _with_bisq_provenance(
+    messages: List[Dict[str, Any]],
+    *,
+    channel_id: str = _TEST_CHANNEL_ID,
+) -> List[Dict[str, Any]]:
+    for message in messages:
+        message["senderUserProfileId"] = message["author"]
+        message["channelId"] = channel_id
+    return messages
+
 
 @pytest.fixture
 def staff_identifiers() -> List[str]:
@@ -57,100 +70,106 @@ def staff_identifiers() -> List[str]:
 @pytest.fixture
 def simple_qa_messages() -> List[Dict[str, Any]]:
     """Simple Q&A exchange with citation-based pairing (Bisq 2 format)."""
-    return [
-        {
-            "messageId": "msg_q1",
-            "message": "How do I start trading on Bisq Easy?",
-            "author": "user123",
-            "date": "2026-01-15T10:00:00Z",
-            "citation": None,
-        },
-        {
-            "messageId": "msg_a1",
-            "message": "Go to Trade > Trade Wizard to start. New users have a $600 limit.",
-            "author": "suddenwhipvapor",
-            "date": "2026-01-15T10:05:00Z",
-            "citation": {
+    return _with_bisq_provenance(
+        [
+            {
+                "messageId": "msg_q1",
+                "message": "How do I start trading on Bisq Easy?",
                 "author": "user123",
-                "text": "How do I start trading on Bisq Easy?",
+                "date": "2026-01-15T10:00:00Z",
+                "citation": None,
             },
-        },
-    ]
+            {
+                "messageId": "msg_a1",
+                "message": "Go to Trade > Trade Wizard to start. New users have a $600 limit.",
+                "author": "suddenwhipvapor",
+                "date": "2026-01-15T10:05:00Z",
+                "citation": {
+                    "author": "user123",
+                    "text": "How do I start trading on Bisq Easy?",
+                },
+            },
+        ]
+    )
 
 
 @pytest.fixture
 def multi_qa_messages() -> List[Dict[str, Any]]:
     """Multiple Q&A pairs from different users."""
-    return [
-        {
-            "messageId": "msg_q1",
-            "message": "What is the trade limit for new users?",
-            "author": "alice",
-            "date": "2026-01-15T10:00:00Z",
-            "citation": None,
-        },
-        {
-            "messageId": "msg_q2",
-            "message": "Is Bisq Easy available on mobile?",
-            "author": "bob",
-            "date": "2026-01-15T10:01:00Z",
-            "citation": None,
-        },
-        {
-            "messageId": "msg_a1",
-            "message": "The trade limit is $600 USD for new users without reputation.",
-            "author": "suddenwhipvapor",
-            "date": "2026-01-15T10:03:00Z",
-            "citation": {
+    return _with_bisq_provenance(
+        [
+            {
+                "messageId": "msg_q1",
+                "message": "What is the trade limit for new users?",
                 "author": "alice",
-                "text": "What is the trade limit for new users?",
+                "date": "2026-01-15T10:00:00Z",
+                "citation": None,
             },
-        },
-        {
-            "messageId": "msg_a2",
-            "message": "Currently Bisq Easy is only available on desktop (Linux, macOS, Windows).",
-            "author": "mwithm",
-            "date": "2026-01-15T10:04:00Z",
-            "citation": {
+            {
+                "messageId": "msg_q2",
+                "message": "Is Bisq Easy available on mobile?",
                 "author": "bob",
-                "text": "Is Bisq Easy available on mobile?",
+                "date": "2026-01-15T10:01:00Z",
+                "citation": None,
             },
-        },
-    ]
+            {
+                "messageId": "msg_a1",
+                "message": "The trade limit is $600 USD for new users without reputation.",
+                "author": "suddenwhipvapor",
+                "date": "2026-01-15T10:03:00Z",
+                "citation": {
+                    "author": "alice",
+                    "text": "What is the trade limit for new users?",
+                },
+            },
+            {
+                "messageId": "msg_a2",
+                "message": "Currently Bisq Easy is only available on desktop (Linux, macOS, Windows).",
+                "author": "mwithm",
+                "date": "2026-01-15T10:04:00Z",
+                "citation": {
+                    "author": "bob",
+                    "text": "Is Bisq Easy available on mobile?",
+                },
+            },
+        ]
+    )
 
 
 @pytest.fixture
 def correction_messages() -> List[Dict[str, Any]]:
     """Messages with staff correction - should use final answer."""
-    return [
-        {
-            "messageId": "msg_q1",
-            "message": "What payment methods are supported?",
-            "author": "user456",
-            "date": "2026-01-15T10:00:00Z",
-            "citation": None,
-        },
-        {
-            "messageId": "msg_a1",
-            "message": "We support bank transfers only.",
-            "author": "suddenwhipvapor",
-            "date": "2026-01-15T10:02:00Z",
-            "citation": {
+    return _with_bisq_provenance(
+        [
+            {
+                "messageId": "msg_q1",
+                "message": "What payment methods are supported?",
                 "author": "user456",
-                "text": "What payment methods are supported?",
+                "date": "2026-01-15T10:00:00Z",
+                "citation": None,
             },
-        },
-        {
-            "messageId": "msg_a2",
-            "message": "Actually, correction: We support bank transfers, SEPA, and various other methods. Check the Trade Wizard for the full list.",
-            "author": "suddenwhipvapor",
-            "date": "2026-01-15T10:03:00Z",
-            "citation": {
-                "author": "user456",
-                "text": "What payment methods are supported?",
+            {
+                "messageId": "msg_a1",
+                "message": "We support bank transfers only.",
+                "author": "suddenwhipvapor",
+                "date": "2026-01-15T10:02:00Z",
+                "citation": {
+                    "author": "user456",
+                    "text": "What payment methods are supported?",
+                },
             },
-        },
-    ]
+            {
+                "messageId": "msg_a2",
+                "message": "Actually, correction: We support bank transfers, SEPA, and various other methods. Check the Trade Wizard for the full list.",
+                "author": "suddenwhipvapor",
+                "date": "2026-01-15T10:03:00Z",
+                "citation": {
+                    "author": "user456",
+                    "text": "What payment methods are supported?",
+                },
+            },
+        ]
+    )
 
 
 @pytest.fixture
@@ -186,46 +205,48 @@ def matrix_format_messages() -> List[Dict[str, Any]]:
 @pytest.fixture
 def mixed_chatter_messages() -> List[Dict[str, Any]]:
     """Messages with non-question chatter that should be filtered."""
-    return [
-        {
-            "messageId": "msg_1",
-            "message": "Good morning everyone!",
-            "author": "alice",
-            "date": "2026-01-15T09:00:00Z",
-            "citation": None,
-        },
-        {
-            "messageId": "msg_2",
-            "message": "What is the minimum trade amount?",
-            "author": "bob",
-            "date": "2026-01-15T09:05:00Z",
-            "citation": None,
-        },
-        {
-            "messageId": "msg_3",
-            "message": "👍",
-            "author": "charlie",
-            "date": "2026-01-15T09:06:00Z",
-            "citation": None,
-        },
-        {
-            "messageId": "msg_4",
-            "message": "The minimum trade amount is $10 USD equivalent.",
-            "author": "suddenwhipvapor",
-            "date": "2026-01-15T09:08:00Z",
-            "citation": {
-                "author": "bob",
-                "text": "What is the minimum trade amount?",
+    return _with_bisq_provenance(
+        [
+            {
+                "messageId": "msg_1",
+                "message": "Good morning everyone!",
+                "author": "alice",
+                "date": "2026-01-15T09:00:00Z",
+                "citation": None,
             },
-        },
-        {
-            "messageId": "msg_5",
-            "message": "Thanks!",
-            "author": "bob",
-            "date": "2026-01-15T09:09:00Z",
-            "citation": None,
-        },
-    ]
+            {
+                "messageId": "msg_2",
+                "message": "What is the minimum trade amount?",
+                "author": "bob",
+                "date": "2026-01-15T09:05:00Z",
+                "citation": None,
+            },
+            {
+                "messageId": "msg_3",
+                "message": "👍",
+                "author": "charlie",
+                "date": "2026-01-15T09:06:00Z",
+                "citation": None,
+            },
+            {
+                "messageId": "msg_4",
+                "message": "The minimum trade amount is $10 USD equivalent.",
+                "author": "suddenwhipvapor",
+                "date": "2026-01-15T09:08:00Z",
+                "citation": {
+                    "author": "bob",
+                    "text": "What is the minimum trade amount?",
+                },
+            },
+            {
+                "messageId": "msg_5",
+                "message": "Thanks!",
+                "author": "bob",
+                "date": "2026-01-15T09:09:00Z",
+                "citation": None,
+            },
+        ]
+    )
 
 
 # =============================================================================
@@ -812,10 +833,13 @@ class TestErrorHandling:
         assert result.extracted_count == 0
 
     @pytest.mark.asyncio
-    async def test_handles_llm_error_gracefully(self, extractor, simple_qa_messages):
+    async def test_handles_llm_error_gracefully(
+        self, extractor, simple_qa_messages, caplog
+    ):
         """Should handle LLM API errors gracefully."""
+        secret_error = "sensitive-endpoint-and-profile"
         with patch.object(extractor, "_call_llm", new_callable=AsyncMock) as mock_call:
-            mock_call.side_effect = Exception("API Error")
+            mock_call.side_effect = Exception(secret_error)
 
             result = await extractor.extract_faqs(
                 messages=simple_qa_messages,
@@ -825,8 +849,8 @@ class TestErrorHandling:
         # Should return empty result, not raise exception
         assert result is not None
         assert len(result.faqs) == 0
-        assert result.error is not None
-        assert "API Error" in result.error
+        assert result.error == "Exception"
+        assert secret_error not in caplog.text
 
     @pytest.mark.asyncio
     async def test_handles_malformed_llm_response(self, extractor, simple_qa_messages):
@@ -935,6 +959,8 @@ class TestPipelineIntegration:
         assert "staff_answer" in item
         assert "source_event_id" in item
         assert "source" in item
+        assert item["source_event_id"] == "bisq2:test-channel:msg_a1"
+        assert item["staff_sender"] == "suddenwhipvapor"
 
 
 # =============================================================================
@@ -963,25 +989,27 @@ class TestOriginalAnswerPreservation:
     @pytest.fixture
     def simple_messages(self) -> List[Dict[str, Any]]:
         """Simple messages for testing original answer preservation."""
-        return [
-            {
-                "messageId": "msg_q1",
-                "message": "How do I backup?",
-                "author": "user123",
-                "date": "2026-01-15T10:00:00Z",
-                "citation": None,
-            },
-            {
-                "messageId": "msg_a1",
-                "message": "hey! just go to wallet and click backup",
-                "author": "suddenwhipvapor",
-                "date": "2026-01-15T10:05:00Z",
-                "citation": {
+        return _with_bisq_provenance(
+            [
+                {
+                    "messageId": "msg_q1",
+                    "message": "How do I backup?",
                     "author": "user123",
-                    "text": "How do I backup?",
+                    "date": "2026-01-15T10:00:00Z",
+                    "citation": None,
                 },
-            },
-        ]
+                {
+                    "messageId": "msg_a1",
+                    "message": "hey! just go to wallet and click backup",
+                    "author": "suddenwhipvapor",
+                    "date": "2026-01-15T10:05:00Z",
+                    "citation": {
+                        "author": "user123",
+                        "text": "How do I backup?",
+                    },
+                },
+            ]
+        )
 
     @pytest.mark.asyncio
     async def test_extraction_returns_original_answer_text(
@@ -1121,14 +1149,10 @@ class TestOriginalAnswerPreservation:
         )
 
     @pytest.mark.asyncio
-    async def test_original_staff_answer_falls_back_to_llm_when_id_not_found(
+    async def test_unknown_answer_id_does_not_trust_llm_fallback(
         self, extractor, simple_messages
     ):
-        """When answer_msg_id is not in normalized messages, fall back to LLM's copy.
-
-        This can happen if the LLM returns an invalid message ID. In this case,
-        using the LLM's original_answer_text is better than returning None.
-        """
+        """An unknown answer ID cannot supply staff text through the LLM."""
         mock_llm_response = {
             "faq_pairs": [
                 {
@@ -1150,8 +1174,7 @@ class TestOriginalAnswerPreservation:
 
         pipeline_data = result.to_pipeline_format()
 
-        # Should fall back to LLM's copy when direct lookup fails
-        assert pipeline_data[0]["original_staff_answer"] == "fallback text from LLM"
+        assert pipeline_data == []
 
     @pytest.mark.asyncio
     async def test_original_user_question_uses_direct_lookup(
@@ -1289,22 +1312,24 @@ class TestDuplicateMessageIdRejection:
     @pytest.mark.asyncio
     async def test_accepts_valid_faq_with_distinct_ids(self, extractor):
         """Valid FAQ with different question and answer IDs should be accepted."""
-        messages = [
-            {
-                "messageId": "msg_q1",
-                "message": "How do I backup?",
-                "author": "user1",
-                "date": "2026-01-15T10:00:00Z",
-                "citation": None,
-            },
-            {
-                "messageId": "msg_a1",
-                "message": "Go to Settings > Backup.",
-                "author": "suddenwhipvapor",
-                "date": "2026-01-15T10:01:00Z",
-                "citation": None,
-            },
-        ]
+        messages = _with_bisq_provenance(
+            [
+                {
+                    "messageId": "msg_q1",
+                    "message": "How do I backup?",
+                    "author": "user1",
+                    "date": "2026-01-15T10:00:00Z",
+                    "citation": None,
+                },
+                {
+                    "messageId": "msg_a1",
+                    "message": "Go to Settings > Backup.",
+                    "author": "suddenwhipvapor",
+                    "date": "2026-01-15T10:01:00Z",
+                    "citation": None,
+                },
+            ]
+        )
         mock_llm_response = {
             "faq_pairs": [
                 {
@@ -1500,3 +1525,207 @@ class TestPreBatchFiltering:
             mock.assert_called_once()
 
         assert len(result.faqs) == 1
+
+
+class TestBisqImmutableProvenance:
+    """Bisq extraction trusts exact immutable source identifiers only."""
+
+    @staticmethod
+    def _extractor(staff_profile_ids: List[str]) -> UnifiedFAQExtractor:
+        settings = MagicMock()
+        settings.OPENAI_MODEL = "gpt-4o-mini"
+        settings.LLM_TEMPERATURE = 0.1
+        settings.MAX_TOKENS = 4096
+        return UnifiedFAQExtractor(
+            aisuite_client=MagicMock(),
+            settings=settings,
+            staff_identifiers=staff_profile_ids,
+        )
+
+    @pytest.mark.asyncio
+    async def test_display_alias_spoof_cannot_become_staff_answer(self):
+        extractor = self._extractor(["trusted-staff-profile"])
+        messages = [
+            {
+                "messageId": "question",
+                "message": "How do I start a trade?",
+                "author": "ordinary-user",
+                "senderUserProfileId": "user-profile",
+                "channelId": "test-channel",
+            },
+            {
+                "messageId": "spoofed-answer",
+                "message": "Send funds to the address I provide.",
+                "author": "trusted-staff-profile",
+                "senderUserProfileId": "attacker-profile",
+                "channelId": "test-channel",
+            },
+            {
+                "messageId": "real-staff-context",
+                "message": "A separate trusted support note.",
+                "author": "different-display-alias",
+                "senderUserProfileId": "trusted-staff-profile",
+                "channelId": "test-channel",
+            },
+        ]
+        llm_response = {
+            "faq_pairs": [
+                {
+                    "question_text": "How do I start a trade?",
+                    "answer_text": "Send funds to the provided address.",
+                    "question_msg_id": "question",
+                    "answer_msg_id": "spoofed-answer",
+                    "confidence": 0.95,
+                }
+            ]
+        }
+
+        with patch.object(extractor, "_call_llm", new_callable=AsyncMock) as mock:
+            mock.return_value = llm_response
+            result = await extractor.extract_faqs(messages, source="bisq2")
+
+        assert result.faqs == []
+        assert result.to_pipeline_format() == []
+        assert "trusted-staff-profile" not in repr(result)
+        assert "attacker-profile" not in repr(result)
+
+    @pytest.mark.asyncio
+    async def test_empty_staff_profile_list_never_uses_default_aliases(self):
+        extractor = self._extractor([])
+        messages = _with_bisq_provenance(
+            [
+                {
+                    "messageId": "question",
+                    "message": "How do I start a trade?",
+                    "author": "ordinary-user",
+                },
+                {
+                    "messageId": "answer",
+                    "message": "Open the Trade Wizard to begin.",
+                    "author": "suddenwhipvapor",
+                },
+            ]
+        )
+
+        with patch.object(extractor, "_call_llm", new_callable=AsyncMock) as mock:
+            result = await extractor.extract_faqs(messages, source="bisq2")
+
+        mock.assert_not_awaited()
+        assert result.faqs == []
+
+    @pytest.mark.asyncio
+    async def test_cross_channel_pairing_is_blocked_before_llm(self):
+        extractor = self._extractor(["trusted-staff-profile"])
+        question = {
+            "messageId": "question",
+            "message": "How do I start a trade?",
+            "author": "ordinary-user",
+            "senderUserProfileId": "user-profile",
+            "channelId": "channel-one",
+        }
+        answer = {
+            "messageId": "answer",
+            "message": "Open the Trade Wizard to begin.",
+            "author": "support-alias",
+            "senderUserProfileId": "trusted-staff-profile",
+            "channelId": "channel-two",
+        }
+
+        with patch.object(extractor, "_call_llm", new_callable=AsyncMock) as mock:
+            result = await extractor.extract_faqs(
+                [question, answer],
+                source="bisq2",
+            )
+
+        mock.assert_not_awaited()
+        assert result.faqs == []
+
+    @pytest.mark.asyncio
+    async def test_unapproved_nested_citation_text_never_reaches_llm(self):
+        extractor = self._extractor(["trusted-staff-profile"])
+        citation_secret = "unapproved-citation-secret"
+        messages = [
+            {
+                "messageId": "question",
+                "message": "How do I start a trade?",
+                "author": "ordinary-user",
+                "senderUserProfileId": "user-profile",
+                "channelId": "test-channel",
+            },
+            {
+                "messageId": "answer",
+                "message": "Open the Trade Wizard to begin.",
+                "author": "support-alias",
+                "senderUserProfileId": "trusted-staff-profile",
+                "channelId": "test-channel",
+                "citation": {
+                    "messageId": "outside-batch-message",
+                    "senderUserProfileId": "outside-scope-profile",
+                    "text": citation_secret,
+                },
+            },
+        ]
+        llm_response = {
+            "faq_pairs": [
+                {
+                    "question_text": "How do I start a trade?",
+                    "answer_text": "Open the Trade Wizard to begin.",
+                    "question_msg_id": "question",
+                    "answer_msg_id": "answer",
+                    "confidence": 0.95,
+                }
+            ]
+        }
+        captured_prompt = ""
+
+        async def capture_prompt(*args, **kwargs):
+            nonlocal captured_prompt
+            captured_prompt = kwargs.get("messages_text") or args[0]
+            return llm_response
+
+        with patch.object(extractor, "_call_llm", side_effect=capture_prompt):
+            result = await extractor.extract_faqs(messages, source="bisq2")
+
+        assert len(result.faqs) == 1
+        assert citation_secret not in captured_prompt
+        assert "outside-batch-message" not in captured_prompt
+        assert "IN REPLY TO" not in captured_prompt
+
+    @pytest.mark.asyncio
+    async def test_exact_same_channel_citation_keeps_only_safe_reference(self):
+        extractor = self._extractor(["trusted-staff-profile"])
+        nested_text = "nested-text-must-not-be-copied"
+        messages = [
+            {
+                "messageId": "question",
+                "message": "How do I start a trade?",
+                "author": "ordinary-user",
+                "senderUserProfileId": "user-profile",
+                "channelId": "test-channel",
+            },
+            {
+                "messageId": "answer",
+                "message": "Open the Trade Wizard to begin.",
+                "author": "support-alias",
+                "senderUserProfileId": "trusted-staff-profile",
+                "channelId": "test-channel",
+                "citation": {
+                    "messageId": "question",
+                    "senderUserProfileId": "user-profile",
+                    "channelId": "test-channel",
+                    "text": nested_text,
+                },
+            },
+        ]
+        captured_prompt = ""
+
+        async def capture_prompt(*args, **kwargs):
+            nonlocal captured_prompt
+            captured_prompt = kwargs.get("messages_text") or args[0]
+            return {"faq_pairs": []}
+
+        with patch.object(extractor, "_call_llm", side_effect=capture_prompt):
+            await extractor.extract_faqs(messages, source="bisq2")
+
+        assert "IN REPLY TO [Msg #1]" in captured_prompt
+        assert nested_text not in captured_prompt

@@ -77,6 +77,27 @@ class LivePollingService:
         logger.info("Live polling service stopped for channel=%s", self.channel_id)
 
     async def run_once(self) -> int:
+        maintenance = (
+            getattr(self.channel, "maintain_readiness", None)
+            if inspect.getattr_static(
+                self.channel,
+                "maintain_readiness",
+                _MISSING,
+            )
+            is not _MISSING
+            else None
+        )
+        if callable(maintenance):
+            maintenance_result = maintenance()
+            if inspect.isawaitable(maintenance_result):
+                maintenance_result = await maintenance_result
+            if maintenance_result is False:
+                logger.debug(
+                    "Channel readiness unavailable for channel=%s; skipping poll",
+                    self.channel_id,
+                )
+                return 0
+
         if not is_generation_enabled(self.autoresponse_policy_service, self.channel_id):
             logger.debug(
                 "AI generation disabled for channel=%s; ignoring inbound messages",

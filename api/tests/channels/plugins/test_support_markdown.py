@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -269,6 +270,12 @@ async def test_bisq2_channel_send_message_uses_rendered_markdown_and_cleans_visi
     mock_api.send_support_message = AsyncMock(return_value={"messageId": "bisq-msg-1"})
 
     runtime = MagicMock(spec=ChannelRuntime)
+    runtime.settings = SimpleNamespace(
+        BISQ2_ALLOWED_CHANNEL_IDS=["support.support"],
+        BISQ2_ALLOWED_SENDER_PROFILE_IDS=["user-1"],
+        BISQ2_CHATOPS_CHANNEL_IDS=[],
+        BISQ2_STAFF_NOTIFICATION_TARGET="",
+    )
 
     def _resolve(name: str):
         if name == "bisq2_api":
@@ -285,7 +292,11 @@ async def test_bisq2_channel_send_message_uses_rendered_markdown_and_cleans_visi
                 "Recent chat history:\n"
                 "- user: What is Bisq?\n"
                 "- participant: Bisq is decentralized."
-            )
+            ),
+            "user": UserContext(
+                user_id="user-1",
+                metadata={"bisq2_sender_profile_id": "user-1"},
+            ),
         }
     )
     result = await channel.send_message("support.support", outgoing)
@@ -293,6 +304,7 @@ async def test_bisq2_channel_send_message_uses_rendered_markdown_and_cleans_visi
     assert bool(result) is True
     sent_kwargs = mock_api.send_support_message.call_args.kwargs
     assert sent_kwargs["citation"] == "Current question: Who is behind Bisq?"
+    assert sent_kwargs["origin_sender_profile_id"] == "user-1"
 
     sent_text = sent_kwargs["text"]
     assert "**Answer quality**" not in sent_text

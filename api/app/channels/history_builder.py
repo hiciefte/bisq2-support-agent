@@ -21,6 +21,7 @@ class ConversationMessage:
     text: str
     timestamp_ms: int
     citation_message_id: str | None = None
+    immutable_sender_id: str | None = None
 
 
 def build_channel_chat_history(
@@ -38,8 +39,8 @@ def build_channel_chat_history(
     Strategy:
     - Keep the requester's current message plus up to N recent requester messages.
     - Include adjacent previous staff message for each requester turn.
-    - Expand citation links transitively both directions.
-    - Exclude unrelated third-party chatter by default.
+    - Follow citations only from already-selected messages to older context.
+    - Include non-requesters only when the channel marks them as trusted staff.
     """
     if not current_message_id or not requester_id:
         return None
@@ -52,8 +53,6 @@ def build_channel_chat_history(
 
     current = ordered[current_index]
     included_ids: set[str] = {current.message_id}
-    if current.citation_message_id:
-        included_ids.add(current.citation_message_id)
 
     requester_count = 0
     for idx in range(current_index, -1, -1):
@@ -75,7 +74,7 @@ def build_channel_chat_history(
             is_staff_message=is_staff_message,
         )
 
-    _expand_citation_links(ordered=ordered, included_ids=included_ids)
+    _expand_cited_context(ordered=ordered, included_ids=included_ids)
 
     history: list[dict[str, str]] = []
     for msg in ordered:
@@ -84,7 +83,12 @@ def build_channel_chat_history(
         normalized_text = _normalize(msg.text)
         if not normalized_text:
             continue
-        role = "user" if msg.sender_id == requester_id else "assistant"
+        if msg.sender_id == requester_id:
+            role = "user"
+        elif is_staff_message(msg):
+            role = "assistant"
+        else:
+            continue
         history.append(
             {
                 "role": role,
@@ -130,23 +134,30 @@ def _include_adjacent_previous_staff(
         return
 
 
-def _expand_citation_links(
+def _expand_cited_context(
     *, ordered: Sequence[ConversationMessage], included_ids: set[str]
 ) -> None:
+    """Follow citations out from selected messages without reverse expansion."""
+    message_by_id = {message.message_id: message for message in ordered}
+    index_by_id = {message.message_id: index for index, message in enumerate(ordered)}
     changed = True
     while changed:
         changed = False
-        for msg in ordered:
-            cited = msg.citation_message_id
-            if not cited:
+        for message_id in tuple(included_ids):
+            msg = message_by_id.get(message_id)
+            if msg is None:
                 continue
-            if msg.message_id in included_ids or cited in included_ids:
-                if msg.message_id not in included_ids:
-                    included_ids.add(msg.message_id)
-                    changed = True
-                if cited not in included_ids:
-                    included_ids.add(cited)
-                    changed = True
+            cited = msg.citation_message_id
+            if not cited or cited not in message_by_id:
+                continue
+            # Citations are context only when they point backward in the
+            # deterministic conversation order. A forward reference must not
+            # pull a later staff message into the current user's prompt.
+            if index_by_id[cited] >= index_by_id[message_id]:
+                continue
+            if cited not in included_ids:
+                included_ids.add(cited)
+                changed = True
 
 
 def _normalize(text: str | None) -> str | None:

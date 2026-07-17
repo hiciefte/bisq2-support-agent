@@ -205,6 +205,25 @@ class TestTrackerExtendedFields:
         record = tracker.lookup("matrix", "$evt:3")
         assert record.routing_action == "auto_send"
 
+    def test_track_preserves_exact_bisq_origin_and_delivery_target(self):
+        tracker = SentMessageTracker(ttl_hours=24)
+        tracker.track(
+            channel_id="bisq2",
+            external_message_id="message-1",
+            internal_message_id="internal-1",
+            question="Q",
+            answer="A",
+            user_id="model-safe-user",
+            delivery_target="Exact-Channel",
+            origin_sender_profile_id="Exact-Profile",
+        )
+
+        record = tracker.lookup("bisq2", "message-1")
+
+        assert record is not None
+        assert record.delivery_target == "Exact-Channel"
+        assert record.origin_sender_profile_id == "Exact-Profile"
+
     def test_new_fields_default_none(self):
         tracker = SentMessageTracker(ttl_hours=24)
         tracker.track(

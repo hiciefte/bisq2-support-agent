@@ -8,6 +8,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from app.channels.models import ChannelType, OutgoingMessage
+from app.channels.reactions import (
+    ReactionEvent,
+    ReactionProcessor,
+    ReactionRating,
+    SentMessageTracker,
+)
 from app.models.escalation import Escalation, EscalationPriority, EscalationStatus
 from app.services.channel_launch_control_service import ChannelLaunchControlService
 
@@ -31,6 +37,23 @@ def _make_escalation(channel="web", **overrides):
     )
     defaults.update(overrides)
     return Escalation(**defaults)
+
+
+def _allow_bisq_delivery(adapter) -> None:
+    adapter.allows_test_delivery = MagicMock(return_value=True)
+
+
+def _bisq_metadata(
+    target: str = "Exact-Channel",
+    profile: str = "Exact-Profile",
+) -> dict[str, str]:
+    return {
+        "channel_id": target,
+        "conversation_id": target,
+        "delivery_target": target,
+        "origin_sender_profile_id": profile,
+        "sender_profile_id": profile,
+    }
 
 
 class TestResponseDeliveryWeb:
@@ -140,7 +163,10 @@ class TestResponseDeliveryMatrix:
         ("channel_id", "channel_metadata"),
         [
             ("matrix", {"room_id": "room-id"}),
-            ("bisq2", {"conversation_id": "conversation-id"}),
+            (
+                "bisq2",
+                _bisq_metadata("conversation-id", "profile-approved"),
+            ),
         ],
     )
     async def test_reviewed_staff_delivery_ignores_autonomous_launch_guard(
@@ -162,8 +188,12 @@ class TestResponseDeliveryMatrix:
         assert launch_control.review_only_reason(channel_id) == expected_reason
 
         adapter = MagicMock()
-        adapter.get_delivery_target = MagicMock(return_value="room-id")
+        adapter.get_delivery_target = MagicMock(
+            side_effect=lambda metadata: metadata.get("delivery_target", "room-id")
+        )
         adapter.send_message = AsyncMock(return_value=True)
+        if channel_id == "bisq2":
+            _allow_bisq_delivery(adapter)
         registry = MagicMock()
         registry.get.return_value = adapter
         delivery = ResponseDelivery(registry)
@@ -189,21 +219,26 @@ class TestResponseDeliveryBisq2:
         adapter = MagicMock()
         adapter.get_delivery_target = MagicMock(return_value="conv-123")
         adapter.send_message = AsyncMock(return_value=True)
+        _allow_bisq_delivery(adapter)
 
         registry = MagicMock()
         registry.get.return_value = adapter
 
         delivery = ResponseDelivery(registry)
         escalation = _make_escalation(
-            channel="bisq2", channel_metadata={"conversation_id": "conv-123"}
+            channel="bisq2",
+            channel_metadata=_bisq_metadata("conv-123", "profile-approved"),
         )
 
         result = await delivery.deliver(escalation, "Staff answer here")
 
         assert result is True
         adapter.get_delivery_target.assert_called_once_with(
-            {"conversation_id": "conv-123"}
+            _bisq_metadata("conv-123", "profile-approved")
         )
+        _, outgoing = adapter.send_message.await_args.args
+        assert outgoing.user.metadata == {"bisq2_sender_profile_id": "profile-approved"}
+        assert outgoing.user.user_id == "user_123"
 
     @pytest.mark.asyncio
     async def test_bisq2_delivery_failure_returns_false(self):
@@ -213,18 +248,87 @@ class TestResponseDeliveryBisq2:
         adapter = MagicMock()
         adapter.get_delivery_target = MagicMock(return_value="conv-123")
         adapter.send_message = AsyncMock(return_value=False)
+        _allow_bisq_delivery(adapter)
 
         registry = MagicMock()
         registry.get.return_value = adapter
 
         delivery = ResponseDelivery(registry)
         escalation = _make_escalation(
-            channel="bisq2", channel_metadata={"conversation_id": "conv-123"}
+            channel="bisq2",
+            channel_metadata=_bisq_metadata("conv-123", "profile-approved"),
         )
 
         result = await delivery.deliver(escalation, "Staff answer here")
 
         assert result is False
+
+    @pytest.mark.asyncio
+    async def test_negative_reaction_provenance_reaches_reviewed_delivery(self):
+        from app.services.escalation.response_delivery import ResponseDelivery
+
+        tracker = SentMessageTracker(ttl_hours=24)
+        tracker.track(
+            channel_id="bisq2",
+            external_message_id="message-1",
+            internal_message_id="internal-1",
+            question="Q",
+            answer="A",
+            user_id="model-safe-user",
+            delivery_target="Exact-Channel",
+            origin_sender_profile_id="Exact-Profile",
+            confidence_score=0.97,
+            routing_action="auto_send",
+        )
+        feedback_service = MagicMock()
+        feedback_service.store_reaction_feedback = MagicMock()
+        feedback_service.apply_feedback_weights_async = AsyncMock()
+        escalation_service = AsyncMock()
+        escalation_service.create_escalation = AsyncMock(return_value=MagicMock(id=9))
+        processor = ReactionProcessor(
+            tracker,
+            feedback_service,
+            escalation_service=escalation_service,
+        )
+        process_result = await processor.process(
+            ReactionEvent(
+                channel_id="bisq2",
+                external_message_id="message-1",
+                reactor_id="Exact-Profile",
+                rating=ReactionRating.NEGATIVE,
+                raw_reaction="THUMBS_DOWN",
+                timestamp=datetime.now(timezone.utc),
+                metadata={"delivery_target": "Exact-Channel"},
+            )
+        )
+        create_data = escalation_service.create_escalation.await_args.args[0]
+        escalation = Escalation(
+            id=9,
+            created_at=datetime.now(timezone.utc),
+            **create_data.model_dump(),
+        )
+        adapter = MagicMock()
+        adapter.get_delivery_target = MagicMock(
+            side_effect=lambda metadata: metadata["conversation_id"]
+        )
+        adapter.allows_test_delivery = MagicMock(return_value=True)
+        adapter.send_message = AsyncMock(return_value=True)
+        registry = MagicMock()
+        registry.get.return_value = adapter
+
+        delivered = await ResponseDelivery(registry).deliver(
+            escalation, "Reviewed answer"
+        )
+
+        assert process_result.escalation_created is True
+        assert delivered is True
+        adapter.allows_test_delivery.assert_called_once_with(
+            "Exact-Channel", "Exact-Profile"
+        )
+        target, outgoing = adapter.send_message.await_args.args
+        assert target == "Exact-Channel"
+        assert outgoing.user.user_id == "model-safe-user"
+        assert outgoing.user.metadata == {"bisq2_sender_profile_id": "Exact-Profile"}
 
 
 class TestResponseDeliveryUnknownChannel:
@@ -318,6 +422,7 @@ class TestResponseDeliveryAdapterContract:
         adapter = MagicMock()
         adapter.get_delivery_target = MagicMock(return_value="target-id")
         adapter.send_message = AsyncMock(return_value=True)
+        _allow_bisq_delivery(adapter)
 
         registry = MagicMock()
         registry.get.return_value = adapter
@@ -325,7 +430,7 @@ class TestResponseDeliveryAdapterContract:
         delivery = ResponseDelivery(registry)
         escalation = _make_escalation(
             channel="bisq2",
-            channel_metadata={"conversation_id": "support.support"},
+            channel_metadata=_bisq_metadata("target-id", "profile-approved"),
             ai_draft_answer="Exact answer from AI",
             confidence_score=0.71,
             sources=[
@@ -353,6 +458,7 @@ class TestResponseDeliveryAdapterContract:
         adapter = MagicMock()
         adapter.get_delivery_target = MagicMock(return_value="target-id")
         adapter.send_message = AsyncMock(return_value=True)
+        _allow_bisq_delivery(adapter)
 
         registry = MagicMock()
         registry.get.return_value = adapter
@@ -360,7 +466,7 @@ class TestResponseDeliveryAdapterContract:
         delivery = ResponseDelivery(registry)
         escalation = _make_escalation(
             channel="bisq2",
-            channel_metadata={"conversation_id": "support.support"},
+            channel_metadata=_bisq_metadata("target-id", "profile-approved"),
             ai_draft_answer="Original AI answer",
             confidence_score=0.71,
             sources=[
@@ -379,6 +485,95 @@ class TestResponseDeliveryAdapterContract:
         _, outgoing_msg = adapter.send_message.call_args[0]
         assert outgoing_msg.sources == []
         assert outgoing_msg.metadata.confidence_score is None
+
+    @pytest.mark.asyncio
+    async def test_bisq_scope_denial_happens_before_translation_io(self):
+        from app.services.escalation.response_delivery import ResponseDelivery
+
+        adapter = MagicMock()
+        adapter.get_delivery_target = MagicMock(return_value="target-id")
+        adapter.allows_test_delivery = MagicMock(return_value=False)
+        adapter.send_message = AsyncMock()
+        registry = MagicMock()
+        registry.get.return_value = adapter
+        translation_service = MagicMock()
+        translation_service.translate_response = AsyncMock()
+        delivery = ResponseDelivery(
+            registry,
+            translation_service=translation_service,
+        )
+        escalation = _make_escalation(
+            channel="bisq2",
+            user_language="de",
+            channel_metadata=_bisq_metadata("target-id", "profile-blocked"),
+        )
+
+        result = await delivery.deliver(escalation, "Reviewed answer")
+
+        assert result is False
+        adapter.allows_test_delivery.assert_called_once_with(
+            "target-id", "profile-blocked"
+        )
+        translation_service.translate_response.assert_not_awaited()
+        adapter.send_message.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_bisq_delivery_rejects_missing_dedicated_provenance(self):
+        from app.services.escalation.response_delivery import ResponseDelivery
+
+        adapter = MagicMock()
+        adapter.get_delivery_target = MagicMock(return_value="target-id")
+        adapter.allows_test_delivery = MagicMock(return_value=True)
+        adapter.send_message = AsyncMock(return_value=True)
+        registry = MagicMock()
+        registry.get.return_value = adapter
+        delivery = ResponseDelivery(registry)
+        escalation = _make_escalation(
+            channel="bisq2",
+            channel_metadata={
+                "channel_id": "target-id",
+                "conversation_id": "target-id",
+                "sender_profile_id": "profile-id",
+            },
+        )
+
+        result = await delivery.deliver(escalation, "Reviewed answer")
+
+        assert result is False
+        adapter.allows_test_delivery.assert_not_called()
+        adapter.send_message.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_delivery_exception_log_omits_protected_provenance(self, caplog):
+        from app.services.escalation.response_delivery import ResponseDelivery
+
+        protected_target = "protected-target"
+        protected_profile = "protected-profile"
+        protected_message = "protected-message"
+        adapter = MagicMock()
+        adapter.get_delivery_target = MagicMock(return_value=protected_target)
+        adapter.allows_test_delivery = MagicMock(return_value=True)
+        adapter.send_message = AsyncMock(
+            side_effect=RuntimeError(
+                f"{protected_target} {protected_profile} {protected_message}"
+            )
+        )
+        registry = MagicMock()
+        registry.get.return_value = adapter
+        delivery = ResponseDelivery(registry)
+        escalation = _make_escalation(
+            channel="bisq2",
+            message_id=protected_message,
+            channel_metadata=_bisq_metadata(protected_target, protected_profile),
+        )
+
+        result = await delivery.deliver(escalation, "Reviewed answer")
+
+        assert result is False
+        assert "RuntimeError" in caplog.text
+        assert protected_target not in caplog.text
+        assert protected_profile not in caplog.text
+        assert protected_message not in caplog.text
 
 
 class TestResponseDeliveryLocalization:
@@ -444,3 +639,39 @@ class TestResponseDeliveryLocalization:
 
         _, outgoing_msg = adapter.send_message.call_args[0]
         assert outgoing_msg.answer == "Canonical English answer"
+
+    @pytest.mark.asyncio
+    async def test_localization_exception_log_omits_bisq_provenance(self, caplog):
+        from app.services.escalation.response_delivery import ResponseDelivery
+
+        protected_target = "protected-target"
+        protected_profile = "protected-profile"
+        protected_message = "protected-message"
+        adapter = MagicMock()
+        adapter.get_delivery_target = MagicMock(return_value=protected_target)
+        adapter.allows_test_delivery = MagicMock(return_value=True)
+        adapter.send_message = AsyncMock(return_value=True)
+        registry = MagicMock()
+        registry.get.return_value = adapter
+        translation_service = MagicMock()
+        translation_service.translate_response = AsyncMock(
+            side_effect=RuntimeError(
+                f"{protected_target} {protected_profile} {protected_message}"
+            )
+        )
+        escalation = _make_escalation(
+            channel="bisq2",
+            message_id=protected_message,
+            channel_metadata=_bisq_metadata(protected_target, protected_profile),
+            user_language="de",
+        )
+
+        delivered = await ResponseDelivery(
+            registry, translation_service=translation_service
+        ).deliver(escalation, "Canonical answer")
+
+        assert delivered is True
+        assert "RuntimeError" in caplog.text
+        assert protected_target not in caplog.text
+        assert protected_profile not in caplog.text
+        assert protected_message not in caplog.text

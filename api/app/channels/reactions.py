@@ -75,6 +75,7 @@ class SentMessageRecord:
     routing_action: Optional[str] = None
     in_reply_to: Optional[str] = None
     delivery_target: Optional[str] = None
+    origin_sender_profile_id: Optional[str] = None
     user_language: Optional[str] = None
 
 
@@ -168,6 +169,7 @@ class SentMessageTracker:
         routing_action: Optional[str] = None,
         in_reply_to: Optional[str] = None,
         delivery_target: Optional[str] = None,
+        origin_sender_profile_id: Optional[str] = None,
         user_language: Optional[str] = None,
     ) -> None:
         """Track a sent message for future reaction correlation."""
@@ -190,6 +192,7 @@ class SentMessageTracker:
             routing_action=routing_action,
             in_reply_to=in_reply_to,
             delivery_target=delivery_target,
+            origin_sender_profile_id=origin_sender_profile_id,
             user_language=user_language,
         )
         self._track_count += 1
@@ -314,14 +317,39 @@ class ReactionProcessor:
         return str(identity or "").strip()
 
     def _is_original_asker_reaction(
-        self, record: SentMessageRecord, reactor_id: str
+        self,
+        record: SentMessageRecord,
+        reactor_id: str,
+        *,
+        delivery_target: Optional[str] = None,
     ) -> bool:
         """Return True when the reaction author matches the original asker."""
+        if record.channel_id == "bisq2":
+            return bool(
+                isinstance(record.delivery_target, str)
+                and record.delivery_target
+                and isinstance(delivery_target, str)
+                and delivery_target
+                and record.delivery_target == delivery_target
+                and isinstance(record.origin_sender_profile_id, str)
+                and record.origin_sender_profile_id
+                and isinstance(reactor_id, str)
+                and reactor_id
+                and record.origin_sender_profile_id == reactor_id
+            )
+
         record_user_id = self._normalize_identity(record.user_id)
         reactor_user_id = self._normalize_identity(reactor_id)
         if not record_user_id or not reactor_user_id:
             return False
         return record_user_id == reactor_user_id
+
+    @staticmethod
+    def _event_delivery_target(event: ReactionEvent) -> Optional[str]:
+        if event.channel_id != "bisq2":
+            return None
+        raw_target = event.metadata.get("delivery_target")
+        return raw_target if isinstance(raw_target, str) and raw_target else None
 
     async def process(self, event: ReactionEvent) -> ProcessResult:
         """Process a reaction event into feedback.
@@ -339,13 +367,15 @@ class ReactionProcessor:
             )
             return ProcessResult(success=False)
 
-        if not self._is_original_asker_reaction(record, event.reactor_id):
+        if not self._is_original_asker_reaction(
+            record,
+            event.reactor_id,
+            delivery_target=self._event_delivery_target(event),
+        ):
             logger.debug(
-                "Ignoring reaction from non-asker: channel=%s ext_id=%s reactor=%s asker=%s",
+                "Ignoring reaction outside tracked origin scope: channel=%s ext_id=%s",
                 event.channel_id,
                 event.external_message_id,
-                self._normalize_identity(event.reactor_id),
-                self._normalize_identity(record.user_id),
             )
             return ProcessResult(success=False)
 
@@ -416,12 +446,8 @@ class ReactionProcessor:
 
         try:
             await asyncio.to_thread(self._store_feedback, feedback_data)
-        except Exception:
-            logger.exception(
-                "Failed to store reaction feedback: channel=%s ext_id=%s",
-                event.channel_id,
-                event.external_message_id,
-            )
+        except Exception as exc:
+            logger.warning("Failed to store reaction feedback (%s)", type(exc).__name__)
             return ProcessResult(success=False)
 
         # Route staff-response reactions into escalation rating/orchestration path.
@@ -522,12 +548,9 @@ class ReactionProcessor:
                 escalation = await repository.get_by_id(escalation_id)
                 if escalation is not None:
                     return escalation
-            except Exception:
+            except Exception as exc:
                 logger.debug(
-                    "Failed to lookup escalation by id=%s for internal_message_id=%s",
-                    escalation_id,
-                    record.internal_message_id,
-                    exc_info=True,
+                    "Failed to look up escalation by id (%s)", type(exc).__name__
                 )
 
         reply_message_id = str(record.in_reply_to or "").strip()
@@ -536,11 +559,10 @@ class ReactionProcessor:
                 escalation = await repository.get_by_message_id(reply_message_id)
                 if escalation is not None:
                     return escalation
-            except Exception:
+            except Exception as exc:
                 logger.debug(
-                    "Failed to lookup escalation by message_id=%s",
-                    reply_message_id,
-                    exc_info=True,
+                    "Failed to look up escalation by message (%s)",
+                    type(exc).__name__,
                 )
 
         return None
@@ -559,11 +581,17 @@ class ReactionProcessor:
             return
 
         rating = int(event.rating)
-        escalation_user_id = str(getattr(escalation, "user_id", "") or "").strip()
-        trusted = bool(
-            escalation_user_id
-            and escalation_user_id == str(event.reactor_id or "").strip()
-        )
+        if record.channel_id == "bisq2":
+            trusted = bool(
+                record.origin_sender_profile_id
+                and record.origin_sender_profile_id == event.reactor_id
+            )
+        else:
+            escalation_user_id = str(getattr(escalation, "user_id", "") or "").strip()
+            trusted = bool(
+                escalation_user_id
+                and escalation_user_id == str(event.reactor_id or "").strip()
+            )
 
         record_rating = getattr(
             self.escalation_service, "record_staff_answer_rating", None
@@ -579,10 +607,9 @@ class ReactionProcessor:
                 rater_id=reactor_hash,
                 trusted=trusted,
             )
-        except Exception:
-            logger.exception(
-                "Failed to record staff response rating for escalation_id=%s",
-                getattr(escalation, "id", "unknown"),
+        except Exception as exc:
+            logger.warning(
+                "Failed to record staff response rating (%s)", type(exc).__name__
             )
 
     async def _try_auto_escalate(
@@ -593,11 +620,30 @@ class ReactionProcessor:
             from app.models.escalation import EscalationCreate
 
             conf = record.confidence_score or 0.0
+            channel_metadata = None
+            if record.channel_id == "bisq2":
+                delivery_target = record.delivery_target
+                origin_sender_profile_id = record.origin_sender_profile_id
+                if not (
+                    isinstance(delivery_target, str)
+                    and delivery_target
+                    and isinstance(origin_sender_profile_id, str)
+                    and origin_sender_profile_id
+                ):
+                    return False, None
+                channel_metadata = {
+                    "channel_id": delivery_target,
+                    "conversation_id": delivery_target,
+                    "delivery_target": delivery_target,
+                    "origin_sender_profile_id": origin_sender_profile_id,
+                    "sender_profile_id": origin_sender_profile_id,
+                }
             data = EscalationCreate(
                 message_id=record.internal_message_id,
                 channel=record.channel_id,
                 user_id=record.user_id,
                 username=record.user_id,
+                channel_metadata=channel_metadata,
                 question_original=record.question,
                 question=record.question,
                 ai_draft_answer_original=record.answer,
@@ -619,12 +665,8 @@ class ReactionProcessor:
                 conf,
             )
             return True, event.external_message_id
-        except Exception:
-            logger.warning(
-                "Auto-escalation failed (non-fatal): ext_id=%s",
-                event.external_message_id,
-                exc_info=True,
-            )
+        except Exception as exc:
+            logger.warning("Auto-escalation failed (non-fatal, %s)", type(exc).__name__)
             return False, None
 
     def _reaction_key(
@@ -703,11 +745,9 @@ class ReactionProcessor:
             await self._try_auto_escalate(record, event)
         except asyncio.CancelledError:
             raise
-        except Exception:
-            logger.exception(
-                "Delayed auto-escalation task failed: channel=%s ext_id=%s",
-                event.channel_id,
-                event.external_message_id,
+        except Exception as exc:
+            logger.warning(
+                "Delayed auto-escalation task failed (%s)", type(exc).__name__
             )
         finally:
             async with self._pending_auto_escalations_lock:
@@ -735,11 +775,9 @@ class ReactionProcessor:
                 reactor_hash,
             )
             return rating == int(ReactionRating.NEGATIVE)
-        except Exception:
-            logger.exception(
-                "Failed to read active reaction state: channel=%s ext_id=%s",
-                channel_id,
-                external_message_id,
+        except Exception as exc:
+            logger.warning(
+                "Failed to read active reaction state (%s)", type(exc).__name__
             )
             return False
 
@@ -762,12 +800,8 @@ class ReactionProcessor:
                 message_id=record.internal_message_id,
                 reason=reason,
             )
-        except Exception:
-            logger.warning(
-                "Auto-close failed (non-fatal): message_id=%s",
-                record.internal_message_id,
-                exc_info=True,
-            )
+        except Exception as exc:
+            logger.warning("Auto-close failed (non-fatal, %s)", type(exc).__name__)
 
     async def _trigger_learning(self) -> None:
         """Trigger feedback weight recalculation with debounce.
@@ -787,8 +821,10 @@ class ReactionProcessor:
                 if hasattr(self.feedback_service, "apply_feedback_weights_async"):
                     await self.feedback_service.apply_feedback_weights_async()
                     self._last_learning_trigger = time.monotonic()
-            except Exception as e:
-                logger.warning("Learning trigger failed (non-fatal): %s", e)
+            except Exception as exc:
+                logger.warning(
+                    "Learning trigger failed (non-fatal, %s)", type(exc).__name__
+                )
 
     async def revoke_reaction(
         self,
@@ -796,6 +832,7 @@ class ReactionProcessor:
         external_message_id: str,
         reactor_id: str,
         raw_reaction: Optional[str] = None,
+        delivery_target: Optional[str] = None,
     ) -> bool:
         """Revoke a reaction (soft delete -- marks revoked, does not delete feedback).
 
@@ -809,13 +846,15 @@ class ReactionProcessor:
                 external_message_id,
             )
             return False
-        if not self._is_original_asker_reaction(record, reactor_id):
+        if not self._is_original_asker_reaction(
+            record,
+            reactor_id,
+            delivery_target=delivery_target,
+        ):
             logger.debug(
-                "Ignoring revoke from non-asker: channel=%s ext_id=%s reactor=%s asker=%s",
+                "Ignoring revoke outside tracked origin scope: channel=%s ext_id=%s",
                 channel_id,
                 external_message_id,
-                self._normalize_identity(reactor_id),
-                self._normalize_identity(record.user_id),
             )
             return False
 
@@ -832,15 +871,12 @@ class ReactionProcessor:
                 external_message_id=external_message_id,
                 reactor_id=reactor_id,
                 raw_reaction=raw_reaction,
+                delivery_target=delivery_target,
                 record=record,
                 reactor_hash=reactor_hash,
             )
-        except Exception:
-            logger.exception(
-                "Failed to revoke reaction: channel=%s ext_id=%s",
-                channel_id,
-                external_message_id,
-            )
+        except Exception as exc:
+            logger.warning("Failed to revoke reaction (%s)", type(exc).__name__)
             return False
         finally:
             await self._release_reaction_lock(reaction_key, lock)
@@ -852,6 +888,7 @@ class ReactionProcessor:
         external_message_id: str,
         reactor_id: str,
         raw_reaction: Optional[str],
+        delivery_target: Optional[str],
         record: SentMessageRecord,
         reactor_hash: str,
     ) -> bool:
@@ -920,6 +957,11 @@ class ReactionProcessor:
             rating=effective_rating,
             raw_reaction=aggregate.representative_token() if aggregate else "",
             timestamp=datetime.now(timezone.utc),
+            metadata=(
+                {"delivery_target": delivery_target}
+                if channel_id == "bisq2" and delivery_target
+                else {}
+            ),
         )
         if self.escalation_service is not None and self._should_auto_escalate(record):
             if effective_rating == ReactionRating.NEGATIVE:
@@ -1046,11 +1088,9 @@ class ReactionProcessor:
                 external_message_id,
                 reactor_hash,
             )
-        except Exception:
-            logger.exception(
-                "Failed to clear reaction projection: channel=%s ext_id=%s",
-                channel_id,
-                external_message_id,
+        except Exception as exc:
+            logger.warning(
+                "Failed to clear reaction projection (%s)", type(exc).__name__
             )
 
     async def _maybe_start_feedback_followup(
@@ -1071,14 +1111,16 @@ class ReactionProcessor:
                 record=record,
                 channel_id=event.channel_id,
                 external_message_id=event.external_message_id,
-                reactor_id=self._normalize_identity(event.reactor_id),
+                reactor_id=(
+                    event.reactor_id
+                    if event.channel_id == "bisq2"
+                    else self._normalize_identity(event.reactor_id)
+                ),
                 reactor_identity_hash=reactor_hash,
             )
-        except Exception:
-            logger.exception(
-                "Failed to start feedback follow-up: channel=%s ext_id=%s",
-                event.channel_id,
-                event.external_message_id,
+        except Exception as exc:
+            logger.warning(
+                "Failed to start feedback follow-up (%s)", type(exc).__name__
             )
 
     async def _cancel_feedback_followup(
@@ -1102,11 +1144,9 @@ class ReactionProcessor:
                 external_message_id=external_message_id,
                 reactor_identity_hash=reactor_hash,
             )
-        except Exception:
-            logger.exception(
-                "Failed to cancel feedback follow-up: channel=%s ext_id=%s",
-                channel_id,
-                external_message_id,
+        except Exception as exc:
+            logger.warning(
+                "Failed to cancel feedback follow-up (%s)", type(exc).__name__
             )
 
 

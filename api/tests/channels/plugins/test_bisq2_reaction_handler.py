@@ -10,6 +10,7 @@ Covers:
 """
 
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -18,6 +19,42 @@ from app.channels.reactions import (
     ReactionProcessor,
     ReactionRating,
 )
+
+
+def _subscription_ack() -> dict[str, object]:
+    return {
+        "type": "SubscriptionResponse",
+        "requestId": "1",
+        "payload": "[]",
+        "errorMessage": None,
+    }
+
+
+def _configure_snapshot_subscription(
+    mock_ws_client: MagicMock,
+    payload: str = "[]",
+) -> None:
+    snapshot_callbacks = []
+
+    def on_snapshot(callback) -> None:
+        snapshot_callbacks.append(callback)
+
+    def off_snapshot(callback) -> None:
+        if callback in snapshot_callbacks:
+            snapshot_callbacks.remove(callback)
+
+    async def subscribe(topic: str) -> dict[str, object]:
+        for callback in list(snapshot_callbacks):
+            await callback(topic, None, payload)
+        return {
+            **_subscription_ack(),
+            "payload": payload,
+        }
+
+    mock_ws_client.on_subscription_snapshot = MagicMock(side_effect=on_snapshot)
+    mock_ws_client.off_subscription_snapshot = MagicMock(side_effect=off_snapshot)
+    mock_ws_client.subscribe = AsyncMock(side_effect=subscribe)
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -28,6 +65,21 @@ from app.channels.reactions import (
 def mock_runtime():
     """ChannelRuntime mock."""
     runtime = MagicMock()
+    runtime.settings = SimpleNamespace(
+        BISQ2_ALLOWED_CHANNEL_IDS=["support.fixture"],
+        BISQ2_ALLOWED_SENDER_PROFILE_IDS=[
+            "nested-user-1",
+            "user-1",
+            "user-abc",
+            "user-java-1",
+            "user-java-2",
+            "user-ordinal-1",
+            "user-removed-1",
+            "user-xyz",
+        ],
+        BISQ2_CHATOPS_CHANNEL_IDS=[],
+        BISQ2_STAFF_NOTIFICATION_TARGET="",
+    )
     runtime.resolve = MagicMock()
     runtime.resolve_optional = MagicMock(return_value=None)
     return runtime
@@ -99,19 +151,112 @@ class TestBisq2ReactionHandlerListening:
     async def test_start_listening_connects_and_subscribes(self, handler, mock_runtime):
         """start_listening connects WS client and subscribes to topic."""
         mock_ws_client = MagicMock()
-        mock_ws_client.connect = AsyncMock()
-        mock_ws_client.subscribe = AsyncMock(
-            return_value={"success": True, "payload": []}
-        )
+        mock_ws_client.is_connected = False
+
+        async def connect() -> None:
+            mock_ws_client.is_connected = True
+
+        mock_ws_client.connect = AsyncMock(side_effect=connect)
+        _configure_snapshot_subscription(mock_ws_client)
         mock_ws_client.on_event = MagicMock()
+        mock_ws_client.off_event = MagicMock()
+        mock_ws_client.is_listening = False
+        mock_ws_client.has_active_subscription = MagicMock(return_value=True)
 
         mock_runtime.resolve_optional.return_value = mock_ws_client
 
+        assert handler.is_listening is False
         await handler.start_listening()
 
         mock_ws_client.connect.assert_called_once()
         mock_ws_client.subscribe.assert_called_once_with("SUPPORT_CHAT_REACTIONS")
         mock_ws_client.on_event.assert_called_once()
+        mock_ws_client.on_subscription_snapshot.assert_called_once()
+        assert handler.is_listening is False
+
+        mock_ws_client.is_listening = True
+        assert handler.is_listening is True
+
+        mock_ws_client.has_active_subscription.return_value = False
+        assert handler.is_listening is False
+
+    @pytest.mark.asyncio
+    async def test_failed_subscription_does_not_report_listening(
+        self, handler, mock_runtime
+    ):
+        """A failed subscription must keep readiness fail-closed."""
+        mock_ws_client = MagicMock()
+        mock_ws_client.connect = AsyncMock()
+        mock_ws_client.subscribe = AsyncMock(side_effect=RuntimeError("unavailable"))
+        mock_ws_client.on_event = MagicMock()
+        mock_ws_client.off_event = MagicMock()
+        mock_runtime.resolve_optional.return_value = mock_ws_client
+
+        with pytest.raises(RuntimeError, match="unavailable"):
+            await handler.start_listening()
+
+        assert handler.is_listening is False
+        mock_ws_client.off_event.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_subscription_without_snapshot_does_not_report_listening(
+        self, handler, mock_runtime
+    ):
+        """An ack without authoritative snapshot delivery is fail-closed."""
+        mock_ws_client = MagicMock()
+        mock_ws_client.is_connected = True
+        mock_ws_client.subscribe = AsyncMock(return_value=_subscription_ack())
+        mock_ws_client.on_event = MagicMock()
+        mock_ws_client.off_event = MagicMock()
+        mock_ws_client.on_subscription_snapshot = MagicMock()
+        mock_ws_client.off_subscription_snapshot = MagicMock()
+        mock_ws_client.has_active_subscription = MagicMock(return_value=True)
+        mock_runtime.resolve_optional.return_value = mock_ws_client
+
+        with pytest.raises(RuntimeError, match="snapshot was not reconciled"):
+            await handler.start_listening()
+
+        assert handler.is_listening is False
+        mock_ws_client.off_event.assert_called_once()
+        mock_ws_client.off_subscription_snapshot.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_negative_subscription_ack_does_not_report_listening(
+        self, handler, mock_runtime
+    ):
+        """A negative acknowledgement must not activate the listener."""
+        mock_ws_client = MagicMock()
+        mock_ws_client.is_connected = True
+        mock_ws_client.connect = AsyncMock()
+        mock_ws_client.subscribe = AsyncMock(
+            return_value={
+                "type": "SubscriptionResponse",
+                "requestId": "1",
+                "payload": None,
+                "errorMessage": "rejected",
+            }
+        )
+        mock_ws_client.on_event = MagicMock()
+        mock_ws_client.off_event = MagicMock()
+        mock_runtime.resolve_optional.return_value = mock_ws_client
+
+        with pytest.raises(RuntimeError, match="was not acknowledged"):
+            await handler.start_listening()
+
+        mock_ws_client.connect.assert_not_awaited()
+        mock_ws_client.on_event.assert_called_once()
+        mock_ws_client.off_event.assert_called_once()
+        assert handler.is_listening is False
+
+    def test_reconnect_without_active_reaction_subscription_is_not_ready(self, handler):
+        mock_ws_client = MagicMock()
+        mock_ws_client.is_connected = True
+        mock_ws_client.is_listening = True
+        mock_ws_client.has_active_subscription.return_value = False
+        handler._ws_client = mock_ws_client
+        handler._is_listening = True
+
+        assert handler.is_listening is False
 
     @pytest.mark.asyncio
     async def test_stop_listening_closes_client(self, handler, mock_runtime):
@@ -120,15 +265,135 @@ class TestBisq2ReactionHandlerListening:
         mock_ws_client.close = AsyncMock()
 
         handler._ws_client = mock_ws_client
+        handler._is_listening = True
 
         await handler.stop_listening()
 
         mock_ws_client.close.assert_called_once()
+        mock_ws_client.off_subscription_snapshot.assert_called_once()
+        assert handler.is_listening is False
 
     @pytest.mark.asyncio
     async def test_stop_listening_noop_when_not_started(self, handler):
         """stop_listening is safe to call when not started."""
         await handler.stop_listening()
+
+
+# ---------------------------------------------------------------------------
+# Subscription snapshot reconciliation
+# ---------------------------------------------------------------------------
+
+
+class TestBisq2ReactionSnapshotReconciliation:
+    @staticmethod
+    def _snapshot_item(
+        *,
+        reaction: str = "THUMBS_UP",
+        message_id: str = "msg-123",
+        sender_id: str = "user-abc",
+    ) -> dict[str, str]:
+        return {
+            "channelId": "support.fixture",
+            "reaction": reaction,
+            "messageId": message_id,
+            "senderUserProfileId": sender_id,
+        }
+
+    @pytest.mark.asyncio
+    async def test_initial_snapshot_adds_active_reactions(
+        self, handler, mock_processor
+    ):
+        item = self._snapshot_item()
+
+        await handler._on_subscription_snapshot(
+            "SUPPORT_CHAT_REACTIONS",
+            None,
+            json.dumps([item]),
+        )
+
+        mock_processor.process.assert_awaited_once()
+        reaction_event = mock_processor.process.call_args.args[0]
+        assert reaction_event.external_message_id == "msg-123"
+        assert reaction_event.metadata == {
+            "delivery_target": "support.fixture",
+            "bisq2_channel_id": "support.fixture",
+        }
+        assert handler._snapshot_reconciled is True
+        assert len(handler._active_reactions) == 1
+
+    @pytest.mark.asyncio
+    async def test_reconnect_snapshot_reconciles_absence_and_addition(
+        self, handler, mock_processor
+    ):
+        first = self._snapshot_item()
+        replacement = self._snapshot_item(
+            reaction="THUMBS_DOWN",
+            message_id="msg-456",
+            sender_id="user-xyz",
+        )
+        await handler._on_subscription_snapshot(
+            "SUPPORT_CHAT_REACTIONS",
+            None,
+            json.dumps([first]),
+        )
+        mock_processor.process.reset_mock()
+
+        await handler._on_subscription_snapshot(
+            "SUPPORT_CHAT_REACTIONS",
+            None,
+            json.dumps([replacement]),
+        )
+
+        mock_processor.revoke_reaction.assert_awaited_once_with(
+            channel_id="bisq2",
+            external_message_id="msg-123",
+            reactor_id="user-abc",
+            raw_reaction="THUMBS_UP",
+            delivery_target="support.fixture",
+        )
+        mock_processor.process.assert_awaited_once()
+        added_event = mock_processor.process.call_args.args[0]
+        assert added_event.external_message_id == "msg-456"
+        assert added_event.rating == ReactionRating.NEGATIVE
+        assert len(handler._active_reactions) == 1
+
+    @pytest.mark.asyncio
+    async def test_empty_reconnect_snapshot_revokes_every_prior_reaction(
+        self, handler, mock_processor
+    ):
+        item = self._snapshot_item()
+        await handler._on_subscription_snapshot(
+            "SUPPORT_CHAT_REACTIONS",
+            None,
+            json.dumps([item]),
+        )
+
+        await handler._on_subscription_snapshot(
+            "SUPPORT_CHAT_REACTIONS",
+            None,
+            "[]",
+        )
+
+        mock_processor.revoke_reaction.assert_awaited_once_with(
+            channel_id="bisq2",
+            external_message_id="msg-123",
+            reactor_id="user-abc",
+            raw_reaction="THUMBS_UP",
+            delivery_target="support.fixture",
+        )
+        assert handler._active_reactions == {}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("payload", [None, "{}", "not-json", "[1]"])
+    async def test_invalid_snapshot_never_becomes_reconciled(self, handler, payload):
+        with pytest.raises(ValueError):
+            await handler._on_subscription_snapshot(
+                "SUPPORT_CHAT_REACTIONS",
+                None,
+                payload,
+            )
+
+        assert handler._snapshot_reconciled is False
 
 
 # ---------------------------------------------------------------------------
@@ -148,8 +413,10 @@ class TestBisq2ReactionEventProcessingAdded:
     ):
         return {
             "responseType": "WebSocketEvent",
+            "topic": "SUPPORT_CHAT_REACTIONS",
             "modificationType": modification_type,
             "payload": {
+                "channelId": "support.fixture",
                 "reaction": reaction,
                 "messageId": message_id,
                 "senderUserProfileId": sender_user_id,
@@ -166,6 +433,10 @@ class TestBisq2ReactionEventProcessingAdded:
         reaction_event = mock_processor.process.call_args[0][0]
         assert reaction_event.rating == ReactionRating.POSITIVE
         assert reaction_event.channel_id == "bisq2"
+        assert reaction_event.metadata == {
+            "delivery_target": "support.fixture",
+            "bisq2_channel_id": "support.fixture",
+        }
 
     @pytest.mark.asyncio
     async def test_thumbs_down_creates_negative_event(self, handler, mock_processor):
@@ -226,9 +497,11 @@ class TestBisq2ReactionEventProcessingAdded:
         """Java WS events send payload as JSON string; handler must parse it."""
         event = {
             "type": "WebSocketEvent",
+            "topic": "SUPPORT_CHAT_REACTIONS",
             "modificationType": "ADDED",
             "payload": json.dumps(
                 {
+                    "channelId": "support.fixture",
                     "reaction": "THUMBS_UP",
                     "messageId": "msg-java-1",
                     "senderUserProfileId": "user-java-1",
@@ -248,8 +521,10 @@ class TestBisq2ReactionEventProcessingAdded:
         """reactionId ordinal payloads are normalized to reaction names."""
         event = {
             "type": "WebSocketEvent",
+            "topic": "SUPPORT_CHAT_REACTIONS",
             "modificationType": "ADDED",
             "payload": {
+                "channelId": "support.fixture",
                 "reactionId": 1,
                 "messageId": "msg-id-ordinal-1",
                 "senderUserProfileId": "user-ordinal-1",
@@ -271,8 +546,10 @@ class TestBisq2ReactionEventProcessingAdded:
         """Nested reactionDto payloads should still be processed."""
         event = {
             "type": "WebSocketEvent",
+            "topic": "SUPPORT_CHAT_REACTIONS",
             "modificationType": "ADDED",
             "payload": {
+                "channelId": "support.fixture",
                 "messageId": "nested-msg-1",
                 "reactionDto": {
                     "reactionId": 0,
@@ -289,6 +566,19 @@ class TestBisq2ReactionEventProcessingAdded:
         assert reaction_event.external_message_id == "nested-msg-1"
         assert reaction_event.reactor_id == "nested-user-1"
 
+    @pytest.mark.asyncio
+    async def test_equivalent_reaction_aliases_are_accepted_after_normalization(
+        self, handler, mock_processor
+    ):
+        event = self._make_event(reaction=" thumbs_up ")
+        event["payload"]["reactionId"] = 0
+
+        await handler._on_websocket_event(event)
+
+        mock_processor.process.assert_awaited_once()
+        reaction_event = mock_processor.process.call_args[0][0]
+        assert reaction_event.raw_reaction == "THUMBS_UP"
+
 
 # ---------------------------------------------------------------------------
 # Unmapped Reactions
@@ -303,8 +593,10 @@ class TestBisq2UnmappedReactions:
         """LAUGH reaction is mapped as positive feedback."""
         event = {
             "responseType": "WebSocketEvent",
+            "topic": "SUPPORT_CHAT_REACTIONS",
             "modificationType": "ADDED",
             "payload": {
+                "channelId": "support.fixture",
                 "reaction": "LAUGH",
                 "messageId": "msg-1",
                 "senderUserProfileId": "user-1",
@@ -320,8 +612,10 @@ class TestBisq2UnmappedReactions:
         """PARTY reaction is mapped as positive feedback."""
         event = {
             "responseType": "WebSocketEvent",
+            "topic": "SUPPORT_CHAT_REACTIONS",
             "modificationType": "ADDED",
             "payload": {
+                "channelId": "support.fixture",
                 "reaction": "PARTY",
                 "messageId": "msg-1",
                 "senderUserProfileId": "user-1",
@@ -337,8 +631,10 @@ class TestBisq2UnmappedReactions:
         """Unmapped reactions increment the drop counter."""
         event = {
             "responseType": "WebSocketEvent",
+            "topic": "SUPPORT_CHAT_REACTIONS",
             "modificationType": "ADDED",
             "payload": {
+                "channelId": "support.fixture",
                 "reaction": "UNKNOWN_REACTION",
                 "messageId": "msg-1",
                 "senderUserProfileId": "user-1",
@@ -362,8 +658,10 @@ class TestBisq2ReactionEventProcessingRemoved:
         """REMOVED modification type calls processor.revoke_reaction."""
         event = {
             "responseType": "WebSocketEvent",
+            "topic": "SUPPORT_CHAT_REACTIONS",
             "modificationType": "REMOVED",
             "payload": {
+                "channelId": "support.fixture",
                 "reaction": "THUMBS_UP",
                 "messageId": "msg-123",
                 "senderUserProfileId": "user-abc",
@@ -376,6 +674,7 @@ class TestBisq2ReactionEventProcessingRemoved:
             external_message_id="msg-123",
             reactor_id="user-abc",
             raw_reaction="THUMBS_UP",
+            delivery_target="support.fixture",
         )
 
     @pytest.mark.asyncio
@@ -383,8 +682,10 @@ class TestBisq2ReactionEventProcessingRemoved:
         """REMOVED events don't call process()."""
         event = {
             "responseType": "WebSocketEvent",
+            "topic": "SUPPORT_CHAT_REACTIONS",
             "modificationType": "REMOVED",
             "payload": {
+                "channelId": "support.fixture",
                 "reaction": "THUMBS_UP",
                 "messageId": "msg-123",
                 "senderUserProfileId": "user-abc",
@@ -400,9 +701,11 @@ class TestBisq2ReactionEventProcessingRemoved:
         """REMOVED event with string payload should revoke reaction."""
         event = {
             "type": "WebSocketEvent",
+            "topic": "SUPPORT_CHAT_REACTIONS",
             "modificationType": "REMOVED",
             "payload": json.dumps(
                 {
+                    "channelId": "support.fixture",
                     "reaction": "THUMBS_UP",
                     "messageId": "msg-java-2",
                     "senderUserProfileId": "user-java-2",
@@ -416,14 +719,18 @@ class TestBisq2ReactionEventProcessingRemoved:
             external_message_id="msg-java-2",
             reactor_id="user-java-2",
             raw_reaction="THUMBS_UP",
+            delivery_target="support.fixture",
         )
 
     @pytest.mark.asyncio
     async def test_is_removed_flag_triggers_revoke(self, handler, mock_processor):
-        """Payload isRemoved=true should be treated as REMOVED even without event flag."""
+        """Payload isRemoved=true agrees with a REMOVED envelope."""
         event = {
             "type": "WebSocketEvent",
+            "topic": "SUPPORT_CHAT_REACTIONS",
+            "modificationType": "REMOVED",
             "payload": {
+                "channelId": "support.fixture",
                 "reactionId": 0,
                 "chatMessageId": "msg-removed-1",
                 "senderUserProfileId": "user-removed-1",
@@ -437,7 +744,67 @@ class TestBisq2ReactionEventProcessingRemoved:
             external_message_id="msg-removed-1",
             reactor_id="user-removed-1",
             raw_reaction="THUMBS_UP",
+            delivery_target="support.fixture",
         )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("modification_type", "is_removed"),
+        [
+            ("ADDED", True),
+            ("REMOVED", False),
+            ("ADDED", "false"),
+            ("REMOVED", 1),
+            ("REMOVED", None),
+        ],
+    )
+    async def test_malformed_or_conflicting_is_removed_is_ignored(
+        self,
+        handler,
+        mock_processor,
+        modification_type,
+        is_removed,
+    ):
+        event = {
+            "topic": "SUPPORT_CHAT_REACTIONS",
+            "modificationType": modification_type,
+            "payload": {
+                "channelId": "support.fixture",
+                "reaction": "THUMBS_UP",
+                "messageId": "msg-removed-1",
+                "senderUserProfileId": "user-removed-1",
+                "isRemoved": is_removed,
+            },
+        }
+
+        await handler._on_websocket_event(event)
+
+        mock_processor.process.assert_not_awaited()
+        mock_processor.revoke_reaction.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_conflicting_nested_is_removed_is_ignored(
+        self, handler, mock_processor
+    ):
+        event = {
+            "topic": "SUPPORT_CHAT_REACTIONS",
+            "modificationType": "REMOVED",
+            "payload": {
+                "channelId": "support.fixture",
+                "senderUserProfileId": "user-removed-1",
+                "messageId": "msg-removed-1",
+                "isRemoved": False,
+                "reactionDto": {
+                    "reaction": "THUMBS_UP",
+                    "isRemoved": True,
+                },
+            },
+        }
+
+        await handler._on_websocket_event(event)
+
+        mock_processor.process.assert_not_awaited()
+        mock_processor.revoke_reaction.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -451,17 +818,59 @@ class TestBisq2ReactionHandlerErrors:
     @pytest.mark.asyncio
     async def test_missing_payload_ignored(self, handler, mock_processor):
         """Events without payload are silently dropped."""
-        event = {"responseType": "WebSocketEvent", "modificationType": "ADDED"}
+        event = {
+            "responseType": "WebSocketEvent",
+            "topic": "SUPPORT_CHAT_REACTIONS",
+            "modificationType": "ADDED",
+        }
         await handler._on_websocket_event(event)
         mock_processor.process.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("topic", "modification_type"),
+        [
+            ("SUPPORT_CHAT_MESSAGES", "ADDED"),
+            ("", "ADDED"),
+            ("SUPPORT_CHAT_REACTIONS", "UPDATED"),
+            ("SUPPORT_CHAT_REACTIONS", ""),
+        ],
+    )
+    async def test_wrong_topic_or_modification_is_ignored(
+        self,
+        handler,
+        mock_processor,
+        topic,
+        modification_type,
+    ):
+        event = {
+            "topic": topic,
+            "modificationType": modification_type,
+            "payload": {
+                "channelId": "support.fixture",
+                "reaction": "THUMBS_UP",
+                "messageId": "msg-1",
+                "senderUserProfileId": "user-1",
+            },
+        }
+
+        await handler._on_websocket_event(event)
+
+        mock_processor.process.assert_not_called()
+        mock_processor.revoke_reaction.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_missing_reaction_ignored(self, handler, mock_processor):
         """Events without reaction field are silently dropped."""
         event = {
             "responseType": "WebSocketEvent",
+            "topic": "SUPPORT_CHAT_REACTIONS",
             "modificationType": "ADDED",
-            "payload": {"messageId": "msg-1", "senderUserProfileId": "user-1"},
+            "payload": {
+                "channelId": "support.fixture",
+                "messageId": "msg-1",
+                "senderUserProfileId": "user-1",
+            },
         }
         await handler._on_websocket_event(event)
         mock_processor.process.assert_not_called()
@@ -471,6 +880,7 @@ class TestBisq2ReactionHandlerErrors:
         """Malformed JSON string payload is dropped safely."""
         event = {
             "type": "WebSocketEvent",
+            "topic": "SUPPORT_CHAT_REACTIONS",
             "modificationType": "ADDED",
             "payload": "{not valid json",
         }
@@ -478,13 +888,143 @@ class TestBisq2ReactionHandlerErrors:
         mock_processor.process.assert_not_called()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "message_aliases",
+        [
+            {"messageId": "message-one", "chatMessageId": "message-two"},
+            {"messageId": "message-one", "chatMessageId": 1},
+            {"messageId": "message-one", "chatMessageId": ""},
+        ],
+    )
+    async def test_conflicting_or_malformed_payload_message_aliases_are_ignored(
+        self,
+        handler,
+        mock_processor,
+        message_aliases,
+    ):
+        event = {
+            "topic": "SUPPORT_CHAT_REACTIONS",
+            "modificationType": "ADDED",
+            "payload": {
+                "channelId": "support.fixture",
+                "senderUserProfileId": "user-1",
+                "reaction": "THUMBS_UP",
+                **message_aliases,
+            },
+        }
+
+        await handler._on_websocket_event(event)
+
+        mock_processor.process.assert_not_awaited()
+        mock_processor.revoke_reaction.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_conflicting_envelope_and_payload_message_ids_are_ignored(
+        self, handler, mock_processor
+    ):
+        event = {
+            "topic": "SUPPORT_CHAT_REACTIONS",
+            "modificationType": "ADDED",
+            "messageId": "envelope-message",
+            "payload": {
+                "channelId": "support.fixture",
+                "senderUserProfileId": "user-1",
+                "reaction": "THUMBS_UP",
+                "messageId": "payload-message",
+            },
+        }
+
+        await handler._on_websocket_event(event)
+
+        mock_processor.process.assert_not_awaited()
+        mock_processor.revoke_reaction.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_conflicting_outer_and_nested_message_ids_are_ignored(
+        self, handler, mock_processor
+    ):
+        event = {
+            "topic": "SUPPORT_CHAT_REACTIONS",
+            "modificationType": "ADDED",
+            "payload": {
+                "channelId": "support.fixture",
+                "senderUserProfileId": "user-1",
+                "messageId": "outer-message",
+                "reactionDto": {
+                    "reactionId": 0,
+                    "messageId": "nested-message",
+                },
+            },
+        }
+
+        await handler._on_websocket_event(event)
+
+        mock_processor.process.assert_not_awaited()
+        mock_processor.revoke_reaction.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "reaction_aliases",
+        [
+            {"reaction": "THUMBS_UP", "reactionId": 1},
+            {"reaction": "THUMBS_UP", "reactionId": "0"},
+            {"reaction": "THUMBS_UP", "reactionId": True},
+            {"reaction": 0, "reactionId": 0},
+        ],
+    )
+    async def test_conflicting_or_malformed_reaction_aliases_are_ignored(
+        self,
+        handler,
+        mock_processor,
+        reaction_aliases,
+    ):
+        event = {
+            "topic": "SUPPORT_CHAT_REACTIONS",
+            "modificationType": "ADDED",
+            "payload": {
+                "channelId": "support.fixture",
+                "senderUserProfileId": "user-1",
+                "messageId": "message-one",
+                **reaction_aliases,
+            },
+        }
+
+        await handler._on_websocket_event(event)
+
+        mock_processor.process.assert_not_awaited()
+        mock_processor.revoke_reaction.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_conflicting_outer_and_nested_reaction_aliases_are_ignored(
+        self, handler, mock_processor
+    ):
+        event = {
+            "topic": "SUPPORT_CHAT_REACTIONS",
+            "modificationType": "ADDED",
+            "payload": {
+                "channelId": "support.fixture",
+                "senderUserProfileId": "user-1",
+                "messageId": "message-one",
+                "reaction": "THUMBS_UP",
+                "reactionDto": {"reactionId": 1},
+            },
+        }
+
+        await handler._on_websocket_event(event)
+
+        mock_processor.process.assert_not_awaited()
+        mock_processor.revoke_reaction.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_processor_exception_caught(self, handler, mock_processor):
         """Processor exceptions don't crash the handler."""
         mock_processor.process = AsyncMock(side_effect=Exception("DB error"))
         event = {
             "responseType": "WebSocketEvent",
+            "topic": "SUPPORT_CHAT_REACTIONS",
             "modificationType": "ADDED",
             "payload": {
+                "channelId": "support.fixture",
                 "reaction": "THUMBS_UP",
                 "messageId": "msg-1",
                 "senderUserProfileId": "user-1",

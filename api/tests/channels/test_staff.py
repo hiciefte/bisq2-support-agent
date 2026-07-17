@@ -35,6 +35,20 @@ def test_collect_trusted_staff_ids_prefers_bisq2_profile_ids_for_bisq_channel() 
     ]
 
 
+def test_bisq_staff_ids_preserve_case_and_resolve_exactly() -> None:
+    settings = SimpleNamespace(
+        BISQ2_STAFF_PROFILE_IDS=["Profile-X"],
+    )
+
+    configured = collect_trusted_staff_ids(settings, channel_id="bisq2")
+    resolver = StaffResolver(configured, case_sensitive=True)
+
+    assert configured == ["Profile-X"]
+    assert resolver.is_staff("Profile-X") is True
+    assert resolver.is_staff("profile-x") is False
+    assert resolver.is_staff(" Profile-X ") is False
+
+
 def test_collect_staff_display_names_only_uses_nicknames() -> None:
     settings = SimpleNamespace(SUPPORT_AGENT_NICKNAMES=" alice, bob , ")
     assert collect_staff_display_names(settings) == ["alice", "bob"]

@@ -24,6 +24,12 @@ def mock_settings():
     """Settings mock with Bisq2 API URL."""
     settings = MagicMock()
     settings.BISQ_API_URL = "http://localhost:8090"
+    settings.BISQ2_ALLOWED_CHANNEL_IDS = ["support.support", "ch"]
+    settings.BISQ2_ALLOWED_SENDER_PROFILE_IDS = ["profile-allowed"]
+    settings.BISQ2_STAFF_PROFILE_IDS = []
+    settings.BISQ2_CHATOPS_ENABLED = False
+    settings.BISQ2_CHATOPS_CHANNEL_IDS = []
+    settings.BISQ2_STAFF_NOTIFICATION_TARGET = ""
     return settings
 
 
@@ -40,6 +46,61 @@ def api(mock_settings):
 
 class TestSendSupportMessage:
     """Test send_support_message REST call."""
+
+    @pytest.mark.asyncio
+    async def test_disallowed_target_never_reaches_transport(self, mock_settings):
+        """The final Bisq send boundary denies targets outside the scope."""
+        mock_settings.BISQ2_ALLOWED_CHANNEL_IDS = ["support.allowed"]
+        scoped_api = Bisq2API(settings=mock_settings)
+        scoped_api._make_request = AsyncMock()
+
+        result = await scoped_api.send_support_message(
+            channel_id="support.blocked",
+            text="Fixture answer",
+            origin_sender_profile_id="profile-allowed",
+        )
+
+        assert result == {}
+        scoped_api._make_request.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_disallowed_origin_never_reaches_transport(self, api):
+        """An approved group channel cannot bypass the identity dimension."""
+        api._make_request = AsyncMock()
+
+        result = await api.send_support_message(
+            channel_id="support.support",
+            text="Fixture answer",
+            origin_sender_profile_id="profile-blocked",
+        )
+
+        assert result == {}
+        api._make_request.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("channel_id", "origin_sender_profile_id"),
+        [
+            (" support.support ", "profile-allowed"),
+            ("support.support", " profile-allowed "),
+        ],
+    )
+    async def test_noncanonical_scope_never_reaches_support_transport(
+        self,
+        api,
+        channel_id,
+        origin_sender_profile_id,
+    ):
+        api._make_request = AsyncMock()
+
+        result = await api.send_support_message(
+            channel_id=channel_id,
+            text="Fixture answer",
+            origin_sender_profile_id=origin_sender_profile_id,
+        )
+
+        assert result == {}
+        api._make_request.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_sends_post_request(self, api):
@@ -61,6 +122,7 @@ class TestSendSupportMessage:
         result = await api.send_support_message(
             channel_id="support.support",
             text="Hello from bot",
+            origin_sender_profile_id="profile-allowed",
         )
 
         mock_session.request.assert_called_once()
@@ -90,11 +152,31 @@ class TestSendSupportMessage:
             channel_id="support.support",
             text="Answer text",
             citation="Original question",
+            origin_sender_profile_id="profile-allowed",
+            citation_author_user_profile_id="profile-allowed",
+            citation_message_id="message-original",
         )
 
         call_kwargs = mock_session.request.call_args[1]
         assert call_kwargs["json"]["citation"] == "Original question"
+        assert call_kwargs["json"]["citationAuthorUserProfileId"] == ("profile-allowed")
+        assert call_kwargs["json"]["citationMessageId"] == "message-original"
         assert result["messageId"] == "msg-456"
+
+    @pytest.mark.asyncio
+    async def test_citation_without_exact_provenance_never_reaches_transport(self, api):
+        """Text-only citation matching could attribute a reply to the wrong user."""
+        api._make_request = AsyncMock()
+
+        result = await api.send_support_message(
+            channel_id="support.support",
+            text="Answer text",
+            citation="Repeated question text",
+            origin_sender_profile_id="profile-allowed",
+        )
+
+        assert result == {}
+        api._make_request.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_no_citation_when_none(self, api):
@@ -116,6 +198,7 @@ class TestSendSupportMessage:
         await api.send_support_message(
             channel_id="support.support",
             text="Answer",
+            origin_sender_profile_id="profile-allowed",
         )
 
         call_kwargs = mock_session.request.call_args[1]
@@ -128,7 +211,11 @@ class TestSendSupportMessage:
 
         with patch.object(api, "_make_request", new_callable=AsyncMock) as mock_req:
             mock_req.return_value = {"messageId": "msg-x", "timestamp": 0}
-            result = await api.send_support_message("ch", "text")
+            result = await api.send_support_message(
+                "ch",
+                "text",
+                origin_sender_profile_id="profile-allowed",
+            )
             assert result["messageId"] == "msg-x"
 
     @pytest.mark.asyncio
@@ -141,7 +228,11 @@ class TestSendSupportMessage:
             side_effect=aiohttp.ClientError("Connection refused"),
         ):
             with pytest.raises(aiohttp.ClientError):
-                await api.send_support_message("ch", "text")
+                await api.send_support_message(
+                    "ch",
+                    "text",
+                    origin_sender_profile_id="profile-allowed",
+                )
 
     @pytest.mark.asyncio
     async def test_returns_empty_on_404(self, api):
@@ -152,7 +243,11 @@ class TestSendSupportMessage:
             new_callable=AsyncMock,
             return_value={},
         ):
-            result = await api.send_support_message("ch", "text")
+            result = await api.send_support_message(
+                "ch",
+                "text",
+                origin_sender_profile_id="profile-allowed",
+            )
             assert result == {}
 
     @pytest.mark.asyncio
@@ -177,7 +272,11 @@ class TestSendSupportMessage:
                 },  # retry send
             ]
 
-            result = await api.send_support_message("support.support", "hello")
+            result = await api.send_support_message(
+                "support.support",
+                "hello",
+                origin_sender_profile_id="profile-allowed",
+            )
 
             assert result["messageId"] == "msg-after-bootstrap"
             assert mock_req.call_count == 7
@@ -195,6 +294,12 @@ class TestSendSupportMessage:
         """Retries request on host fallback URL when first URL is unreachable."""
         settings = MagicMock()
         settings.BISQ_API_URL = "http://bisq2-api:8090"
+        settings.BISQ2_ALLOWED_CHANNEL_IDS = ["support.support"]
+        settings.BISQ2_ALLOWED_SENDER_PROFILE_IDS = ["profile-allowed"]
+        settings.BISQ2_STAFF_PROFILE_IDS = []
+        settings.BISQ2_CHATOPS_ENABLED = False
+        settings.BISQ2_CHATOPS_CHANNEL_IDS = []
+        settings.BISQ2_STAFF_NOTIFICATION_TARGET = ""
         api = Bisq2API(settings=settings)
 
         mock_response = AsyncMock()
@@ -211,7 +316,11 @@ class TestSendSupportMessage:
         )
         api._session = mock_session
 
-        result = await api.send_support_message("support.support", "hello")
+        result = await api.send_support_message(
+            "support.support",
+            "hello",
+            origin_sender_profile_id="profile-allowed",
+        )
 
         assert result == {"messageId": "msg-fallback"}
         assert mock_session.request.call_count == 2
@@ -257,6 +366,112 @@ class TestSendReaction:
     """Test send_reaction REST call."""
 
     @pytest.mark.asyncio
+    async def test_disallowed_reaction_scope_never_reaches_transport(self, api):
+        api._make_request = AsyncMock()
+
+        result = await api.send_reaction(
+            channel_id="support.support",
+            message_id="msg-blocked",
+            reaction_id=0,
+            origin_sender_profile_id="profile-blocked",
+        )
+
+        assert result == {}
+        api._make_request.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("channel_id", "origin_sender_profile_id"),
+        [
+            (" support.support ", "profile-allowed"),
+            ("support.support", " profile-allowed "),
+        ],
+    )
+    async def test_noncanonical_scope_never_reaches_reaction_transport(
+        self,
+        api,
+        channel_id,
+        origin_sender_profile_id,
+    ):
+        api._make_request = AsyncMock()
+
+        result = await api.send_reaction(
+            channel_id=channel_id,
+            message_id="msg-safe",
+            reaction_id=0,
+            origin_sender_profile_id=origin_sender_profile_id,
+        )
+
+        assert result == {}
+        api._make_request.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "message_id",
+        [
+            "",
+            "   ",
+            ".",
+            "..",
+            "../private-message",
+            "path/to/message",
+            r"path\to\message",
+            "message?query=private",
+            "message#fragment",
+            "a" * 257,
+            None,
+        ],
+    )
+    async def test_invalid_message_id_never_reaches_transport(self, api, message_id):
+        api._make_request = AsyncMock()
+
+        result = await api.send_reaction(
+            channel_id="support.support",
+            message_id=message_id,
+            reaction_id=0,
+            origin_sender_profile_id="profile-allowed",
+        )
+
+        assert result == {}
+        api._make_request.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "reaction_id",
+        [-1, 6, True, False, "0", 0.0, None],
+    )
+    async def test_invalid_reaction_id_never_reaches_transport(self, api, reaction_id):
+        api._make_request = AsyncMock()
+
+        result = await api.send_reaction(
+            channel_id="support.support",
+            message_id="msg-safe",
+            reaction_id=reaction_id,
+            origin_sender_profile_id="profile-allowed",
+        )
+
+        assert result == {}
+        api._make_request.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("is_removed", [0, 1, "false", None])
+    async def test_non_boolean_removal_flag_never_reaches_transport(
+        self, api, is_removed
+    ):
+        api._make_request = AsyncMock()
+
+        result = await api.send_reaction(
+            channel_id="support.support",
+            message_id="msg-safe",
+            reaction_id=0,
+            is_removed=is_removed,
+            origin_sender_profile_id="profile-allowed",
+        )
+
+        assert result == {}
+        api._make_request.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_sends_post_request(self, api):
         """Sends POST to reaction endpoint."""
         with patch.object(
@@ -269,6 +484,7 @@ class TestSendReaction:
                 channel_id="support.support",
                 message_id="msg-123",
                 reaction_id=0,
+                origin_sender_profile_id="profile-allowed",
             )
 
             mock_req.assert_called_once()
@@ -289,6 +505,7 @@ class TestSendReaction:
                 channel_id="ch",
                 message_id="msg-1",
                 reaction_id=4,
+                origin_sender_profile_id="profile-allowed",
             )
 
             call_kwargs = mock_req.call_args[1]
@@ -308,6 +525,7 @@ class TestSendReaction:
                 message_id="msg-1",
                 reaction_id=0,
                 is_removed=True,
+                origin_sender_profile_id="profile-allowed",
             )
 
             call_kwargs = mock_req.call_args[1]
@@ -326,6 +544,7 @@ class TestSendReaction:
                 channel_id="ch",
                 message_id="msg-1",
                 reaction_id=0,
+                origin_sender_profile_id="profile-allowed",
             )
 
             call_kwargs = mock_req.call_args[1]
@@ -341,7 +560,93 @@ class TestSendReaction:
             side_effect=aiohttp.ClientError("timeout"),
         ):
             with pytest.raises(aiohttp.ClientError):
-                await api.send_reaction("ch", "msg", 0)
+                await api.send_reaction(
+                    "ch",
+                    "msg",
+                    0,
+                    origin_sender_profile_id="profile-allowed",
+                )
+
+
+class TestBisqApiRequestPrivacy:
+    """Transport failures must not expose scoped identifiers."""
+
+    @pytest.mark.asyncio
+    async def test_response_error_redacts_endpoint_identifiers(self, api, caplog):
+        channel_sentinel = "channel-sentinel-private"
+        message_sentinel = "message-sentinel-private"
+        response = AsyncMock()
+        response.status = 500
+        response.headers = {"content-type": "application/json"}
+        response.raise_for_status = MagicMock(
+            side_effect=aiohttp.ClientResponseError(
+                request_info=MagicMock(
+                    real_url=(
+                        f"/support/{channel_sentinel}/{message_sentinel}/reactions"
+                    )
+                ),
+                history=(),
+                status=500,
+                message="fixture failure",
+                headers={},
+            )
+        )
+        response.__aenter__ = AsyncMock(return_value=response)
+        response.__aexit__ = AsyncMock(return_value=False)
+        session = AsyncMock()
+        session.request = MagicMock(return_value=response)
+        api._session = session
+        api._auth_enabled = False
+
+        with pytest.raises(aiohttp.ClientError) as exc_info:
+            await api._make_request(
+                "POST",
+                f"/api/v1/support/channels/{channel_sentinel}/"
+                f"{message_sentinel}/reactions",
+            )
+
+        output = caplog.text + str(exc_info.value)
+        assert channel_sentinel not in output
+        assert message_sentinel not in output
+
+    @pytest.mark.asyncio
+    async def test_connection_error_redacts_target_and_raw_exception(
+        self, mock_settings, caplog
+    ):
+        username_sentinel = "userinfo-sentinel-a"
+        password_sentinel = "userinfo-sentinel-b"
+        host_sentinel = ".".join(("host-sentinel", "invalid"))
+        ip_sentinel = ".".join(("192", "0", "2", "123"))
+        raw_error_sentinel = "raw-transport-detail"
+        sentinels = {
+            username_sentinel,
+            password_sentinel,
+            host_sentinel,
+            ip_sentinel,
+            raw_error_sentinel,
+        }
+        mock_settings.BISQ_API_URL = "http://{}:{}@{}:8090".format(
+            username_sentinel,
+            password_sentinel,
+            host_sentinel,
+        )
+        scoped_api = Bisq2API(settings=mock_settings)
+        session = AsyncMock()
+        session.request = MagicMock(
+            side_effect=aiohttp.ClientConnectionError(
+                f"{raw_error_sentinel} at {ip_sentinel}"
+            )
+        )
+        scoped_api._session = session
+        scoped_api._auth_enabled = False
+
+        with pytest.raises(aiohttp.ClientConnectionError) as exc_info:
+            await scoped_api._make_request("GET", "/api/v1/support/export")
+
+        output = caplog.text + str(exc_info.value)
+        assert str(exc_info.value) == "Bisq2 API connection failed"
+        for sentinel in sentinels:
+            assert sentinel not in output
 
 
 class TestBisqApiAuth:

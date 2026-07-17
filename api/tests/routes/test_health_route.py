@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -25,6 +26,23 @@ def _ready_rag_service(*, vector_ready: bool = True):
         document_retriever=object(),
         retriever=object(),
         check_readiness=AsyncMock(return_value=vector_ready),
+    )
+
+
+def _scoped_bisq_runtime(scope, *, reaction_listening: bool = True):
+    bisq_api = SimpleNamespace(_test_scope=scope)
+    reaction_handler = SimpleNamespace(
+        _test_scope=scope,
+        is_listening=reaction_listening,
+    )
+    dependencies = {
+        "bisq2_api": bisq_api,
+        "bisq2_reaction_handler": reaction_handler,
+    }
+    return (
+        bisq_api,
+        reaction_handler,
+        SimpleNamespace(resolve_optional=dependencies.get),
     )
 
 
@@ -81,6 +99,12 @@ class TestHealthRoute:
                 "channel_launch_control": {"status": "ready", "required": False},
                 "matrix": {"status": "disabled", "required": False},
                 "bisq2_api": {"status": "disabled", "required": False},
+                "bisq2_test_scope": {
+                    "status": "disabled",
+                    "required": False,
+                    "channel_count": 0,
+                    "sender_profile_count": 0,
+                },
             },
         }
         rag_service.check_readiness.assert_awaited_once_with()
@@ -102,6 +126,12 @@ class TestHealthRoute:
                 "channel_launch_control": {"status": "ready", "required": False},
                 "matrix": {"status": "disabled", "required": False},
                 "bisq2_api": {"status": "disabled", "required": False},
+                "bisq2_test_scope": {
+                    "status": "disabled",
+                    "required": False,
+                    "channel_count": 0,
+                    "sender_profile_count": 0,
+                },
             },
         }
 
@@ -220,12 +250,59 @@ class TestHealthRoute:
         }
         bisq_service.health_check.assert_awaited_once_with()
 
+    @pytest.mark.parametrize(
+        ("api_available", "readiness_status", "expected_http", "expected_status"),
+        [
+            (True, "healthy", 200, "ready"),
+            (False, "degraded", 503, "unavailable"),
+        ],
+    )
+    def test_scoped_training_requires_bisq_export_when_channel_is_disabled(
+        self,
+        test_client,
+        test_settings,
+        api_available,
+        readiness_status,
+        expected_http,
+        expected_status,
+    ):
+        _set_disabled_optional_integrations(test_client, test_settings)
+        test_settings.BISQ2_ALLOWED_CHANNEL_IDS = ["channel-training"]
+        test_settings.BISQ2_ALLOWED_SENDER_PROFILE_IDS = ["profile-training"]
+        test_settings.BISQ2_STAFF_PROFILE_IDS = []
+        test_settings.BISQ2_CHATOPS_CHANNEL_IDS = []
+        test_settings.BISQ2_STAFF_NOTIFICATION_TARGET = ""
+        bisq_service = AsyncMock()
+        bisq_service.health_check.return_value = {
+            "api_available": api_available,
+            "readiness": {"status": readiness_status},
+        }
+        test_client.app.state.rag_service = _ready_rag_service()
+        test_client.app.state.bisq_mcp_service = bisq_service
+
+        response = test_client.get("/health/ready")
+
+        assert response.status_code == expected_http
+        assert response.json()["components"]["bisq2_api"] == {
+            "status": expected_status,
+            "required": True,
+        }
+        assert response.json()["components"]["bisq2_test_scope"] == {
+            "status": "ready",
+            "required": True,
+            "channel_count": 1,
+            "sender_profile_count": 1,
+        }
+        bisq_service.health_check.assert_awaited_once_with()
+
     def test_readiness_accepts_healthy_enabled_integrations(
         self, test_client, test_settings
     ):
         _set_disabled_optional_integrations(test_client, test_settings)
         test_settings.MATRIX_SYNC_ENABLED = True
         test_settings.BISQ2_CHANNEL_ENABLED = True
+        test_settings.BISQ2_ALLOWED_CHANNEL_IDS = ["support.fixture"]
+        test_settings.BISQ2_ALLOWED_SENDER_PROFILE_IDS = ["profile.fixture"]
         connection_manager = MagicMock()
         connection_manager.health_check.return_value = True
         runtime = MagicMock()
@@ -241,6 +318,20 @@ class TestHealthRoute:
             is_connected=True,
         )
         test_client.app.state.bisq_mcp_service = bisq_service
+        scope = health_routes.resolve_bisq2_test_scope(test_settings)
+        _, _, bisq_runtime = _scoped_bisq_runtime(scope)
+        bisq_channel = SimpleNamespace(
+            _test_scope=scope,
+            is_connected=True,
+            test_scope_rebaseline_complete=True,
+            test_scope_persistence_capable=True,
+            test_scope_persistence_healthy=True,
+            test_scope_websocket_ready=True,
+            runtime=bisq_runtime,
+        )
+        test_client.app.state.channel_registry = SimpleNamespace(
+            get=lambda channel_id: bisq_channel if channel_id == "bisq2" else None
+        )
 
         response = test_client.get("/health/ready")
 
@@ -248,6 +339,332 @@ class TestHealthRoute:
         assert response.json()["status"] == "ready"
         assert response.json()["components"]["matrix"]["status"] == "ready"
         assert response.json()["components"]["bisq2_api"]["status"] == "ready"
+        assert response.json()["components"]["bisq2_test_scope"] == {
+            "status": "ready",
+            "required": True,
+            "channel_count": 1,
+            "sender_profile_count": 1,
+        }
+        assert "support.fixture" not in response.text
+        assert "profile.fixture" not in response.text
+
+    def test_readiness_rejects_enabled_bisq_channel_without_allowlist(
+        self, test_client, test_settings
+    ):
+        _set_disabled_optional_integrations(test_client, test_settings)
+        test_settings.BISQ2_CHANNEL_ENABLED = True
+        test_settings.BISQ2_ALLOWED_CHANNEL_IDS = ""
+        test_settings.BISQ2_ALLOWED_SENDER_PROFILE_IDS = ""
+        bisq_service = AsyncMock()
+        bisq_service.health_check.return_value = {
+            "api_available": True,
+            "readiness": {"status": "healthy"},
+        }
+        test_client.app.state.rag_service = _ready_rag_service()
+        test_client.app.state.bisq_mcp_service = bisq_service
+
+        response = test_client.get("/health/ready")
+
+        assert response.status_code == 503
+        assert response.json()["components"]["bisq2_test_scope"] == {
+            "status": "unavailable",
+            "required": True,
+            "channel_count": 0,
+            "sender_profile_count": 0,
+        }
+
+    def test_readiness_rejects_active_bisq_scope_mismatch(
+        self, test_client, test_settings
+    ):
+        from app.channels.plugins.bisq2.test_scope import Bisq2TestScope
+
+        _set_disabled_optional_integrations(test_client, test_settings)
+        test_settings.BISQ2_CHANNEL_ENABLED = True
+        test_settings.BISQ2_ALLOWED_CHANNEL_IDS = ["channel-configured"]
+        test_settings.BISQ2_ALLOWED_SENDER_PROFILE_IDS = ["profile-configured"]
+        configured_scope = health_routes.resolve_bisq2_test_scope(test_settings)
+        mismatched_scope = Bisq2TestScope(
+            allowed_channel_ids=frozenset({"channel-configured"}),
+            allowed_sender_profile_ids=frozenset({"profile-stale"}),
+        )
+        bisq_service = AsyncMock()
+        bisq_service.health_check.return_value = {
+            "api_available": True,
+            "readiness": {"status": "healthy"},
+        }
+        test_client.app.state.rag_service = _ready_rag_service()
+        test_client.app.state.bisq_mcp_service = bisq_service
+        _, reaction_handler, bisq_runtime = _scoped_bisq_runtime(configured_scope)
+        mismatched_api = SimpleNamespace(_test_scope=mismatched_scope)
+        bisq_runtime = SimpleNamespace(
+            resolve_optional={
+                "bisq2_api": mismatched_api,
+                "bisq2_reaction_handler": reaction_handler,
+            }.get
+        )
+        bisq_channel = SimpleNamespace(
+            _test_scope=configured_scope,
+            is_connected=True,
+            test_scope_rebaseline_complete=True,
+            test_scope_persistence_capable=True,
+            test_scope_persistence_healthy=True,
+            test_scope_websocket_ready=True,
+            runtime=bisq_runtime,
+        )
+        test_client.app.state.channel_registry = SimpleNamespace(
+            get=lambda channel_id: bisq_channel if channel_id == "bisq2" else None
+        )
+
+        response = test_client.get("/health/ready")
+
+        assert response.status_code == 503
+        assert response.json()["components"]["bisq2_test_scope"]["status"] == (
+            "unavailable"
+        )
+        assert "profile-stale" not in response.text
+
+    def test_readiness_rejects_inactive_registered_bisq_reaction_listener(
+        self, test_client, test_settings
+    ):
+        _set_disabled_optional_integrations(test_client, test_settings)
+        test_settings.BISQ2_CHANNEL_ENABLED = True
+        test_settings.BISQ2_ALLOWED_CHANNEL_IDS = ["channel-configured"]
+        test_settings.BISQ2_ALLOWED_SENDER_PROFILE_IDS = ["profile-configured"]
+        scope = health_routes.resolve_bisq2_test_scope(test_settings)
+        bisq_service = AsyncMock()
+        bisq_service.health_check.return_value = {
+            "api_available": True,
+            "readiness": {"status": "healthy"},
+        }
+        test_client.app.state.rag_service = _ready_rag_service()
+        test_client.app.state.bisq_mcp_service = bisq_service
+        _, _, bisq_runtime = _scoped_bisq_runtime(
+            scope,
+            reaction_listening=False,
+        )
+        bisq_channel = SimpleNamespace(
+            _test_scope=scope,
+            is_connected=True,
+            test_scope_rebaseline_complete=True,
+            test_scope_persistence_capable=True,
+            test_scope_persistence_healthy=True,
+            test_scope_websocket_ready=True,
+            runtime=bisq_runtime,
+        )
+        test_client.app.state.channel_registry = SimpleNamespace(
+            get=lambda channel_id: bisq_channel if channel_id == "bisq2" else None
+        )
+
+        response = test_client.get("/health/ready")
+
+        assert response.status_code == 503
+        assert response.json()["components"]["bisq2_test_scope"]["status"] == (
+            "unavailable"
+        )
+
+    def test_readiness_rejects_noncurrent_bisq_websocket_subscriptions(
+        self, test_client, test_settings
+    ):
+        _set_disabled_optional_integrations(test_client, test_settings)
+        test_settings.BISQ2_CHANNEL_ENABLED = True
+        test_settings.BISQ2_ALLOWED_CHANNEL_IDS = ["channel-configured"]
+        test_settings.BISQ2_ALLOWED_SENDER_PROFILE_IDS = ["profile-configured"]
+        scope = health_routes.resolve_bisq2_test_scope(test_settings)
+        bisq_service = AsyncMock()
+        bisq_service.health_check.return_value = {
+            "api_available": True,
+            "readiness": {"status": "healthy"},
+        }
+        test_client.app.state.rag_service = _ready_rag_service()
+        test_client.app.state.bisq_mcp_service = bisq_service
+        _, _, bisq_runtime = _scoped_bisq_runtime(scope)
+        bisq_channel = SimpleNamespace(
+            _test_scope=scope,
+            is_connected=True,
+            test_scope_rebaseline_complete=True,
+            test_scope_persistence_capable=True,
+            test_scope_persistence_healthy=True,
+            test_scope_websocket_ready=False,
+            runtime=bisq_runtime,
+        )
+        test_client.app.state.channel_registry = SimpleNamespace(
+            get=lambda channel_id: bisq_channel if channel_id == "bisq2" else None
+        )
+
+        response = test_client.get("/health/ready")
+
+        assert response.status_code == 503
+        assert response.json()["components"]["bisq2_test_scope"]["status"] == (
+            "unavailable"
+        )
+
+    def test_readiness_requires_registered_bisq_reaction_handler(
+        self, test_client, test_settings
+    ):
+        _set_disabled_optional_integrations(test_client, test_settings)
+        test_settings.BISQ2_CHANNEL_ENABLED = True
+        test_settings.BISQ2_ALLOWED_CHANNEL_IDS = ["channel-configured"]
+        test_settings.BISQ2_ALLOWED_SENDER_PROFILE_IDS = ["profile-configured"]
+        scope = health_routes.resolve_bisq2_test_scope(test_settings)
+        bisq_service = AsyncMock()
+        bisq_service.health_check.return_value = {
+            "api_available": True,
+            "readiness": {"status": "healthy"},
+        }
+        test_client.app.state.rag_service = _ready_rag_service()
+        test_client.app.state.bisq_mcp_service = bisq_service
+        bisq_api = SimpleNamespace(_test_scope=scope)
+        bisq_runtime = SimpleNamespace(
+            resolve_optional=lambda name: bisq_api if name == "bisq2_api" else None
+        )
+        bisq_channel = SimpleNamespace(
+            _test_scope=scope,
+            is_connected=True,
+            test_scope_rebaseline_complete=True,
+            test_scope_persistence_capable=True,
+            test_scope_persistence_healthy=True,
+            test_scope_websocket_ready=True,
+            runtime=bisq_runtime,
+        )
+        test_client.app.state.channel_registry = SimpleNamespace(
+            get=lambda channel_id: bisq_channel if channel_id == "bisq2" else None
+        )
+
+        response = test_client.get("/health/ready")
+
+        assert response.status_code == 503
+        assert response.json()["components"]["bisq2_test_scope"]["status"] == (
+            "unavailable"
+        )
+
+    def test_bisq_scope_readiness_log_hides_dependency_exception(
+        self, test_client, test_settings, caplog
+    ):
+        _set_disabled_optional_integrations(test_client, test_settings)
+        test_settings.BISQ2_CHANNEL_ENABLED = True
+        test_settings.BISQ2_ALLOWED_CHANNEL_IDS = ["channel-configured"]
+        test_settings.BISQ2_ALLOWED_SENDER_PROFILE_IDS = ["profile-configured"]
+        scope = health_routes.resolve_bisq2_test_scope(test_settings)
+        bisq_service = AsyncMock()
+        bisq_service.health_check.return_value = {
+            "api_available": True,
+            "readiness": {"status": "healthy"},
+        }
+        test_client.app.state.rag_service = _ready_rag_service()
+        test_client.app.state.bisq_mcp_service = bisq_service
+        sensitive_values = ("private-endpoint", "sentinel-secret", "profile-configured")
+        sensitive_detail = " ".join(sensitive_values)
+
+        def fail_resolution(_name):
+            raise RuntimeError(sensitive_detail)
+
+        bisq_channel = SimpleNamespace(
+            _test_scope=scope,
+            is_connected=True,
+            test_scope_rebaseline_complete=True,
+            test_scope_persistence_capable=True,
+            test_scope_persistence_healthy=True,
+            test_scope_websocket_ready=True,
+            runtime=SimpleNamespace(resolve_optional=fail_resolution),
+        )
+        test_client.app.state.channel_registry = SimpleNamespace(
+            get=lambda channel_id: bisq_channel if channel_id == "bisq2" else None
+        )
+
+        with caplog.at_level(logging.WARNING):
+            response = test_client.get("/health/ready")
+
+        assert response.status_code == 503
+        for sensitive_value in sensitive_values:
+            assert sensitive_value not in caplog.text
+
+    @pytest.mark.parametrize(
+        (
+            "rebaseline_complete",
+            "persistence_capable",
+            "persistence_healthy",
+        ),
+        [(False, True, True), (True, False, True), (True, True, False)],
+    )
+    def test_readiness_rejects_unsafe_bisq_scope_state(
+        self,
+        test_client,
+        test_settings,
+        rebaseline_complete,
+        persistence_capable,
+        persistence_healthy,
+    ):
+        _set_disabled_optional_integrations(test_client, test_settings)
+        test_settings.BISQ2_CHANNEL_ENABLED = True
+        test_settings.BISQ2_ALLOWED_CHANNEL_IDS = ["channel-configured"]
+        test_settings.BISQ2_ALLOWED_SENDER_PROFILE_IDS = ["profile-configured"]
+        scope = health_routes.resolve_bisq2_test_scope(test_settings)
+        bisq_service = AsyncMock()
+        bisq_service.health_check.return_value = {
+            "api_available": True,
+            "readiness": {"status": "healthy"},
+        }
+        test_client.app.state.rag_service = _ready_rag_service()
+        test_client.app.state.bisq_mcp_service = bisq_service
+        _, _, bisq_runtime = _scoped_bisq_runtime(scope)
+        bisq_channel = SimpleNamespace(
+            _test_scope=scope,
+            is_connected=True,
+            test_scope_rebaseline_complete=rebaseline_complete,
+            test_scope_persistence_capable=persistence_capable,
+            test_scope_persistence_healthy=persistence_healthy,
+            test_scope_websocket_ready=True,
+            runtime=bisq_runtime,
+        )
+        test_client.app.state.channel_registry = SimpleNamespace(
+            get=lambda channel_id: bisq_channel if channel_id == "bisq2" else None
+        )
+
+        response = test_client.get("/health/ready")
+
+        assert response.status_code == 503
+        assert response.json()["components"]["bisq2_test_scope"]["status"] == (
+            "unavailable"
+        )
+
+    def test_readiness_requires_chatops_adapter_when_bisq_chatops_is_enabled(
+        self, test_client, test_settings
+    ):
+        _set_disabled_optional_integrations(test_client, test_settings)
+        test_settings.BISQ2_CHANNEL_ENABLED = True
+        test_settings.BISQ2_ALLOWED_CHANNEL_IDS = ["channel-configured"]
+        test_settings.BISQ2_ALLOWED_SENDER_PROFILE_IDS = ["profile-configured"]
+        test_settings.BISQ2_CHATOPS_ENABLED = True
+        test_settings.BISQ2_CHATOPS_CHANNEL_IDS = ["channel-configured"]
+        test_settings.BISQ2_STAFF_PROFILE_IDS = ["profile-configured"]
+        scope = health_routes.resolve_bisq2_test_scope(test_settings)
+        bisq_service = AsyncMock()
+        bisq_service.health_check.return_value = {
+            "api_available": True,
+            "readiness": {"status": "healthy"},
+        }
+        test_client.app.state.rag_service = _ready_rag_service()
+        test_client.app.state.bisq_mcp_service = bisq_service
+        _, _, bisq_runtime = _scoped_bisq_runtime(scope)
+        bisq_channel = SimpleNamespace(
+            _test_scope=scope,
+            is_connected=True,
+            test_scope_rebaseline_complete=True,
+            test_scope_persistence_capable=True,
+            test_scope_persistence_healthy=True,
+            test_scope_websocket_ready=True,
+            runtime=bisq_runtime,
+        )
+        test_client.app.state.channel_registry = SimpleNamespace(
+            get=lambda channel_id: bisq_channel if channel_id == "bisq2" else None
+        )
+
+        response = test_client.get("/health/ready")
+
+        assert response.status_code == 503
+        assert response.json()["components"]["bisq2_test_scope"]["status"] == (
+            "unavailable"
+        )
 
     def test_readiness_hides_dependency_exception_details(
         self, test_client, test_settings
