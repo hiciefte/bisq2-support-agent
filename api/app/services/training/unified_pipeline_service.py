@@ -2066,8 +2066,14 @@ class UnifiedPipelineService:
                     original_staff_answer=faq_data.get("original_staff_answer"),
                 )
                 results.append(result)
-            except Exception:
-                logger.exception("Failed to process extracted FAQ")
+            except Exception as exc:
+                if source == "bisq2" or faq_data.get("source") == "bisq2":
+                    logger.error(
+                        "Failed to process extracted Bisq FAQ (%s)",
+                        type(exc).__name__,
+                    )
+                else:
+                    logger.exception("Failed to process extracted FAQ")
                 continue
 
         logger.info(

@@ -11,8 +11,12 @@ import asyncio
 import logging
 import time as time_module
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional
 
+from app.channels.plugins.bisq2.test_scope import (
+    Bisq2TestScope,
+    resolve_bisq2_test_scope,
+)
 from app.metrics.training_metrics import (
     sync_duration_seconds,
     sync_last_status,
@@ -50,13 +54,19 @@ class Bisq2SyncService:
         self.pipeline_service = pipeline_service
         self.bisq_api = bisq_api
         self.state_manager = state_manager
+        self._test_scope: Bisq2TestScope = resolve_bisq2_test_scope(settings)
 
-        # Build trusted staff IDs set from settings
-        staff_users = getattr(settings, "BISQ_STAFF_USERS", [])
-        if isinstance(staff_users, str):
-            staff_users = [s.strip() for s in staff_users.split(",") if s.strip()]
-        self.staff_users: List[str] = staff_users
-        self.staff_users_lower: Set[str] = {s.lower() for s in staff_users}
+        # Bisq staff trust is bound only to immutable profile identifiers.
+        staff_profile_ids = getattr(settings, "BISQ2_STAFF_PROFILE_IDS", [])
+        if isinstance(staff_profile_ids, str):
+            staff_profile_ids = [
+                item.strip() for item in staff_profile_ids.split(",") if item.strip()
+            ]
+        if not isinstance(staff_profile_ids, list):
+            staff_profile_ids = []
+        self.staff_profile_ids = [
+            item for item in staff_profile_ids if isinstance(item, str) and item
+        ]
 
     def is_configured(self) -> bool:
         """Check if Bisq 2 integration is configured."""
@@ -73,6 +83,15 @@ class Bisq2SyncService:
         if not self.is_configured():
             logger.debug("Bisq 2 API not configured, skipping sync")
             return 0
+        if not self._test_scope.ready:
+            logger.warning(
+                "Bisq 2 training sync blocked by production-test scope "
+                "(reason=%s, channel_count=%d, sender_profile_count=%d)",
+                self._test_scope.reason,
+                self._test_scope.channel_count,
+                self._test_scope.sender_profile_count,
+            )
+            return 0
 
         processed_count = 0
         sync_start_time = time_module.time()
@@ -83,10 +102,22 @@ class Bisq2SyncService:
             if messages is None:
                 raise Exception("Failed to fetch messages after multiple retries")
 
-            logger.info(f"Fetched {len(messages)} messages from Bisq 2 API")
+            fetched_count = len(messages)
+            messages = [
+                message
+                for message in messages
+                if isinstance(message, dict)
+                and self._test_scope.allows_payload(message)
+            ]
+            logger.info(
+                "Fetched %d messages from Bisq 2 API; %d matched the "
+                "production-test scope",
+                fetched_count,
+                len(messages),
+            )
 
             if not messages:
-                logger.info("No messages to process")
+                logger.info("No in-scope messages to process")
                 return 0
 
             # Filter out already-processed messages
@@ -103,13 +134,20 @@ class Bisq2SyncService:
                 logger.info("No new messages to process")
                 return 0
 
-            # Use LLM-based extraction via pipeline service
-            # This sends all messages to UnifiedFAQExtractor for single-pass extraction
-            results = await self.pipeline_service.extract_faqs_batch(
-                messages=new_messages,
-                source="bisq2",
-                staff_identifiers=self.staff_users,
-            )
+            # Never let the extractor pair messages across exact Bisq channels.
+            messages_by_channel: Dict[str, List[Dict[str, Any]]] = {}
+            for message in new_messages:
+                channel_id = self._test_scope.resolve_payload_channel(message)
+                messages_by_channel.setdefault(channel_id, []).append(message)
+
+            results = []
+            for channel_messages in messages_by_channel.values():
+                channel_results = await self.pipeline_service.extract_faqs_batch(
+                    messages=channel_messages,
+                    source="bisq2",
+                    staff_identifiers=self.staff_profile_ids,
+                )
+                results.extend(channel_results)
 
             # Mark all input messages processed only after extraction completes.
             for msg in new_messages:
@@ -143,8 +181,8 @@ class Bisq2SyncService:
             )
             return processed_count
 
-        except Exception:
-            logger.exception("Bisq sync failed")
+        except Exception as exc:
+            logger.warning("Bisq sync failed (%s)", type(exc).__name__)
             training_errors.labels(stage="poll").inc()
             sync_last_status.labels(source="bisq2").set(0)
             raise
@@ -165,8 +203,13 @@ class Bisq2SyncService:
                     retry_delay=retry_delay,
                 )
                 return result.get("messages", [])
-            except Exception as e:
-                logger.warning(f"Attempt {attempt + 1}/{max_retries} failed: {e}")
+            except Exception as exc:
+                logger.warning(
+                    "Bisq export attempt %s/%s failed (%s)",
+                    attempt + 1,
+                    max_retries,
+                    type(exc).__name__,
+                )
                 if attempt + 1 == max_retries:
                     return None
                 await asyncio.sleep(retry_delay)

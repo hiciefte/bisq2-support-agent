@@ -55,7 +55,7 @@ class TestThreadContextInTranscript:
                 "id": "msg2",
                 "author": "staff1",
                 "text": "Trading fee is 0.1%.",
-                "citation": {"author": "user1", "text": "What are the fees?"},
+                "citation_message_id": "msg1",
             },
         ]
         transcript, _ = ext._anonymize_messages(messages)

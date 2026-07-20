@@ -144,6 +144,8 @@ When Bisq2 API is configured with `authorizationRequired=true`, the support-agen
 * **`BISQ2_STAFF_NOTIFICATION_TARGET`**
   * Description: Optional Bisq2 channel ID used when the Bisq2 Internal Notice Target is set to `staff_room`.
   * Default: empty
+  * Production-test scope: When set, this exact channel ID must also appear in
+    `BISQ2_ALLOWED_CHANNEL_IDS`.
 * **`AUTONOMOUS_DELIVERY_ENABLED`**
   * Description: Environment guard for the global autonomous-delivery switch. `false` forces the persisted admin switch off at startup and prevents an admin enable. `true` permits an admin enable but never overwrites a persisted admin stop.
   * Default: `false`
@@ -263,8 +265,50 @@ Use a dark deploy first, then enable operator-facing features in phases.
 * **`BISQ2_CHATOPS_ENABLED`**
   * Description: Enables Bisq2 ChatOps command handling.
   * Default: `false`
+* **`BISQ2_ALLOWED_CHANNEL_IDS`**
+  * Description: Comma-separated, exact, case-sensitive Bisq2 group-channel IDs
+    permitted during production testing. The same list gates live chat and the
+    scheduled/admin FAQ-training sync, even while the live channel is disabled.
+    A Bisq support `channelId` is not a private user thread; every participant in
+    that group can see replies.
+  * Default: empty (deny all Bisq2 chat/training ingress, reactions, and egress).
+  * Required: A nonempty valid list when `BISQ2_CHANNEL_ENABLED=true`.
+  * Security: Wildcards and path-like values are rejected. Real values belong
+    only in protected runtime configuration. Scope status and decision logs
+    report counts/reasons only. After changing the list, recreate the API
+    container so Compose reloads the environment; a restart is insufficient.
+    Bisq2 ChatOps targets and the optional staff-notification target must be
+    members of this list.
+  * Readiness: Once both production-test allowlists are nonempty and valid, the
+    export API is required and startup/readiness probes must be healthy even if
+    the live Bisq channel remains disabled, because FAQ-training sync is active.
+* **`BISQ2_ALLOWED_SENDER_PROFILE_IDS`**
+  * Description: Comma-separated, exact, case-sensitive Bisq2 profile IDs for
+    the approved test participants (including any staff identity used by a
+    test). Both this identity and the group channel must match for ingress,
+    reactions, reviewed replies, ChatOps notices, or lower-level egress.
+  * Default: empty (deny all Bisq2 chat/training ingress, reactions, and egress).
+  * Required: A nonempty valid list when `BISQ2_CHANNEL_ENABLED=true`.
+  * Security: Real values are runtime-only and must not be copied into source,
+    PRs, logs, or evidence. Runtime identifiers are compared literally; leading
+    or trailing whitespace, missing provenance, and conflicting aliases deny
+    access.
+    Enabled-mode readiness also requires the complete durable Bisq sync-state
+    manager and a successful atomic state write. Use one API process/replica;
+    the file-backed state is not a multi-process coordination database.
+* **`BISQ2_STAFF_PROFILE_IDS`**
+  * Description: Comma-separated, exact, case-sensitive Bisq2 profile IDs
+    trusted for staff actions. Display names and case-folded aliases never grant
+    staff authority.
+  * Default: empty.
+  * Production-test scope: Every configured staff profile must also appear in
+    `BISQ2_ALLOWED_SENDER_PROFILE_IDS`. When ChatOps is enabled, this list must
+    be nonempty. Store real values only in protected runtime configuration.
 * **`BISQ2_CHATOPS_CHANNEL_IDS`**
-  * Description: Comma-separated Bisq2 channel IDs where ChatOps commands are accepted.
+  * Description: Comma-separated Bisq2 channel IDs where ChatOps commands are
+    accepted. Every value must also appear in
+    `BISQ2_ALLOWED_CHANNEL_IDS`, and the staff profile must appear in
+    `BISQ2_ALLOWED_SENDER_PROFILE_IDS`.
   * Required: Yes (when `BISQ2_CHATOPS_ENABLED=true`)
 *   **`HYBRID_SEMANTIC_WEIGHT`**
     *   Description: Dense vector weight in hybrid retrieval.

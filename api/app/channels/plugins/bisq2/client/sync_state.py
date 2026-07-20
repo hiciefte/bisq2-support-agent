@@ -48,6 +48,8 @@ class BisqSyncStateManager:
         self.retention_days = max(1, int(retention_days))
         self._state_lock = threading.RLock()
         self.last_sync_timestamp: Optional[datetime] = None
+        self.scope_fingerprint: Optional[str] = None
+        self.scope_rebaseline_complete = False
         self.processed_message_ids: Set[str] = set()
         self._processed_message_order: Deque[str] = deque()
         self._processed_at: Dict[str, datetime] = {}
@@ -70,6 +72,17 @@ class BisqSyncStateManager:
                     data = json.load(f)
                 if not isinstance(data, dict):
                     raise ValueError("Sync state root must be a JSON object")
+
+                scope_fingerprint = data.get("scope_fingerprint")
+                self.scope_fingerprint = (
+                    scope_fingerprint
+                    if self._is_valid_scope_fingerprint(scope_fingerprint)
+                    else None
+                )
+                self.scope_rebaseline_complete = bool(
+                    self.scope_fingerprint
+                    and data.get("scope_rebaseline_complete") is True
+                )
 
                 # Restore timestamp
                 last_sync = data.get("last_sync_timestamp")
@@ -114,13 +127,18 @@ class BisqSyncStateManager:
                     f"processed_ids={len(self.processed_message_ids)}"
                 )
 
-            except (OSError, UnicodeError, ValueError, TypeError):
+            except (OSError, UnicodeError, ValueError, TypeError) as exc:
                 self.last_sync_timestamp = None
+                self.scope_fingerprint = None
+                self.scope_rebaseline_complete = False
                 self.processed_message_ids = set()
                 self._processed_message_order = deque()
                 self._processed_at = {}
                 self._pending_expired_ids = set()
-                logger.exception(f"Failed to load sync state from {self.state_file}")
+                logger.warning(
+                    "Failed to load Bisq sync state (%s)",
+                    type(exc).__name__,
+                )
 
     @staticmethod
     def _parse_processed_at(value: object) -> datetime | None:
@@ -136,6 +154,14 @@ class BisqSyncStateManager:
                 pass
         return None
 
+    @staticmethod
+    def _is_valid_scope_fingerprint(value: object) -> bool:
+        return bool(
+            isinstance(value, str)
+            and len(value) == 64
+            and all(character in "0123456789abcdef" for character in value)
+        )
+
     def save_state(self, *, prune_expired: bool = True) -> None:
         """Atomically save state to disk.
 
@@ -145,55 +171,138 @@ class BisqSyncStateManager:
         Raises:
             Exception: If state save fails
         """
-        temp_file: Optional[Path] = None
         with self._state_lock:
-            # Serialize snapshot + replace so an older snapshot cannot win after a
-            # newer one. A unique temp file also avoids cross-instance collisions.
+            pruned_ids = self._save_state_locked(prune_expired=prune_expired)
+            listeners = tuple(self._prune_listeners)
+        self._notify_pruned_ids(pruned_ids, listeners)
+
+    def _save_state_locked(self, *, prune_expired: bool = True) -> set[str]:
+        """Write state while the caller owns ``_state_lock``."""
+        temp_file: Optional[Path] = None
+        # Serialize snapshot + replace so an older snapshot cannot win after a
+        # newer one. A unique temp file also avoids cross-instance collisions.
+        prior_ids = set(self.processed_message_ids)
+        prior_order = deque(self._processed_message_order)
+        prior_processed_at = dict(self._processed_at)
+        prior_pending_expired = set(self._pending_expired_ids)
+        try:
             self.state_file.parent.mkdir(parents=True, exist_ok=True)
+            self._reconcile_and_prune_processed_ids()
+            if prune_expired:
+                self._prune_expired(datetime.now(UTC))
+            processed_list = list(self._processed_message_order)
+            data = {
+                "scope_fingerprint": self.scope_fingerprint,
+                "scope_rebaseline_complete": self.scope_rebaseline_complete,
+                "last_sync_timestamp": (
+                    self.last_sync_timestamp.isoformat()
+                    if self.last_sync_timestamp
+                    else None
+                ),
+                "processed_message_ids": processed_list,
+                "processed_message_timestamps": {
+                    message_id: self._processed_at[message_id].isoformat()
+                    for message_id in processed_list
+                },
+            }
+
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=self.state_file.parent,
+                prefix=f".{self.state_file.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                temp_file = Path(handle.name)
+                json.dump(data, handle, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
+
+            temp_file.replace(self.state_file)
+            self._pending_expired_ids.clear()
+
+            logger.info(
+                f"Saved sync state: timestamp={self.last_sync_timestamp}, "
+                f"processed_ids={len(self.processed_message_ids)}"
+            )
+            return prior_ids - self.processed_message_ids
+
+        except Exception as exc:
+            self.processed_message_ids = prior_ids
+            self._processed_message_order = prior_order
+            self._processed_at = prior_processed_at
+            self._pending_expired_ids = prior_pending_expired
+            logger.warning(
+                "Failed to save Bisq sync state (%s)",
+                type(exc).__name__,
+            )
+            if temp_file is not None and temp_file.exists():
+                try:
+                    temp_file.unlink()
+                except OSError:
+                    pass
+            raise
+
+    @staticmethod
+    def _notify_pruned_ids(
+        pruned_ids: set[str],
+        listeners: tuple[Callable[[set[str]], None], ...],
+    ) -> None:
+        """Notify cache owners only after the manager lock is released."""
+        if not pruned_ids:
+            return
+        for listener in listeners:
             try:
-                self._reconcile_and_prune_processed_ids()
-                if prune_expired:
-                    self._prune_expired(datetime.now(UTC))
-                processed_list = list(self._processed_message_order)
-                data = {
-                    "last_sync_timestamp": (
-                        self.last_sync_timestamp.isoformat()
-                        if self.last_sync_timestamp
-                        else None
-                    ),
-                    "processed_message_ids": processed_list,
-                    "processed_message_timestamps": {
-                        message_id: self._processed_at[message_id].isoformat()
-                        for message_id in processed_list
-                    },
-                }
-
-                with tempfile.NamedTemporaryFile(
-                    mode="w",
-                    encoding="utf-8",
-                    dir=self.state_file.parent,
-                    prefix=f".{self.state_file.name}.",
-                    suffix=".tmp",
-                    delete=False,
-                ) as handle:
-                    temp_file = Path(handle.name)
-                    json.dump(data, handle, indent=2)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-
-                temp_file.replace(self.state_file)
-                self._pending_expired_ids.clear()
-
-                logger.info(
-                    f"Saved sync state: timestamp={self.last_sync_timestamp}, "
-                    f"processed_ids={len(self.processed_message_ids)}"
+                listener(set(pruned_ids))
+            except Exception as exc:
+                logger.warning(
+                    "Bisq sync-state prune listener failed (%s)",
+                    type(exc).__name__,
                 )
 
-            except Exception:
-                logger.exception(f"Failed to save sync state to {self.state_file}")
-                if temp_file is not None and temp_file.exists():
-                    temp_file.unlink()
-                raise
+    def bind_scope(self, scope_fingerprint: str) -> bool:
+        """Bind cursor and dedup state to one exact production-test scope.
+
+        Returns ``True`` when an older or unbound state was cleared. The caller
+        must persist the fresh cursor after establishing a new live boundary.
+        """
+        if not self._is_valid_scope_fingerprint(scope_fingerprint):
+            raise ValueError("Invalid Bisq2 scope fingerprint")
+
+        with self._state_lock:
+            if self.scope_fingerprint == scope_fingerprint:
+                return False
+            self.scope_fingerprint = scope_fingerprint
+            self.scope_rebaseline_complete = False
+            self.last_sync_timestamp = None
+            self.processed_message_ids.clear()
+            self._processed_message_order.clear()
+            self._processed_at.clear()
+            self._pending_expired_ids.clear()
+            return True
+
+    def begin_scope_rebaseline(self, scope_fingerprint: str) -> bool:
+        """Mark a scope incomplete, clearing state only when the scope changed."""
+        changed = self.bind_scope(scope_fingerprint)
+        with self._state_lock:
+            self.scope_rebaseline_complete = False
+        return changed
+
+    def mark_scope_rebaseline_complete(self) -> None:
+        """Mark the current scope complete after its snapshot was suppressed."""
+        with self._state_lock:
+            if not self._is_valid_scope_fingerprint(self.scope_fingerprint):
+                raise ValueError("Cannot complete an unbound Bisq2 scope")
+            if self.last_sync_timestamp is None:
+                raise ValueError("Cannot complete a Bisq2 scope without a cursor")
+            self.scope_rebaseline_complete = True
+
+    def reset_scope_rebaseline_cursor(self) -> None:
+        """Move an incomplete activation to a fresh boundary on its next retry."""
+        with self._state_lock:
+            self.last_sync_timestamp = None
+            self.scope_rebaseline_complete = False
 
     def is_processed(self, message_id: str) -> bool:
         """Check if a message has already been processed.
@@ -241,6 +350,59 @@ class BisqSyncStateManager:
                 else timestamp.astimezone(UTC)
             )
             self._prune_processed_ids()
+
+    def unmark_processed(self, message_ids: set[str]) -> None:
+        """Roll back in-memory claims after their durable save failed."""
+        if not message_ids:
+            return
+        with self._state_lock:
+            self.processed_message_ids.difference_update(message_ids)
+            self._processed_message_order = deque(
+                message_id
+                for message_id in self._processed_message_order
+                if message_id not in message_ids
+            )
+            for message_id in message_ids:
+                self._processed_at.pop(message_id, None)
+                self._pending_expired_ids.discard(message_id)
+
+    def claim_processed_and_save(self, message_ids: set[str]) -> set[str]:
+        """Atomically claim message IDs in memory and durable state.
+
+        The prior in-memory state is restored if the atomic file replacement
+        fails, so callers can retry without treating an undurable claim as
+        processed.
+        """
+        normalized_ids = {
+            message_id.strip()
+            for message_id in message_ids
+            if isinstance(message_id, str) and message_id.strip()
+        }
+        if not normalized_ids:
+            return set()
+
+        with self._state_lock:
+            newly_claimed = normalized_ids - self.processed_message_ids
+            if not newly_claimed:
+                return set()
+            prior_ids = set(self.processed_message_ids)
+            prior_order = deque(self._processed_message_order)
+            prior_processed_at = dict(self._processed_at)
+            prior_pending_expired = set(self._pending_expired_ids)
+            try:
+                for message_id in sorted(newly_claimed):
+                    self.mark_processed(message_id)
+                pruned_ids = self._save_state_locked()
+                listeners = tuple(self._prune_listeners)
+                durable_claims = newly_claimed & self.processed_message_ids
+            except Exception:
+                self.processed_message_ids = prior_ids
+                self._processed_message_order = prior_order
+                self._processed_at = prior_processed_at
+                self._pending_expired_ids = prior_pending_expired
+                raise
+        self._notify_pruned_ids(pruned_ids, listeners)
+        return durable_claims
 
     def _reconcile_and_prune_processed_ids(self) -> None:
         """Keep legacy direct set mutations deterministic and bounded."""
@@ -298,18 +460,28 @@ class BisqSyncStateManager:
             }
             if dry_run or not expired:
                 return len(expired)
-            self._processed_message_order = deque(
-                message_id
-                for message_id in self._processed_message_order
-                if message_id not in expired
-            )
-            self.processed_message_ids.difference_update(expired)
-            for message_id in expired:
-                self._processed_at.pop(message_id, None)
-            self.save_state(prune_expired=False)
-            listeners = tuple(self._prune_listeners)
-        for listener in listeners:
-            listener(set(expired))
+            prior_ids = set(self.processed_message_ids)
+            prior_order = deque(self._processed_message_order)
+            prior_processed_at = dict(self._processed_at)
+            prior_pending_expired = set(self._pending_expired_ids)
+            try:
+                self._processed_message_order = deque(
+                    message_id
+                    for message_id in self._processed_message_order
+                    if message_id not in expired
+                )
+                self.processed_message_ids.difference_update(expired)
+                for message_id in expired:
+                    self._processed_at.pop(message_id, None)
+                additionally_pruned = self._save_state_locked(prune_expired=False)
+                listeners = tuple(self._prune_listeners)
+            except Exception:
+                self.processed_message_ids = prior_ids
+                self._processed_message_order = prior_order
+                self._processed_at = prior_processed_at
+                self._pending_expired_ids = prior_pending_expired
+                raise
+        self._notify_pruned_ids(set(expired) | additionally_pruned, listeners)
         return len(expired)
 
     def oldest_processed_at(self) -> datetime | None:

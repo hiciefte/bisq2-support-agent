@@ -9,11 +9,27 @@ Covers:
 - Error handling
 """
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from app.channels.plugins.bisq2.client.websocket import Bisq2WebSocketClient
+from app.channels.plugins.bisq2.client.websocket import (
+    Bisq2WebSocketClient,
+    is_valid_subscription_response,
+)
+
+
+def _subscription_ack(request_id: str, payload: str | None = "[]") -> str:
+    return json.dumps(
+        {
+            "type": "SubscriptionResponse",
+            "requestId": request_id,
+            "payload": payload,
+            "errorMessage": None,
+        }
+    )
+
 
 # ---------------------------------------------------------------------------
 # Construction
@@ -96,16 +112,7 @@ class TestBisq2WebSocketClientSubscription:
 
         mock_ws = AsyncMock()
         mock_ws.send = AsyncMock()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {
-                    "responseType": "SubscriptionResponse",
-                    "requestId": "1",
-                    "success": True,
-                    "payload": [],
-                }
-            )
-        )
+        mock_ws.recv = AsyncMock(return_value=_subscription_ack("1"))
         client._ws = mock_ws
         client._connected = True
 
@@ -115,7 +122,8 @@ class TestBisq2WebSocketClientSubscription:
         sent_msg = json.loads(mock_ws.send.call_args[0][0])
         assert sent_msg["requestType"] == "Subscribe"
         assert sent_msg["topic"] == "SUPPORT_CHAT_REACTIONS"
-        assert response["success"] is True
+        assert is_valid_subscription_response(response, "1")
+        assert client.has_active_subscription("SUPPORT_CHAT_REACTIONS") is True
 
     @pytest.mark.asyncio
     async def test_subscribe_with_parameter(self):
@@ -124,16 +132,7 @@ class TestBisq2WebSocketClientSubscription:
 
         mock_ws = AsyncMock()
         mock_ws.send = AsyncMock()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {
-                    "responseType": "SubscriptionResponse",
-                    "requestId": "1",
-                    "success": True,
-                    "payload": [],
-                }
-            )
-        )
+        mock_ws.recv = AsyncMock(return_value=_subscription_ack("1"))
         client._ws = mock_ws
         client._connected = True
 
@@ -141,6 +140,138 @@ class TestBisq2WebSocketClientSubscription:
 
         sent_msg = json.loads(mock_ws.send.call_args[0][0])
         assert sent_msg["parameter"] == "channel-123"
+        assert client.has_active_subscription("SUPPORT_CHAT_MESSAGES", "channel-123")
+
+    @pytest.mark.asyncio
+    async def test_subscribe_buffers_event_until_valid_ack(self):
+        client = Bisq2WebSocketClient(url="ws://localhost:8090/websocket")
+        callback = AsyncMock()
+        client.on_event(callback)
+        event = {
+            "type": "WebSocketEvent",
+            "topic": "SUPPORT_CHAT_REACTIONS",
+            "payload": "{}",
+        }
+
+        mock_ws = AsyncMock()
+        mock_ws.send = AsyncMock()
+        mock_ws.recv = AsyncMock(
+            side_effect=[json.dumps(event), _subscription_ack("1")]
+        )
+        client._ws = mock_ws
+        client._connected = True
+
+        await client.subscribe("SUPPORT_CHAT_REACTIONS")
+
+        callback.assert_awaited_once()
+        assert callback.call_args.args[0]["topic"] == "SUPPORT_CHAT_REACTIONS"
+        assert client.has_active_subscription("SUPPORT_CHAT_REACTIONS")
+
+    @pytest.mark.asyncio
+    async def test_snapshot_reconciles_before_buffered_incremental(self):
+        client = Bisq2WebSocketClient(url="ws://localhost:8090/websocket")
+        order: list[str] = []
+
+        async def on_snapshot(
+            topic: str,
+            parameter: str | None,
+            payload: str | None,
+        ) -> None:
+            assert topic == "SUPPORT_CHAT_REACTIONS"
+            assert parameter is None
+            assert payload == '[{"messageId":"snapshot-message"}]'
+            assert not client.has_active_subscription("SUPPORT_CHAT_REACTIONS")
+            order.append("snapshot")
+
+        async def on_event(_event: dict[str, object]) -> None:
+            assert client.has_active_subscription("SUPPORT_CHAT_REACTIONS")
+            order.append("incremental")
+
+        client.on_subscription_snapshot(on_snapshot)
+        client.on_event(on_event)
+        buffered_event = {
+            "type": "WebSocketEvent",
+            "topic": "SUPPORT_CHAT_REACTIONS",
+            "modificationType": "ADDED",
+            "payload": "{}",
+        }
+        mock_ws = AsyncMock()
+        mock_ws.send = AsyncMock()
+        mock_ws.recv = AsyncMock(
+            side_effect=[
+                json.dumps(buffered_event),
+                _subscription_ack(
+                    "1",
+                    '[{"messageId":"snapshot-message"}]',
+                ),
+            ]
+        )
+        client._ws = mock_ws
+        client._connected = True
+
+        await client.subscribe("SUPPORT_CHAT_REACTIONS")
+
+        assert order == ["snapshot", "incremental"]
+
+    @pytest.mark.asyncio
+    async def test_snapshot_failure_keeps_subscription_inactive(self):
+        client = Bisq2WebSocketClient(url="ws://localhost:8090/websocket")
+        callback = AsyncMock(side_effect=ValueError("invalid snapshot"))
+        client.on_subscription_snapshot(callback)
+        mock_ws = AsyncMock()
+        mock_ws.send = AsyncMock()
+        mock_ws.recv = AsyncMock(return_value=_subscription_ack("1"))
+        client._ws = mock_ws
+        client._connected = True
+
+        with pytest.raises(ConnectionError, match="was not acknowledged"):
+            await client.subscribe("SUPPORT_CHAT_REACTIONS")
+
+        callback.assert_awaited_once_with("SUPPORT_CHAT_REACTIONS", None, "[]")
+        assert client.has_active_subscription("SUPPORT_CHAT_REACTIONS") is False
+
+    @pytest.mark.asyncio
+    async def test_subscribe_drops_buffered_event_on_invalid_ack(self):
+        client = Bisq2WebSocketClient(url="ws://localhost:8090/websocket")
+        callback = AsyncMock()
+        client.on_event(callback)
+        event = {
+            "type": "WebSocketEvent",
+            "topic": "SUPPORT_CHAT_REACTIONS",
+            "payload": "{}",
+        }
+        invalid_ack = json.dumps(
+            {
+                "type": "SubscriptionResponse",
+                "requestId": "1",
+                "payload": "[]",
+                "errorMessage": "rejected",
+            }
+        )
+
+        mock_ws = AsyncMock()
+        mock_ws.send = AsyncMock()
+        mock_ws.recv = AsyncMock(side_effect=[json.dumps(event), invalid_ack])
+        client._ws = mock_ws
+        client._connected = True
+
+        with pytest.raises(ConnectionError, match="was not acknowledged"):
+            await client.subscribe("SUPPORT_CHAT_REACTIONS")
+
+        callback.assert_not_awaited()
+        assert not client.has_active_subscription("SUPPORT_CHAT_REACTIONS")
+
+    @pytest.mark.asyncio
+    async def test_external_subscribe_rejected_while_listener_active(self):
+        client = Bisq2WebSocketClient(url="ws://localhost:8090/websocket")
+        client._connected = True
+        client._ws = AsyncMock()
+        client._listening = True
+
+        with pytest.raises(RuntimeError, match="listener is active"):
+            await client.subscribe("SUPPORT_CHAT_REACTIONS")
+
+        client._ws.recv.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +383,12 @@ class TestBisq2WebSocketClientParsing:
         client.on_event(cb)
 
         msg = json.dumps(
-            {"type": "SubscriptionResponse", "success": True, "payload": []}
+            {
+                "type": "SubscriptionResponse",
+                "requestId": "1",
+                "payload": "[]",
+                "errorMessage": None,
+            }
         )
         await client._handle_message(msg)
 
@@ -277,22 +413,8 @@ class TestBisq2WebSocketClientSequenceTracking:
         # Return matching requestId for each subscribe call
         mock_ws.recv = AsyncMock(
             side_effect=[
-                json.dumps(
-                    {
-                        "responseType": "SubscriptionResponse",
-                        "requestId": "1",
-                        "success": True,
-                        "payload": [],
-                    }
-                ),
-                json.dumps(
-                    {
-                        "responseType": "SubscriptionResponse",
-                        "requestId": "2",
-                        "success": True,
-                        "payload": [],
-                    }
-                ),
+                _subscription_ack("1"),
+                _subscription_ack("2"),
             ]
         )
         client._ws = mock_ws
@@ -321,3 +443,95 @@ class TestBisq2WebSocketClientErrors:
         client = Bisq2WebSocketClient(url="ws://localhost:8090/websocket")
         with pytest.raises(ConnectionError):
             await client.subscribe("TOPIC")
+
+    @pytest.mark.asyncio
+    async def test_connect_error_does_not_expose_url_or_exception(self, caplog):
+        sensitive_url = "ws://sensitive-host.invalid/websocket?token=sentinel-token"
+        client = Bisq2WebSocketClient(url=sensitive_url)
+
+        with patch(
+            "app.channels.plugins.bisq2.client.websocket.websockets_connect",
+            new=AsyncMock(side_effect=RuntimeError("sentinel-exception")),
+        ):
+            with pytest.raises(ConnectionError) as exc_info:
+                await client.connect()
+
+        combined = caplog.text + str(exc_info.value)
+        assert sensitive_url not in combined
+        assert "sentinel-token" not in combined
+        assert "sentinel-exception" not in combined
+
+    @pytest.mark.asyncio
+    async def test_connect_timeout_is_bounded_and_fail_closed(self):
+        client = Bisq2WebSocketClient(
+            url="ws://localhost:8090/websocket",
+            connect_timeout_seconds=0.01,
+        )
+        never_connected = asyncio.Event()
+
+        with patch(
+            "app.channels.plugins.bisq2.client.websocket.websockets_connect",
+            new=AsyncMock(side_effect=never_connected.wait),
+        ):
+            with pytest.raises(ConnectionError, match="Failed to connect"):
+                await client.connect()
+
+        assert client.is_connected is False
+
+    @pytest.mark.asyncio
+    async def test_subscription_ack_timeout_is_bounded_and_inactive(self):
+        client = Bisq2WebSocketClient(
+            url="ws://localhost:8090/websocket",
+            subscription_timeout_seconds=0.01,
+        )
+        never_acknowledged = asyncio.Event()
+        mock_ws = AsyncMock()
+        mock_ws.send = AsyncMock()
+        mock_ws.recv = AsyncMock(side_effect=never_acknowledged.wait)
+        client._ws = mock_ws
+        client._connected = True
+
+        with pytest.raises(ConnectionError, match="was not acknowledged"):
+            await client.subscribe("SUPPORT_CHAT_REACTIONS")
+
+        assert client.has_active_subscription("SUPPORT_CHAT_REACTIONS") is False
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {
+            "type": "SubscriptionResponse",
+            "requestId": "",
+            "payload": None,
+            "errorMessage": None,
+        },
+        {
+            "type": "SubscriptionResponse",
+            "requestId": "2",
+            "payload": None,
+            "errorMessage": None,
+        },
+        {
+            "type": "SubscriptionResponse",
+            "requestId": "1",
+            "payload": [],
+            "errorMessage": None,
+        },
+        {
+            "type": "SubscriptionResponse",
+            "requestId": "1",
+            "payload": None,
+            "errorMessage": "denied",
+        },
+        {
+            "responseType": "SubscriptionResponse",
+            "requestId": "1",
+            "payload": None,
+            "errorMessage": None,
+        },
+        {"type": "SubscriptionResponse", "requestId": "1", "payload": None},
+    ],
+)
+def test_subscription_response_validator_rejects_invalid_shape(response):
+    assert is_valid_subscription_response(response, "1") is False

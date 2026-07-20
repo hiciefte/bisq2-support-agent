@@ -67,6 +67,35 @@ class ResponseDelivery:
             # Get delivery target from metadata
             metadata = escalation.channel_metadata or {}
             target = adapter.get_delivery_target(metadata)
+            user_metadata: dict[str, str] = {}
+            if escalation.channel == "bisq2":
+                allows_test_delivery = getattr(
+                    adapter,
+                    "allows_test_delivery",
+                    None,
+                )
+                delivery_target = metadata.get("delivery_target")
+                origin_sender_profile_id = metadata.get("origin_sender_profile_id")
+                if not callable(allows_test_delivery):
+                    logger.warning(
+                        "Blocked reviewed Bisq2 delivery without a test-scope validator"
+                    )
+                    return False
+                if not (
+                    isinstance(delivery_target, str)
+                    and delivery_target
+                    and isinstance(origin_sender_profile_id, str)
+                    and origin_sender_profile_id
+                    and target == delivery_target
+                    and allows_test_delivery(delivery_target, origin_sender_profile_id)
+                    is True
+                ):
+                    logger.warning(
+                        "Blocked reviewed Bisq2 delivery outside production-test scope"
+                    )
+                    return False
+                user_metadata["bisq2_sender_profile_id"] = origin_sender_profile_id
+
             include_ai_provenance = _answers_match(
                 escalation.ai_draft_answer,
                 staff_answer,
@@ -92,6 +121,7 @@ class ResponseDelivery:
                     user_id=escalation.user_id,
                     session_id=None,
                     channel_user_id=None,
+                    metadata=user_metadata,
                     auth_token=None,
                 ),
                 in_reply_to=escalation.message_id,
@@ -121,10 +151,8 @@ class ResponseDelivery:
 
             return success
 
-        except Exception as e:
-            logger.exception(
-                f"Escalation {escalation.id}: Exception during delivery to {escalation.channel}: {e}"
-            )
+        except Exception as exc:
+            logger.warning("Escalation delivery failed (%s)", type(exc).__name__)
             return False
 
     async def _localize_staff_answer(
@@ -161,12 +189,10 @@ class ResponseDelivery:
                 translated_text = raw_translated_text.strip()
                 if translated_text:
                     return translated_text
-        except Exception:
+        except Exception as exc:
             logger.warning(
-                "Escalation %s: Failed to localize staff answer to %s; using canonical answer",
-                getattr(escalation, "id", "<unknown>"),
-                target_lang,
-                exc_info=True,
+                "Staff-answer localization failed; using canonical answer (%s)",
+                type(exc).__name__,
             )
 
         return answer

@@ -13,9 +13,12 @@ class StaffResolver:
         self,
         trusted_staff_ids: Iterable[str],
         display_names: Iterable[str] | None = None,
+        *,
+        case_sensitive: bool = False,
     ):
+        self._case_sensitive = case_sensitive
         self._trusted_staff_ids = {
-            staff_id.strip().lower()
+            self._normalize_staff_id(staff_id)
             for staff_id in trusted_staff_ids
             if isinstance(staff_id, str) and staff_id.strip()
         }
@@ -29,7 +32,12 @@ class StaffResolver:
         """Return True if sender matches a trusted staff identity."""
         if not isinstance(sender_id, str):
             return False
-        return sender_id.strip().lower() in self._trusted_staff_ids
+        return self._normalize_staff_id(sender_id) in self._trusted_staff_ids
+
+    def _normalize_staff_id(self, staff_id: str) -> str:
+        if self._case_sensitive:
+            return staff_id
+        return staff_id.strip().lower()
 
     def get_trusted_ids(self) -> set[str]:
         """Return normalized trusted identity IDs used for authorization."""
@@ -74,14 +82,16 @@ def collect_trusted_staff_ids(
 
     if normalized_channel_id == "bisq2":
         candidates: list[Any] = [getattr(settings, "BISQ2_STAFF_PROFILE_IDS", [])]
+        case_sensitive = True
     else:
         candidates = [getattr(settings, "TRUSTED_STAFF_IDS", [])]
+        case_sensitive = False
 
     for candidate in candidates:
         if isinstance(candidate, str):
             staff_ids.extend(
                 [
-                    value.strip().lower()
+                    value.strip() if case_sensitive else value.strip().lower()
                     for value in candidate.split(",")
                     if value.strip()
                 ]
@@ -89,7 +99,7 @@ def collect_trusted_staff_ids(
         elif isinstance(candidate, list):
             staff_ids.extend(
                 [
-                    value.strip().lower()
+                    value.strip() if case_sensitive else value.strip().lower()
                     for value in candidate
                     if isinstance(value, str) and value.strip()
                 ]

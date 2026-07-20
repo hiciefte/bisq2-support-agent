@@ -123,3 +123,54 @@ def test_runbook_covers_required_channel_launch_drills() -> None:
 
     assert "AUTONOMOUS_DELIVERY_ENABLED=false" in runbook
     assert "would_have_sent" in runbook
+
+
+def test_runbook_defines_exact_per_channel_shadow_floors() -> None:
+    runbook = (REPO_ROOT / "docs" / "runbooks" / "channel-launch.md").read_text(
+        encoding="utf-8"
+    )
+    normalized_runbook = " ".join(runbook.split())
+
+    assert "seven consecutive healthy days" in normalized_runbook
+    assert "every unique direct-delivery candidate" in normalized_runbook
+    for disposition in (
+        "accepted_unchanged",
+        "accepted_non_substantive_edit",
+        "accepted_substantive_edit",
+        "rejected",
+    ):
+        assert disposition in runbook
+    assert "reviewed_count >= 100" in runbook
+    assert "accepted_count / reviewed_count >= 0.95" in runbook
+    assert "substantive_edit_count / reviewed_count <= 0.10" in runbook
+    assert "A substantively edited answer" in normalized_runbook
+    assert "/admin/training/learning/readiness" in runbook
+    assert "is not this per-channel shadow promotion gate" in runbook
+
+
+def test_runbook_does_not_expect_a_queue_item_after_disabling_bisq() -> None:
+    runbook = (REPO_ROOT / "docs" / "runbooks" / "channel-launch.md").read_text(
+        encoding="utf-8"
+    )
+    normalized_runbook = " ".join(runbook.split())
+
+    assert "Confirm the Bisq scope reports `disabled`" in normalized_runbook
+    assert (
+        "do not expect a queued item while the channel is disabled"
+        in normalized_runbook
+    )
+
+
+def test_runbook_requires_safe_bisq_scope_activation() -> None:
+    runbook = (REPO_ROOT / "docs" / "runbooks" / "channel-launch.md").read_text(
+        encoding="utf-8"
+    )
+    normalized_runbook = " ".join(runbook.split())
+
+    assert "drain or close every legacy pending Bisq escalation" in normalized_runbook
+    assert "Never backfill missing origin identity" in normalized_runbook
+    assert "Recreate the API container (do not merely restart it)" in normalized_runbook
+    assert "activation requires a fresh full baseline snapshot" in normalized_runbook
+    assert (
+        "baseline acquisition retries independently of generation" in normalized_runbook
+    )

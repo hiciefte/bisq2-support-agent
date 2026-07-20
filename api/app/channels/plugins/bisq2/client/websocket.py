@@ -7,7 +7,7 @@ support chat reactions and messages in real-time.
 import asyncio
 import json
 import logging
-from typing import Any, Callable, Coroutine, Dict, List, Optional
+from typing import Any, Callable, Coroutine, Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,43 @@ except ImportError:  # pragma: no cover - tested via monkeypatch fallback
 
 
 EventCallback = Callable[[Dict[str, Any]], Coroutine[Any, Any, None]]
+SubscriptionSnapshotCallback = Callable[
+    [str, Optional[str], Optional[str]],
+    Coroutine[Any, Any, None],
+]
+Subscription = Tuple[str, Optional[str]]
+
+_DEFAULT_CONNECT_TIMEOUT_SECONDS = 10.0
+_DEFAULT_SUBSCRIPTION_TIMEOUT_SECONDS = 10.0
+
+
+def is_valid_subscription_response(
+    response: Any,
+    expected_request_id: Optional[str] = None,
+) -> bool:
+    """Validate the current Bisq SubscriptionResponse wire contract."""
+    if not isinstance(response, dict):
+        return False
+    if response.get("type") != "SubscriptionResponse":
+        return False
+
+    request_id = response.get("requestId")
+    if not isinstance(request_id, str) or not request_id.strip():
+        return False
+    if expected_request_id is not None and request_id != expected_request_id:
+        return False
+
+    if "payload" not in response or "errorMessage" not in response:
+        return False
+    payload = response.get("payload")
+    if payload is not None and not isinstance(payload, str):
+        return False
+    error_message = response.get("errorMessage")
+    if error_message is not None and (
+        not isinstance(error_message, str) or bool(error_message.strip())
+    ):
+        return False
+    return True
 
 
 class Bisq2WebSocketClient:
@@ -58,30 +95,60 @@ class Bisq2WebSocketClient:
     def __init__(
         self,
         url: str,
+        *,
+        connect_timeout_seconds: float = _DEFAULT_CONNECT_TIMEOUT_SECONDS,
+        subscription_timeout_seconds: float = _DEFAULT_SUBSCRIPTION_TIMEOUT_SECONDS,
     ):
         self.url = url
+        self._connect_timeout_seconds = max(float(connect_timeout_seconds), 0.001)
+        self._subscription_timeout_seconds = max(
+            float(subscription_timeout_seconds),
+            0.001,
+        )
         self._ws: Any = None
         self._connected = False
         self._sequence: int = 0
         self._event_callbacks: List[EventCallback] = []
-        self._subscriptions: List[str] = []
+        self._subscription_snapshot_callbacks: List[SubscriptionSnapshotCallback] = []
+        self._subscriptions: List[Subscription] = []
+        self._active_subscriptions: Set[Subscription] = set()
         self._listening = False
+        self._lifecycle_lock = asyncio.Lock()
+        self._receive_lock = asyncio.Lock()
 
     @property
     def is_connected(self) -> bool:
         """Whether the client is currently connected."""
         return self._connected
 
+    @property
+    def is_listening(self) -> bool:
+        """Whether the persistent receive loop is running."""
+        return self._listening
+
+    def has_active_subscription(
+        self, topic: str, parameter: Optional[str] = None
+    ) -> bool:
+        """Return whether the current socket acknowledged a subscription."""
+        return (topic, parameter) in self._active_subscriptions
+
     async def connect(self) -> None:
         """Establish WebSocket connection."""
+        self._active_subscriptions.clear()
         try:
-            self._ws = await websockets_connect(self.url)
+            self._ws = await asyncio.wait_for(
+                websockets_connect(self.url),
+                timeout=self._connect_timeout_seconds,
+            )
             self._connected = True
-            logger.info("Connected to Bisq2 WebSocket at %s", self.url)
-        except Exception:
+            logger.info("Connected to Bisq2 WebSocket")
+        except Exception as exc:
+            self._ws = None
             self._connected = False
-            logger.exception("Failed to connect to Bisq2 WebSocket at %s", self.url)
-            raise
+            logger.warning(
+                "Failed to connect to Bisq2 WebSocket (%s)", type(exc).__name__
+            )
+            raise ConnectionError("Failed to connect to Bisq2 WebSocket") from None
 
     async def close(self) -> None:
         """Close the WebSocket connection."""
@@ -89,11 +156,12 @@ class Bisq2WebSocketClient:
         if self._ws:
             try:
                 await self._ws.close()
-            except Exception:
-                logger.debug("Error closing WebSocket", exc_info=True)
+            except Exception as exc:
+                logger.debug("Error closing Bisq2 WebSocket (%s)", type(exc).__name__)
             finally:
                 self._ws = None
         self._connected = False
+        self._active_subscriptions.clear()
         logger.info("Bisq2 WebSocket connection closed")
 
     async def subscribe(
@@ -111,6 +179,21 @@ class Bisq2WebSocketClient:
         Raises:
             ConnectionError: If not connected.
         """
+        async with self._lifecycle_lock:
+            if self._listening:
+                raise RuntimeError(
+                    "Cannot subscribe while the Bisq2 WebSocket listener is active"
+                )
+            return await self._subscribe(topic, parameter, remember=True)
+
+    async def _subscribe(
+        self,
+        topic: str,
+        parameter: Optional[str],
+        *,
+        remember: bool,
+    ) -> Dict[str, Any]:
+        """Subscribe while the caller owns the receive lifecycle."""
         if not self._connected or not self._ws:
             raise ConnectionError("Not connected to Bisq2 WebSocket")
 
@@ -124,21 +207,60 @@ class Bisq2WebSocketClient:
             request["parameter"] = parameter
 
         expected_id = str(self._sequence)
-        await self._ws.send(json.dumps(request))
-        logger.debug(
-            "Sent subscribe request for topic %s (seq=%d)", topic, self._sequence
-        )
+        buffered_messages: List[str] = []
 
-        # Wait for subscription response, buffering non-matching messages
-        while True:
-            raw = await self._ws.recv()
-            response = json.loads(raw)
-            if response.get("requestId") == expected_id:
-                if topic not in self._subscriptions:
-                    self._subscriptions.append(topic)
-                return response
-            # Non-matching message — dispatch as event
-            await self._dispatch_event(response)
+        async def complete_subscription() -> Dict[str, Any]:
+            async with self._receive_lock:
+                await self._ws.send(json.dumps(request))
+                logger.debug("Sent Bisq2 WebSocket subscribe request")
+
+                while True:
+                    raw = await self._ws.recv()
+                    response = json.loads(raw)
+                    if not isinstance(response, dict):
+                        raise ValueError("Unexpected WebSocket response")
+
+                    if response.get("type") == "SubscriptionResponse":
+                        if not is_valid_subscription_response(response, expected_id):
+                            raise ValueError("Invalid subscription acknowledgement")
+                        break
+
+                    buffered_messages.append(raw)
+
+            # The acknowledgement payload is an authoritative topic snapshot.
+            # Reconcile it before marking this socket's subscription active and
+            # before replaying incrementals that raced ahead of the ack.
+            await self._dispatch_subscription_snapshot(
+                topic,
+                parameter,
+                response.get("payload"),
+            )
+
+            subscription = (topic, parameter)
+            self._active_subscriptions.add(subscription)
+            if remember and subscription not in self._subscriptions:
+                self._subscriptions.append(subscription)
+
+            for buffered_raw in buffered_messages:
+                await self._handle_message(buffered_raw)
+            return response
+
+        try:
+            response = await asyncio.wait_for(
+                complete_subscription(),
+                timeout=self._subscription_timeout_seconds,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._active_subscriptions.discard((topic, parameter))
+            logger.warning(
+                "Bisq2 WebSocket subscription failed (%s)", type(exc).__name__
+            )
+            raise ConnectionError(
+                "Bisq2 WebSocket subscription was not acknowledged"
+            ) from None
+        return response
 
     def on_event(self, callback: EventCallback) -> None:
         """Register an event callback.
@@ -156,13 +278,46 @@ class Bisq2WebSocketClient:
         except ValueError:
             return
 
+    def on_subscription_snapshot(
+        self,
+        callback: SubscriptionSnapshotCallback,
+    ) -> None:
+        """Register a strict acknowledgement-snapshot callback."""
+        if callback not in self._subscription_snapshot_callbacks:
+            self._subscription_snapshot_callbacks.append(callback)
+
+    def off_subscription_snapshot(
+        self,
+        callback: SubscriptionSnapshotCallback,
+    ) -> None:
+        """Unregister an acknowledgement-snapshot callback if present."""
+        try:
+            self._subscription_snapshot_callbacks.remove(callback)
+        except ValueError:
+            return
+
+    async def _dispatch_subscription_snapshot(
+        self,
+        topic: str,
+        parameter: Optional[str],
+        payload: Optional[str],
+    ) -> None:
+        """Reconcile a subscription snapshot before readiness can become active.
+
+        Unlike incremental event dispatch, snapshot callback failures propagate.
+        Treating a failed reconciliation as a successful subscription could leave
+        stale reactions active after reconnect.
+        """
+        for callback in self._subscription_snapshot_callbacks:
+            await callback(topic, parameter, payload)
+
     async def _dispatch_event(self, event: Dict[str, Any]) -> None:
         """Dispatch an event to all registered callbacks."""
         for cb in self._event_callbacks:
             try:
                 await cb(event)
-            except Exception:
-                logger.exception("Error in event callback")
+            except Exception as exc:
+                logger.warning("Bisq2 event callback failed (%s)", type(exc).__name__)
 
     async def _handle_message(self, raw: str) -> None:
         """Parse and route an incoming WebSocket message."""
@@ -193,13 +348,32 @@ class Bisq2WebSocketClient:
 
     async def _resubscribe_existing_topics(self) -> None:
         """Re-subscribe to topics after reconnect."""
-        topics = list(self._subscriptions)
-        for topic in topics:
-            await self.subscribe(topic)
+        subscriptions = list(self._subscriptions)
+        for topic, parameter in subscriptions:
+            await self._subscribe(topic, parameter, remember=False)
+
+    async def _discard_socket_for_retry(self) -> None:
+        """Close a failed socket without stopping the persistent listener."""
+        socket = self._ws
+        self._ws = None
+        self._connected = False
+        self._active_subscriptions.clear()
+        if socket is None:
+            return
+        try:
+            await asyncio.wait_for(
+                socket.close(),
+                timeout=self._connect_timeout_seconds,
+            )
+        except Exception as exc:
+            logger.debug("Error discarding Bisq2 WebSocket (%s)", type(exc).__name__)
 
     async def listen_forever(self, reconnect_delay_seconds: float = 5.0) -> None:
         """Run persistent receive loop with reconnect on connection close."""
-        self._listening = True
+        async with self._lifecycle_lock:
+            if self._listening:
+                raise RuntimeError("Bisq2 WebSocket listener is already active")
+            self._listening = True
 
         while self._listening:
             try:
@@ -217,15 +391,16 @@ class Bisq2WebSocketClient:
                 if not self._listening:
                     break
                 logger.warning("Bisq2 WebSocket closed, reconnecting")
-                self._connected = False
-                self._ws = None
+                await self._discard_socket_for_retry()
                 await asyncio.sleep(reconnect_delay_seconds)
-            except Exception:
+            except Exception as exc:
                 if not self._listening:
                     break
-                logger.exception("Bisq2 listen loop error, reconnecting")
-                self._connected = False
-                self._ws = None
+                logger.warning(
+                    "Bisq2 listen loop error, reconnecting (%s)",
+                    type(exc).__name__,
+                )
+                await self._discard_socket_for_retry()
                 await asyncio.sleep(reconnect_delay_seconds)
 
     async def stop_listening(self) -> None:

@@ -13,10 +13,44 @@ Covers:
 - ChannelGateway._build_outgoing_message() sets original_question
 """
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from app.channels.models import ChannelCapability, ChannelType, OutgoingMessage
+
+
+@pytest.fixture(autouse=True)
+def _configure_bisq_test_scope(monkeypatch):
+    """Supply the mandatory scope to Bisq reaction integration tests."""
+    from app.channels.plugins.bisq2.channel import Bisq2Channel
+
+    original_init = Bisq2Channel.__init__
+
+    def configured_init(self, runtime):
+        settings = getattr(runtime, "settings", None)
+        if settings is None:
+            settings = SimpleNamespace()
+            runtime.settings = settings
+        explicit = vars(settings)
+        if "BISQ2_ALLOWED_CHANNEL_IDS" not in explicit:
+            settings.BISQ2_ALLOWED_CHANNEL_IDS = ["conv-1", "conv-123"]
+        if "BISQ2_ALLOWED_SENDER_PROFILE_IDS" not in explicit:
+            settings.BISQ2_ALLOWED_SENDER_PROFILE_IDS = [
+                "user1",
+                "user-abc",
+                "user-xyz",
+            ]
+        if "BISQ2_CHATOPS_CHANNEL_IDS" not in explicit:
+            settings.BISQ2_CHATOPS_CHANNEL_IDS = []
+        if "BISQ2_STAFF_PROFILE_IDS" not in explicit:
+            settings.BISQ2_STAFF_PROFILE_IDS = []
+        if "BISQ2_STAFF_NOTIFICATION_TARGET" not in explicit:
+            settings.BISQ2_STAFF_NOTIFICATION_TARGET = ""
+        original_init(self, runtime)
+
+    monkeypatch.setattr(Bisq2Channel, "__init__", configured_init)
+
 
 # ---------------------------------------------------------------------------
 # OutgoingMessage.original_question
@@ -417,6 +451,7 @@ class TestBisq2SendMessage:
         outgoing.original_question = "What is Bisq?"
         outgoing.user = MagicMock()
         outgoing.user.user_id = "user-abc"
+        outgoing.user.metadata = {"bisq2_sender_profile_id": "user-abc"}
         outgoing.sources = []
 
         result = await channel.send_message("conv-123", outgoing)
@@ -456,6 +491,7 @@ class TestBisq2SendMessage:
         outgoing.original_question = "Question?"
         outgoing.user = MagicMock()
         outgoing.user.user_id = "user-xyz"
+        outgoing.user.metadata = {"bisq2_sender_profile_id": "user-xyz"}
         outgoing.sources = []
 
         await channel.send_message("conv-1", outgoing)
@@ -488,6 +524,7 @@ class TestBisq2SendMessage:
 
         outgoing = MagicMock(spec=OutgoingMessage)
         outgoing.answer = "Answer"
+        outgoing.user = SimpleNamespace(user_id="user1", metadata={})
 
         result = await channel.send_message("conv-1", outgoing)
         assert bool(result) is False
@@ -505,6 +542,7 @@ class TestBisq2SendMessage:
 
         outgoing = MagicMock(spec=OutgoingMessage)
         outgoing.answer = "Answer"
+        outgoing.user = SimpleNamespace(user_id="user1", metadata={})
 
         result = await channel.send_message("conv-1", outgoing)
         assert bool(result) is False
@@ -531,6 +569,7 @@ class TestBisq2SendMessage:
 
         outgoing = MagicMock(spec=OutgoingMessage)
         outgoing.answer = "Answer"
+        outgoing.user = SimpleNamespace(user_id="user1", metadata={})
 
         result = await channel.send_message("conv-1", outgoing)
         assert bool(result) is False
@@ -560,6 +599,7 @@ class TestBisq2SendMessage:
 
         outgoing = MagicMock(spec=OutgoingMessage)
         outgoing.answer = "Answer"
+        outgoing.user = SimpleNamespace(user_id="user1", metadata={})
 
         await channel.send_message("conv-1", outgoing)
         mock_tracker.track.assert_not_called()
@@ -584,6 +624,19 @@ class TestBisq2ChannelReactionWiring:
 
         mock_handler = MagicMock()
         mock_handler.start_listening = AsyncMock()
+        mock_ws_client = MagicMock()
+        mock_ws_client.connect = AsyncMock()
+        mock_ws_client.subscribe = AsyncMock(
+            return_value={
+                "type": "SubscriptionResponse",
+                "requestId": "fixture-request",
+                "payload": None,
+                "errorMessage": None,
+            }
+        )
+        mock_ws_client.listen_forever = AsyncMock()
+        mock_ws_client.on_event = MagicMock()
+        mock_ws_client.close = AsyncMock()
 
         runtime = MagicMock(spec=ChannelRuntime)
 
@@ -592,6 +645,8 @@ class TestBisq2ChannelReactionWiring:
                 return mock_api
             if name == "bisq2_reaction_handler":
                 return mock_handler
+            if name == "bisq2_websocket_client":
+                return mock_ws_client
             return None
 
         runtime.resolve_optional = MagicMock(side_effect=resolve_optional_side_effect)

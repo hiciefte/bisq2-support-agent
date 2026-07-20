@@ -9,7 +9,7 @@ Covered contracts:
 - SendSupportMessageRequest  (Python -> Java)
 - SendSupportMessageResponse (Java -> Python)
 - SendSupportReactionRequest (Python -> Java)
-- ReactionDto / WebSocketEvent payload (Java -> Python)
+- SupportChatReactionDto / WebSocketEvent payload (Java -> Python)
 - SubscriptionRequest  (Python -> Java)
 - SubscriptionResponse (Java -> Python)
 """
@@ -19,6 +19,9 @@ from datetime import datetime, timezone
 from typing import Any, Dict
 
 import pytest
+from app.channels.plugins.bisq2.client.websocket import (
+    is_valid_subscription_response,
+)
 from app.channels.plugins.bisq2.reaction_handler import BISQ2_REACTION_MAP
 from app.channels.reactions import ReactionEvent, ReactionRating
 
@@ -26,10 +29,14 @@ from app.channels.reactions import ReactionEvent, ReactionRating
 # Expected Java DTO schemas (field name -> expected type description)
 # =============================================================================
 
-# record SendSupportMessageRequest(String text, @Nullable CitationDto citation)
+# record SendSupportMessageRequest(String text, @Nullable String citation,
+#        @Nullable String citationAuthorUserProfileId,
+#        @Nullable String citationMessageId)
 SEND_MESSAGE_REQUEST_FIELDS: Dict[str, str] = {
     "text": "string",
-    "citation": "string|null",
+    "citation": "string|null|optional",
+    "citationAuthorUserProfileId": "string|null|optional",
+    "citationMessageId": "string|null|optional",
 }
 
 # record SendSupportMessageResponse(String messageId, long timestamp)
@@ -45,14 +52,13 @@ SEND_REACTION_REQUEST_FIELDS: Dict[str, str] = {
     "isRemoved": "boolean",
 }
 
-# record ReactionDto(String id, int reactionId, String senderUserProfileId,
-#        long date, boolean isRemoved)
-REACTION_DTO_FIELDS: Dict[str, str] = {
-    "id": "string",
-    "reactionId": "integer",
+# record SupportChatReactionDto(String reaction, String messageId,
+#        String senderUserProfileId, String channelId)
+SUPPORT_CHAT_REACTION_DTO_FIELDS: Dict[str, str] = {
+    "reaction": "string",
+    "messageId": "string",
     "senderUserProfileId": "string",
-    "date": "integer",
-    "isRemoved": "boolean",
+    "channelId": "string",
 }
 
 # WebSocketEvent envelope: {topic, subscriberId, payload, modificationType,
@@ -60,7 +66,7 @@ REACTION_DTO_FIELDS: Dict[str, str] = {
 WEBSOCKET_EVENT_FIELDS: Dict[str, str] = {
     "topic": "string",
     "subscriberId": "string",
-    "payload": "object",
+    "payload": "string",
     "modificationType": "string",
     "sequenceNumber": "integer",
 }
@@ -71,6 +77,14 @@ SUBSCRIPTION_REQUEST_FIELDS: Dict[str, str] = {
     "requestId": "string",
     "topic": "string",
     "parameter": "string|optional",
+}
+
+# SubscriptionResponse: {type, requestId, payload, errorMessage}
+SUBSCRIPTION_RESPONSE_FIELDS: Dict[str, str] = {
+    "type": "string",
+    "requestId": "string",
+    "payload": "string|null",
+    "errorMessage": "string|null",
 }
 
 # Bisq2 Reaction enum ordinals
@@ -145,6 +159,8 @@ class TestSendMessageRequestContract:
         payload = {
             "text": "You can download Bisq from bisq.network.",
             "citation": "How do I use Bisq?",
+            "citationAuthorUserProfileId": "profile-fixture",
+            "citationMessageId": "message-fixture",
         }
         _validate_payload(payload, SEND_MESSAGE_REQUEST_FIELDS)
 
@@ -234,44 +250,49 @@ class TestSendReactionRequestContract:
 
 
 # =============================================================================
-# ReactionDto / WebSocket payload contract (Java -> Python)
+# SupportChatReactionDto / WebSocket payload contract (Java -> Python)
 # =============================================================================
 
 
-class TestReactionDtoContract:
-    """Java ReactionDto arrives as WebSocket payload; Python must parse it."""
+class TestSupportChatReactionDtoContract:
+    """Python parses the current Java SupportChatReactionDto shape."""
 
     @pytest.fixture()
     def sample_reaction_dto(self) -> Dict[str, Any]:
         return {
-            "id": "reaction-abc-123",
-            "reactionId": 0,
+            "reaction": "THUMBS_UP",
+            "messageId": "message-abc-123",
             "senderUserProfileId": "user-profile-xyz",
-            "date": 1718000000000,
-            "isRemoved": False,
+            "channelId": "support.support",
         }
 
     def test_reaction_dto_schema(self, sample_reaction_dto):
-        """ReactionDto has expected fields and types."""
-        _validate_payload(sample_reaction_dto, REACTION_DTO_FIELDS)
+        """SupportChatReactionDto has the exact expected fields and types."""
+        _validate_payload(sample_reaction_dto, SUPPORT_CHAT_REACTION_DTO_FIELDS)
 
-    def test_reaction_dto_all_ordinals(self):
-        """All 6 reaction ordinals are valid ReactionDto values."""
-        for ordinal in BISQ2_REACTIONS.values():
+    def test_reaction_dto_all_names(self):
+        """All Java reaction names are valid SupportChatReactionDto values."""
+        for name in BISQ2_REACTIONS:
             dto = {
-                "id": f"r-{ordinal}",
-                "reactionId": ordinal,
+                "reaction": name,
+                "messageId": "message-abc-123",
                 "senderUserProfileId": "user-1",
-                "date": 1718000000000,
-                "isRemoved": False,
+                "channelId": "support.support",
             }
-            _validate_payload(dto, REACTION_DTO_FIELDS)
+            _validate_payload(dto, SUPPORT_CHAT_REACTION_DTO_FIELDS)
 
-    def test_reaction_dto_removed(self, sample_reaction_dto):
-        """isRemoved=true represents a reaction retraction."""
-        sample_reaction_dto["isRemoved"] = True
-        _validate_payload(sample_reaction_dto, REACTION_DTO_FIELDS)
-        assert sample_reaction_dto["isRemoved"] is True
+    @pytest.mark.parametrize("required_field", ["senderUserProfileId", "channelId"])
+    def test_reaction_dto_requires_scope_fields(
+        self, sample_reaction_dto, required_field
+    ):
+        """Sender and channel scope are mandatory in the current Java DTO."""
+        sample_reaction_dto.pop(required_field)
+
+        with pytest.raises(AssertionError):
+            _validate_payload(
+                sample_reaction_dto,
+                SUPPORT_CHAT_REACTION_DTO_FIELDS,
+            )
 
 
 # =============================================================================
@@ -280,20 +301,21 @@ class TestReactionDtoContract:
 
 
 class TestWebSocketEventContract:
-    """WebSocketEvent envelope wrapping ReactionDto payload."""
+    """WebSocketEvent envelope wrapping serialized SupportChatReactionDto JSON."""
 
     @pytest.fixture()
     def sample_event(self) -> Dict[str, Any]:
         return {
             "topic": "SUPPORT_CHAT_REACTIONS",
             "subscriberId": "sub-001",
-            "payload": {
-                "id": "r-1",
-                "reactionId": 0,
-                "senderUserProfileId": "user-1",
-                "date": 1718000000000,
-                "isRemoved": False,
-            },
+            "payload": json.dumps(
+                {
+                    "reaction": "THUMBS_UP",
+                    "messageId": "message-abc-123",
+                    "senderUserProfileId": "user-1",
+                    "channelId": "support.support",
+                }
+            ),
             "modificationType": "ADDED",
             "sequenceNumber": 1,
         }
@@ -303,8 +325,9 @@ class TestWebSocketEventContract:
         _validate_payload(sample_event, WEBSOCKET_EVENT_FIELDS)
 
     def test_event_payload_is_reaction_dto(self, sample_event):
-        """Payload inside event matches ReactionDto schema."""
-        _validate_payload(sample_event["payload"], REACTION_DTO_FIELDS)
+        """Serialized event payload matches SupportChatReactionDto schema."""
+        payload = json.loads(sample_event["payload"])
+        _validate_payload(payload, SUPPORT_CHAT_REACTION_DTO_FIELDS)
 
     def test_modification_type_values(self, sample_event):
         """modificationType is either ADDED or REMOVED."""
@@ -322,20 +345,15 @@ class TestWebSocketEventContract:
 
     def test_handler_extracts_correct_fields(self, sample_event):
         """Bisq2ReactionHandler extracts the fields the contract defines."""
-        # The handler expects "reaction" (name) and "messageId" but ReactionDto
-        # uses "reactionId" (ordinal) and "id". This test documents the ACTUAL
-        # contract used by the Python handler, which expects the WebSocket
-        # service to translate DTO fields into handler-friendly names.
-        # The WebSocket service denormalizes: reactionId -> reaction (name),
-        # and the message's ID field is "messageId" (not the reaction's "id").
-        ws_payload = {
-            "reaction": "THUMBS_UP",
-            "messageId": "msg-abc-123",
-            "senderUserProfileId": "user-1",
-        }
-        assert ws_payload.get("reaction") is not None
-        assert ws_payload.get("messageId") is not None
-        assert ws_payload.get("senderUserProfileId") is not None
+        ws_payload = json.loads(sample_event["payload"])
+
+        for field in (
+            "reaction",
+            "messageId",
+            "senderUserProfileId",
+            "channelId",
+        ):
+            assert ws_payload.get(field) is not None
 
 
 # =============================================================================
@@ -386,6 +404,44 @@ class TestSubscriptionRequestContract:
         assert request["topic"] == "SUPPORT_CHAT_REACTIONS"
 
 
+class TestSubscriptionResponseContract:
+    """Python accepts the current Java SubscriptionResponse shape."""
+
+    def test_success_response_schema_and_validation(self):
+        response = {
+            "type": "SubscriptionResponse",
+            "requestId": "1",
+            "payload": "[]",
+            "errorMessage": None,
+        }
+
+        _validate_payload(response, SUBSCRIPTION_RESPONSE_FIELDS)
+        assert is_valid_subscription_response(response, "1") is True
+        assert "success" not in response
+
+    def test_null_payload_is_valid_when_error_is_blank(self):
+        response = {
+            "type": "SubscriptionResponse",
+            "requestId": "request-fixture",
+            "payload": None,
+            "errorMessage": " ",
+        }
+
+        _validate_payload(response, SUBSCRIPTION_RESPONSE_FIELDS)
+        assert is_valid_subscription_response(response, "request-fixture") is True
+
+    def test_error_response_is_not_an_acknowledgement(self):
+        response = {
+            "type": "SubscriptionResponse",
+            "requestId": "request-fixture",
+            "payload": None,
+            "errorMessage": "subscription rejected",
+        }
+
+        _validate_payload(response, SUBSCRIPTION_RESPONSE_FIELDS)
+        assert is_valid_subscription_response(response, "request-fixture") is False
+
+
 # =============================================================================
 # Reaction name -> rating mapping contract
 # =============================================================================
@@ -424,6 +480,7 @@ class TestReactionMappingContract:
             "reaction": "THUMBS_UP",
             "messageId": "msg-abc",
             "senderUserProfileId": "user-xyz",
+            "channelId": "support.support",
         }
 
         rating = BISQ2_REACTION_MAP.get(ws_payload["reaction"])
@@ -436,10 +493,12 @@ class TestReactionMappingContract:
             rating=rating,
             raw_reaction=ws_payload["reaction"],
             timestamp=datetime.now(timezone.utc),
+            metadata={"delivery_target": ws_payload["channelId"]},
         )
         assert event.channel_id == "bisq2"
         assert event.external_message_id == "msg-abc"
         assert event.rating == ReactionRating.POSITIVE
+        assert event.metadata["delivery_target"] == "support.support"
 
 
 # =============================================================================

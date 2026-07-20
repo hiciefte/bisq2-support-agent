@@ -966,6 +966,20 @@ async def test_dispatch_sends_staff_room_notice_when_configured():
     assert staff_notice_call.args[1].message_id == "staff-escalation-123"
 
 
+def test_channel_specific_empty_staff_target_cannot_fall_back_to_trimmed_metadata():
+    class ExactTargetChannel:
+        def get_staff_notification_target(self, _metadata):
+            return ""
+
+    dispatcher = ChannelResponseDispatcher(
+        channel=ExactTargetChannel(),
+        channel_id="bisq2",
+    )
+    incoming = SimpleNamespace(channel_metadata={"staff_room_id": " channel-allowed "})
+
+    assert dispatcher._resolve_staff_notification_target(incoming) == ""
+
+
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_dispatch_staff_room_can_be_silent_to_user_when_notice_mode_is_none():
@@ -1361,6 +1375,36 @@ async def test_notify_review_queued_reports_success_when_staff_notice_sends():
     )
 
     assert sent is True
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_staff_room_success_log_does_not_expose_delivery_target(caplog):
+    target_sentinel = "private-staff-target-sentinel"
+
+    class _BisqChannelStub:
+        def __init__(self):
+            self.send_message = AsyncMock(return_value=True)
+
+        def get_staff_notification_target(self, _metadata):
+            return target_sentinel
+
+    channel = _BisqChannelStub()
+    dispatcher = ChannelResponseDispatcher(
+        channel=channel,
+        channel_id="bisq2",
+        launch_control_service=ALLOWING_LAUNCH_CONTROL,
+    )
+
+    with caplog.at_level(logging.INFO):
+        sent = await dispatcher._send_staff_room_escalation_notice(
+            incoming=_launch_incoming("message-fixture"),
+            response=_launch_response(),
+            escalation=SimpleNamespace(id=129),
+        )
+
+    assert sent is True
+    assert target_sentinel not in caplog.text
 
 
 @pytest.mark.unit

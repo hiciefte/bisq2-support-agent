@@ -713,11 +713,10 @@ class ChannelResponseDispatcher:
             sent = bool(await self.channel.send_message(target, notice))
             if sent:
                 logger.info(
-                    "Sent staff-room escalation notice for channel=%s message_id=%s escalation_id=%s target=%s",
+                    "Sent staff-room escalation notice for channel=%s message_id=%s escalation_id=%s",
                     self.channel_id,
                     getattr(incoming, "message_id", "<unknown>"),
                     getattr(escalation, "id", "<unknown>"),
-                    target,
                 )
             return sent
         except Exception:
@@ -880,15 +879,16 @@ class ChannelResponseDispatcher:
         get_target = getattr(self.channel, "get_staff_notification_target", None)
         if static_target is not None and callable(get_target):
             try:
-                target = str(get_target(metadata) or "").strip()
-                if target:
-                    return target
-            except Exception:
+                target = get_target(metadata)
+                return target if isinstance(target, str) else ""
+            except Exception as exc:
                 logger.debug(
-                    "Channel-specific staff notification target resolution failed for channel=%s",
+                    "Channel-specific staff notification target resolution failed "
+                    "for channel=%s (%s)",
                     self.channel_id,
-                    exc_info=True,
+                    type(exc).__name__,
                 )
+                return ""
 
         target = str(metadata.get("staff_room_id", "") or "").strip()
         return target

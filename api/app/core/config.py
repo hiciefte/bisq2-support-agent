@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 PIPELINE_AUTO_APPROVE_THRESHOLD: float = 0.90
 PIPELINE_SPOT_CHECK_THRESHOLD: float = 0.75
 PIPELINE_DUPLICATE_FAQ_THRESHOLD: float = 0.85
+_INVALID_BISQ_SCOPE_VALUE = "__invalid_bisq_scope__*"
 
 
 class Settings(BaseSettings):
@@ -129,12 +130,7 @@ class Settings(BaseSettings):
     def log_mcp_live_data_startup_state(self) -> None:
         """Log live-data visibility at startup."""
         if self.ENABLE_BISQ_MCP_INTEGRATION:
-            logger.info(
-                "MCP live-data integration is enabled "
-                "(MCP_HTTP_URL=%s, BISQ_API_URL=%s)",
-                self.MCP_HTTP_URL,
-                self.BISQ_API_URL,
-            )
+            logger.info("MCP live-data integration is enabled")
             return
 
         logger.warning(
@@ -159,6 +155,8 @@ class Settings(BaseSettings):
         ),
     )
     BISQ2_STAFF_NOTIFICATION_TARGET: str = ""  # Bisq2 channel ID for staff notices
+    BISQ2_ALLOWED_CHANNEL_IDS: str | list[str] = ""
+    BISQ2_ALLOWED_SENDER_PROFILE_IDS: str | list[str] = ""
     BISQ2_CHATOPS_ENABLED: bool = False
     BISQ2_CHATOPS_CHANNEL_IDS: str | list[str] = ""
 
@@ -1040,32 +1038,62 @@ class Settings(BaseSettings):
     def parse_bisq2_staff_profile_ids(cls, v: str | list[str]) -> list[str]:
         """Normalize BISQ2_STAFF_PROFILE_IDS to a list of profile IDs."""
         if isinstance(v, list):
-            return [
-                profile_id.strip()
+            if any(
+                not isinstance(profile_id, str) or not profile_id.strip()
                 for profile_id in v
-                if isinstance(profile_id, str) and profile_id.strip()
-            ]
+            ):
+                return [_INVALID_BISQ_SCOPE_VALUE]
+            return [profile_id.strip() for profile_id in v]
         if isinstance(v, str):
-            return [
-                profile_id.strip() for profile_id in v.split(",") if profile_id.strip()
-            ]
-        return []
+            if not v.strip():
+                return []
+            values = v.split(",")
+            if any(not profile_id.strip() for profile_id in values):
+                return [_INVALID_BISQ_SCOPE_VALUE]
+            return [profile_id.strip() for profile_id in values]
+        return [_INVALID_BISQ_SCOPE_VALUE]
+
+    @field_validator(
+        "BISQ2_ALLOWED_CHANNEL_IDS",
+        "BISQ2_ALLOWED_SENDER_PROFILE_IDS",
+        mode="before",
+    )
+    @classmethod
+    def preserve_malformed_bisq_primary_scope(
+        cls, v: str | list[str]
+    ) -> str | list[str]:
+        """Replace malformed primary-scope input with a non-secret sentinel."""
+        if isinstance(v, list):
+            if any(not isinstance(value, str) or not value.strip() for value in v):
+                return [_INVALID_BISQ_SCOPE_VALUE]
+            return v
+        if isinstance(v, str):
+            if not v.strip():
+                return v
+            if any(not value.strip() for value in v.split(",")):
+                return [_INVALID_BISQ_SCOPE_VALUE]
+            return v
+        return [_INVALID_BISQ_SCOPE_VALUE]
 
     @field_validator("BISQ2_CHATOPS_CHANNEL_IDS", mode="before")
     @classmethod
     def parse_bisq2_chatops_channel_ids(cls, v: str | list[str]) -> list[str]:
         """Normalize BISQ2_CHATOPS_CHANNEL_IDS to a list of channel IDs."""
         if isinstance(v, list):
-            return [
-                channel_id.strip()
+            if any(
+                not isinstance(channel_id, str) or not channel_id.strip()
                 for channel_id in v
-                if isinstance(channel_id, str) and channel_id.strip()
-            ]
+            ):
+                return [_INVALID_BISQ_SCOPE_VALUE]
+            return [channel_id.strip() for channel_id in v]
         if isinstance(v, str):
-            return [
-                channel_id.strip() for channel_id in v.split(",") if channel_id.strip()
-            ]
-        return []
+            if not v.strip():
+                return []
+            values = v.split(",")
+            if any(not channel_id.strip() for channel_id in values):
+                return [_INVALID_BISQ_SCOPE_VALUE]
+            return [channel_id.strip() for channel_id in values]
+        return [_INVALID_BISQ_SCOPE_VALUE]
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod

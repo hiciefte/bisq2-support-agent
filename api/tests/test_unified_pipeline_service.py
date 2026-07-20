@@ -1512,6 +1512,52 @@ class TestOriginalStaffAnswerPropagation:
             "(LLM transformation vs original conversational)"
         )
 
+    @pytest.mark.asyncio
+    async def test_bisq_processing_failure_hides_scope_values(
+        self, service_with_mock_extractor, caplog
+    ):
+        service = service_with_mock_extractor
+        protected_channel = "scope-channel-private-sentinel"
+        protected_profile = "scope-profile-private-sentinel"
+
+        with patch(
+            "app.services.training.unified_faq_extractor.UnifiedFAQExtractor"
+        ) as MockExtractor:
+            mock_result = MagicMock()
+            mock_result.error = None
+            mock_result.extracted_count = 1
+            mock_result.to_pipeline_format.return_value = [
+                {
+                    "question_text": "How do I start trading?",
+                    "staff_answer": "Open the Trade Wizard.",
+                    "source": "bisq2",
+                    "source_event_id": f"bisq2:{protected_channel}:answer-1",
+                    "staff_sender": protected_profile,
+                    "category": "Trading",
+                }
+            ]
+            MockExtractor.return_value.extract_faqs = AsyncMock(
+                return_value=mock_result
+            )
+            failure = RuntimeError(f"{protected_channel} {protected_profile}")
+
+            with patch.object(
+                service,
+                "_process_extracted_faq",
+                AsyncMock(side_effect=failure),
+            ):
+                results = await service.extract_faqs_batch(
+                    messages=[],
+                    source="bisq2",
+                    staff_identifiers=[protected_profile],
+                )
+
+        assert results == []
+        assert protected_channel not in caplog.text
+        assert protected_profile not in caplog.text
+        assert "RuntimeError" in caplog.text
+        assert all(record.exc_info is None for record in caplog.records)
+
 
 class TestStaffSenderExtraction:
     """Test that staff_sender is properly extracted and stored.

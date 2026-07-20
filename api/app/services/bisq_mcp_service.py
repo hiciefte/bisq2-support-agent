@@ -30,6 +30,7 @@ from app.channels.plugins.bisq2.client.api import (
     SESSION_ID_HEADER,
     Bisq2API,
 )
+from app.channels.plugins.bisq2.test_scope import resolve_bisq2_test_scope
 from app.core.config import Settings
 from cachetools import TTLCache
 from tenacity import (
@@ -112,7 +113,11 @@ def _record_bisq2_probe_health(
             response_time=response_time,
         )
     except Exception as exc:  # noqa: BLE001
-        logger.debug("Could not record Bisq probe health for %s: %s", probe, exc)
+        logger.debug(
+            "Could not record Bisq probe health for %s (%s)",
+            probe,
+            type(exc).__name__,
+        )
 
 
 def _get_bisq_readiness_snapshot(enabled: bool) -> Dict[str, Any]:
@@ -121,7 +126,10 @@ def _get_bisq_readiness_snapshot(enabled: bool) -> Dict[str, Any]:
 
         return get_bisq2_api_readiness_snapshot(enabled=enabled)
     except Exception as exc:  # noqa: BLE001
-        logger.debug("Could not read Bisq readiness snapshot: %s", exc)
+        logger.debug(
+            "Could not read Bisq readiness snapshot (%s)",
+            type(exc).__name__,
+        )
         return {"enabled": enabled, "status": "unknown", "checks": {}}
 
 
@@ -1488,8 +1496,10 @@ class Bisq2MCPService:
         Returns:
             Dictionary with health status
         """
-        bisq_enabled = self.enabled or self._setting_bool(
-            "BISQ2_CHANNEL_ENABLED", False
+        bisq_enabled = bool(
+            self.enabled
+            or self._setting_bool("BISQ2_CHANNEL_ENABLED", False)
+            or resolve_bisq2_test_scope(self.settings).ready
         )
         result = {
             "enabled": self.enabled,

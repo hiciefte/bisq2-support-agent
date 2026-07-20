@@ -182,7 +182,14 @@ class TestChannelAdapterNewMethods:
         """Bisq2Channel implements get_delivery_target()."""
         from app.channels.plugins.bisq2.channel import Bisq2Channel
 
-        channel = Bisq2Channel(_make_runtime())
+        runtime = _make_runtime()
+        runtime.settings.BISQ2_ALLOWED_CHANNEL_IDS = ["conv-123"]
+        runtime.settings.BISQ2_ALLOWED_SENDER_PROFILE_IDS = ["profile-123"]
+        runtime.settings.BISQ2_STAFF_PROFILE_IDS = []
+        runtime.settings.BISQ2_CHATOPS_ENABLED = False
+        runtime.settings.BISQ2_CHATOPS_CHANNEL_IDS = []
+        runtime.settings.BISQ2_STAFF_NOTIFICATION_TARGET = ""
+        channel = Bisq2Channel(runtime)
         result = channel.get_delivery_target({"conversation_id": "conv-123"})
         assert result == "conv-123"
 

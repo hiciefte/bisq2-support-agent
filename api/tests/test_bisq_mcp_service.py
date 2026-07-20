@@ -786,3 +786,40 @@ class TestLifecycle:
         assert result["readiness"]["status"] == "healthy"
         assert result["api_available"] is True
         assert requested_paths == ["/api/v1/openapi.json"]
+
+    @pytest.mark.asyncio
+    async def test_health_check_treats_scoped_training_as_enabled(
+        self, mock_settings_disabled
+    ):
+        """A configured training scope requires API availability without live chat."""
+        mock_settings_disabled.BISQ2_CHANNEL_ENABLED = False
+        mock_settings_disabled.BISQ2_ALLOWED_CHANNEL_IDS = ["channel-training"]
+        mock_settings_disabled.BISQ2_ALLOWED_SENDER_PROFILE_IDS = ["profile-training"]
+        mock_settings_disabled.BISQ2_STAFF_PROFILE_IDS = []
+        mock_settings_disabled.BISQ2_CHATOPS_ENABLED = False
+        mock_settings_disabled.BISQ2_CHATOPS_CHANNEL_IDS = []
+        mock_settings_disabled.BISQ2_STAFF_NOTIFICATION_TARGET = ""
+        scoped_service = Bisq2MCPService(mock_settings_disabled)
+        BISQ2_API_EXPORT_READINESS_STATUS.set(1)
+        BISQ2_API_EXPORT_LAST_CHECK_TIMESTAMP.set(100)
+        requested_paths = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requested_paths.append(request.url.path)
+            return httpx.Response(200, json={"openapi": "3.0.1"})
+
+        client = httpx.AsyncClient(
+            base_url=scoped_service.active_base_url,
+            transport=httpx.MockTransport(handler),
+        )
+        scoped_service._client = client
+        try:
+            result = await scoped_service.health_check()
+        finally:
+            await client.aclose()
+            scoped_service._client = None
+
+        assert result["enabled"] is False
+        assert result["readiness"]["status"] == "healthy"
+        assert result["api_available"] is True
+        assert requested_paths == ["/api/v1/openapi.json"]

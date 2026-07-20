@@ -28,6 +28,48 @@ async def test_run_once_does_not_poll_when_generation_disabled():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_run_once_maintains_readiness_when_generation_is_disabled():
+    channel = SimpleNamespace(
+        channel_id="bisq2",
+        maintain_readiness=AsyncMock(return_value=True),
+        poll_conversations=AsyncMock(),
+    )
+    service = LivePollingService(channel=channel, channel_id="bisq2")
+
+    with patch(
+        "app.channels.services.live_polling_service.is_generation_enabled",
+        return_value=False,
+    ):
+        processed = await service.run_once()
+
+    assert processed == 0
+    channel.maintain_readiness.assert_awaited_once_with()
+    channel.poll_conversations.assert_not_awaited()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_run_once_does_not_poll_when_channel_readiness_is_unavailable():
+    channel = SimpleNamespace(
+        channel_id="bisq2",
+        maintain_readiness=AsyncMock(return_value=False),
+        poll_conversations=AsyncMock(),
+    )
+    service = LivePollingService(channel=channel, channel_id="bisq2")
+
+    with patch(
+        "app.channels.services.live_polling_service.is_generation_enabled",
+        return_value=True,
+    ):
+        processed = await service.run_once()
+
+    assert processed == 0
+    channel.maintain_readiness.assert_awaited_once_with()
+    channel.poll_conversations.assert_not_awaited()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_run_once_polls_and_dispatches_when_generation_enabled():
     incoming = SimpleNamespace(message_id="m1")
     channel = MagicMock()

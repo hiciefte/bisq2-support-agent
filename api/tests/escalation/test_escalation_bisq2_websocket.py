@@ -1,5 +1,6 @@
 """Tests for Bisq2 WebSocket client and delivery integration."""
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -11,6 +12,26 @@ from app.channels.models import (
 )
 from app.channels.plugins.bisq2.channel import Bisq2Channel
 from app.channels.plugins.bisq2.client.websocket import Bisq2WebSocketClient
+
+
+@pytest.fixture(autouse=True)
+def _configure_bisq_test_scope(monkeypatch):
+    """Supply the mandatory scope to Bisq escalation delivery tests."""
+    original_init = Bisq2Channel.__init__
+
+    def configured_init(self, runtime):
+        settings = getattr(runtime, "settings", None)
+        if settings is None or not isinstance(settings, SimpleNamespace):
+            settings = SimpleNamespace()
+            runtime.settings = settings
+        settings.BISQ2_ALLOWED_CHANNEL_IDS = ["conv-123"]
+        settings.BISQ2_ALLOWED_SENDER_PROFILE_IDS = ["user-123"]
+        settings.BISQ2_CHATOPS_CHANNEL_IDS = []
+        settings.BISQ2_STAFF_NOTIFICATION_TARGET = ""
+        original_init(self, runtime)
+
+    monkeypatch.setattr(Bisq2Channel, "__init__", configured_init)
+
 
 # ---------------------------------------------------------------------------
 # Bisq2WebSocketClient interface tests
@@ -70,7 +91,10 @@ def _make_outgoing(**overrides):
         in_reply_to="original-001",
         channel=ChannelType.BISQ2,
         answer="Staff answer",
-        user=UserContext(user_id="user-123"),
+        user=UserContext(
+            user_id="user-123",
+            metadata={"bisq2_sender_profile_id": "user-123"},
+        ),
         metadata=ResponseMetadata(
             processing_time_ms=0.0,
             rag_strategy="escalation",

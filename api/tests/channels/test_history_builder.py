@@ -12,6 +12,7 @@ def _msg(
     conversation_id: str = "support.support",
     sender_alias: str = "",
     citation_message_id: str | None = None,
+    immutable_sender_id: str | None = None,
 ) -> ConversationMessage:
     return ConversationMessage(
         message_id=message_id,
@@ -21,6 +22,7 @@ def _msg(
         text=text,
         timestamp_ms=ts,
         citation_message_id=citation_message_id,
+        immutable_sender_id=immutable_sender_id,
     )
 
 
@@ -51,7 +53,7 @@ def test_build_history_filters_unrelated_users_and_keeps_staff_context() -> None
     assert "How do I recover my account?" not in content
 
 
-def test_build_history_keeps_citation_linked_non_staff_message() -> None:
+def test_build_history_drops_nonstaff_future_citation() -> None:
     requester = "user-1"
     non_staff = "ai-bot-1"
 
@@ -77,8 +79,35 @@ def test_build_history_keeps_citation_linked_non_staff_message() -> None:
     assert history is not None
     content = [entry["content"] for entry in history]
     assert "Best EUR payment method?" in content
-    assert "SEPA is commonly the best for EUR offers." in content
+    assert "SEPA is commonly the best for EUR offers." not in content
     assert "And for USD?" in content
+
+
+def test_build_history_rejects_forward_citation_to_future_staff() -> None:
+    requester = "user-1"
+    staff = "staff-1"
+    future_staff_text = "Future staff content must not enter this prompt."
+
+    messages = [
+        _msg(
+            "m1",
+            requester,
+            "What should I do now?",
+            100,
+            citation_message_id="m2",
+        ),
+        _msg("m2", staff, future_staff_text, 200),
+    ]
+
+    history = build_channel_chat_history(
+        messages,
+        current_message_id="m1",
+        requester_id=requester,
+        is_staff_message=lambda msg: msg.sender_id == staff,
+    )
+
+    assert history == [{"role": "user", "content": "What should I do now?"}]
+    assert future_staff_text not in str(history)
 
 
 def test_build_history_truncation_keeps_tail_context_for_version_hints() -> None:
@@ -104,3 +133,29 @@ def test_build_history_truncation_keeps_tail_context_for_version_hints() -> None
     assert history is not None
     combined = " ".join(entry["content"].lower() for entry in history)
     assert "bisq 2" in combined
+
+
+def test_build_history_uses_immutable_staff_identity() -> None:
+    requester = "model-safe-user"
+    messages = [
+        _msg(
+            "m1",
+            "model-safe-staff",
+            "Use the Trade Wizard for this flow.",
+            1,
+            immutable_sender_id="staff-profile-exact",
+        ),
+        _msg("m2", requester, "Where do I start a trade?", 2),
+    ]
+
+    history = build_channel_chat_history(
+        messages,
+        current_message_id="m2",
+        requester_id=requester,
+        is_staff_message=lambda msg: (msg.immutable_sender_id == "staff-profile-exact"),
+    )
+
+    assert history == [
+        {"role": "assistant", "content": "Use the Trade Wizard for this flow."},
+        {"role": "user", "content": "Where do I start a trade?"},
+    ]
