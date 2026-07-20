@@ -46,7 +46,7 @@ aisuite[mcp]>=0.1.14
 # MCP SDK for building Model Context Protocol servers
 # Note: Using mcp without [cli] extra due to typer version conflict between
 # instructor (ragas dependency) requiring typer<0.10.0 and mcp[cli] requiring typer>=0.16.0
-mcp>=1.23.0  # Security fix for CVE-2025-53365, CVE-2025-53366, CVE-2025-66416
+mcp>=1.28.1,<2  # Security fixes through CVE-2026-59950; keep the v1 API
 # Pin to 1.x until AISuite supports httpx>=0.28 and the OpenAI 2.x API surface.
 openai<2.0.0
 # Keep langchain-openai for embeddings only (not for LLM)

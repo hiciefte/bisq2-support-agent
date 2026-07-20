@@ -262,7 +262,7 @@ matrix-nio[e2e]==0.25.2
     # via -r api/requirements.in
 mccabe==0.7.0
     # via flake8
-mcp==1.27.2
+mcp==1.28.1
     # via
     #   -r api/requirements.in
     #   aisuite
