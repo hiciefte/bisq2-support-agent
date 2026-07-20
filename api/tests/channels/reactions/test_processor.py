@@ -351,8 +351,7 @@ class TestProcessFlow:
         self, feedback_service, caplog
     ):
         caplog.set_level(logging.DEBUG)
-        protected_origin = "protected-origin-profile"
-        protected_reactor = "protected-reactor-profile"
+        protected_profile = "protected-origin-profile"
         tracker = SentMessageTracker(ttl_hours=24)
         tracker.track(
             channel_id="bisq2",
@@ -362,15 +361,15 @@ class TestProcessFlow:
             answer="A",
             user_id="model-safe-user",
             delivery_target="Exact-Channel",
-            origin_sender_profile_id=protected_origin,
+            origin_sender_profile_id=protected_profile,
         )
         processor = ReactionProcessor(tracker, feedback_service)
 
-        await processor.process(
+        result = await processor.process(
             ReactionEvent(
                 channel_id="bisq2",
                 external_message_id="message-1",
-                reactor_id=protected_reactor,
+                reactor_id=protected_profile,
                 rating=ReactionRating.POSITIVE,
                 raw_reaction="THUMBS_UP",
                 timestamp=datetime.now(timezone.utc),
@@ -378,8 +377,9 @@ class TestProcessFlow:
             )
         )
 
-        assert protected_origin not in caplog.text
-        assert protected_reactor not in caplog.text
+        assert result
+        feedback_service.store_reaction_feedback.assert_called_once()
+        assert protected_profile not in caplog.text
 
     @pytest.mark.asyncio()
     async def test_bisq_feedback_exception_log_omits_protected_profile(

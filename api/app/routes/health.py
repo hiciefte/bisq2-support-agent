@@ -84,7 +84,7 @@ async def _bisq_api_ready(request: Request) -> bool:
             and isinstance(readiness, dict)
             and readiness.get("status") == "healthy"
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         logger.warning("Bisq API readiness check failed (%s)", type(exc).__name__)
         return False
 
@@ -156,7 +156,7 @@ def _bisq_test_scope_ready(
             ):
                 return False
         return True
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         logger.warning(
             "Bisq production-test scope readiness check failed (%s)",
             type(exc).__name__,

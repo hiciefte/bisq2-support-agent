@@ -746,7 +746,7 @@ class UnifiedFAQExtractor:
                     _bisq_staff_profile_ids=self.bisq_staff_profile_ids,
                 )
 
-            anonymized_text, username_mapping = self._anonymize_messages(
+            anonymized_text, _username_mapping = self._anonymize_messages(
                 normalized_messages
             )
 

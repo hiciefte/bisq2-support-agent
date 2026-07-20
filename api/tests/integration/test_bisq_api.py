@@ -7,6 +7,7 @@ Covers:
 - Session setup and request delegation
 """
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -329,6 +330,63 @@ class TestSendSupportMessage:
             "http://bisq2-api:8090/api/v1/support/channels/support.support/messages",
             "http://host.docker.internal:8090/api/v1/support/channels/support.support/messages",
         ]
+
+    @pytest.mark.asyncio
+    async def test_read_timeout_falls_back_to_host_docker_internal(self, mock_settings):
+        """Retries a timed-out read against the next API candidate."""
+        mock_settings.BISQ_API_URL = "http://bisq2-api:8090"
+        api = Bisq2API(settings=mock_settings)
+
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.headers = {"content-type": "application/json"}
+        mock_response.json = AsyncMock(return_value={"messages": []})
+        mock_response.raise_for_status = MagicMock()
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = AsyncMock()
+        mock_session.request = MagicMock(
+            side_effect=[asyncio.TimeoutError(), mock_response]
+        )
+        api._session = mock_session
+
+        result = await api._make_request("GET", "/api/v1/support/export")
+
+        assert result == {"messages": []}
+        urls = [call.args[1] for call in mock_session.request.call_args_list]
+        assert urls == [
+            "http://bisq2-api:8090/api/v1/support/export",
+            "http://host.docker.internal:8090/api/v1/support/export",
+        ]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "timeout_error",
+        [
+            pytest.param(asyncio.TimeoutError(), id="asyncio-timeout"),
+            pytest.param(aiohttp.SocketTimeoutError(), id="socket-timeout"),
+        ],
+    )
+    async def test_write_timeout_does_not_retry_uncertain_delivery(
+        self, mock_settings, timeout_error
+    ):
+        """Does not repeat a mutation whose remote outcome is unknown."""
+        mock_settings.BISQ_API_URL = "http://bisq2-api:8090"
+        api = Bisq2API(settings=mock_settings)
+
+        mock_session = AsyncMock()
+        mock_session.request = MagicMock(side_effect=timeout_error)
+        api._session = mock_session
+
+        with pytest.raises(aiohttp.ClientError, match="request timed out"):
+            await api.send_support_message(
+                "support.support",
+                "hello",
+                origin_sender_profile_id="profile-allowed",
+            )
+
+        mock_session.request.assert_called_once()
 
 
 class TestBaseUrlCandidates:

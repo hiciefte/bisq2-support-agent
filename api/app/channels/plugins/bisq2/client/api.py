@@ -565,6 +565,16 @@ class Bisq2API:
                         ):
                             return await response.json()
                         return {"content": await response.text()}
+            except asyncio.TimeoutError:
+                # A timed-out mutation may have succeeded remotely; do not repeat it.
+                if method.upper() not in {"GET", "HEAD", "OPTIONS"}:
+                    logger.error("Bisq2 API request timed out")
+                    raise aiohttp.ClientError("Bisq2 API request timed out") from None
+                had_connection_error = True
+                logger.warning(
+                    "Bisq2 API request timed out; trying next candidate if available"
+                )
+                continue
             except aiohttp.ClientConnectionError:
                 had_connection_error = True
                 logger.warning(
