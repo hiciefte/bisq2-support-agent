@@ -96,6 +96,13 @@ are retained as build artifacts for 30 days, including failed gate reports.
 5. Create the intended version tag and confirm its marker-verification job.
 6. Run the normal deployment or update script.
 
+The one-time gated production-soak transition may instead use an explicit
+manual run on `main` without creating a version tag. Main must remain frozen at
+that exact commit from workflow dispatch through the update, and the procedure
+in `docs/runbooks/production-gate-transition.md` must be followed. This testing
+exception does not waive fresh answers, protected-environment review, the exact
+commit/model marker, backup verification, or any release gate.
+
 Before every fresh-answer run, the environment-scoped marker identity removes
 prior quality markers for the exact commit. Runs targeting the same commit are
 serialized even when one arrived from a branch and another from a tag. A passing

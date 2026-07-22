@@ -210,11 +210,17 @@ deleted on an assumed age; the runbook documents this exception.
 
 ### Updating the Application
 
-The `scripts/update.sh` script handles pulling the latest changes from the Git repository, rebuilding Docker images, and restarting the services. It includes a rollback mechanism in case of failure.
+The `scripts/update.sh` script handles reviewed, quality-gated updates,
+rebuilding Docker images, restarting services, and automatic rollback. An
+installation whose updater predates the release gate must first follow
+[`docs/runbooks/production-gate-transition.md`](docs/runbooks/production-gate-transition.md).
 
-### Handling Git Permission Changes
+### Handling Source Changes
 
-The deployment script may make scripts executable, which Git sees as a file modification. The `update.sh` script is designed to handle this by stashing changes. If you encounter issues, you can resolve them manually by resetting the branch: `git fetch origin && git reset --hard origin/main`.
+Release updates require a clean tracked and nonignored source tree. Keep runtime
+data and protected configuration only in their documented ignored locations.
+Commit reviewed source changes normally; do not stash or manually reset the
+production checkout to bypass the release gate.
 
 ### Troubleshooting Deployment
 

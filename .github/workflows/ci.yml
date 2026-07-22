@@ -134,6 +134,9 @@ jobs:
       - name: Test environment configuration helpers
         run: bash scripts/tests/test_env_config.sh
 
+      - name: Test release-gate transition bootstrap
+        run: bash scripts/tests/test_release_gate_transition.sh
+
       - name: Validate monitoring configuration
         run: bash scripts/validate-monitoring-config.sh
 

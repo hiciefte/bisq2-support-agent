@@ -45,7 +45,10 @@ initialize_paths() {
     INSTALL_DIR="$(cd "$INSTALL_DIR" && pwd -P)"
     DOCKER_DIR="$INSTALL_DIR/docker"
     DATA_DIR="$INSTALL_DIR/api/data"
-    DR_HELPER="$INSTALL_DIR/api/app/scripts/disaster_recovery.py"
+    # Keep verification code bound to the reviewed script source. This permits
+    # a detached candidate worktree to verify a pre-gate production backup
+    # without copying candidate files into the live checkout.
+    DR_HELPER="$PROJECT_ROOT/api/app/scripts/disaster_recovery.py"
     RECOVERY_CONTROL_DIR="$INSTALL_DIR/failed_updates/disaster-recovery"
     RECOVERY_FAILURE_MARKER="$RECOVERY_CONTROL_DIR/recovery-blocked"
     RECOVERY_LOCK_FILE="$RECOVERY_CONTROL_DIR/recovery.lock"

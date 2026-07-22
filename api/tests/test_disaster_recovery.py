@@ -39,6 +39,10 @@ def _write_tar(path: Path, files: dict[str, bytes]) -> None:
         for name, content in files.items():
             info = tarfile.TarInfo(name)
             info.mode = 0o600
+            if name.endswith("/"):
+                info.type = tarfile.DIRTYPE
+                archive.addfile(info)
+                continue
             info.size = len(content)
             archive.addfile(info, io.BytesIO(content))
 
@@ -126,6 +130,7 @@ def test_snapshot_and_verify_restore_all_components_in_scratch(
     summary = dr.verify_bundle(snapshot_root, scratch, ["all"])
 
     assert summary == {
+        "absent_volumes": 0,
         "application_files": 4,
         "artifacts": 11,
         "qdrant_collections": 1,
@@ -141,6 +146,144 @@ def test_snapshot_and_verify_restore_all_components_in_scratch(
     assert (scratch / "volumes" / "bisq2" / "state.txt").is_file()
     assert (scratch / "volumes" / "alertmanager" / "state.txt").is_file()
     assert (scratch / "qdrant" / "collection-0.snapshot").is_file()
+
+
+def test_legacy_bundle_records_and_verifies_absent_matrix_relay_volume(
+    tmp_path: Path,
+) -> None:
+    _data_dir, snapshot_root, env_file = _prepare_bundle(tmp_path)
+    matrix_archive = snapshot_root / "components" / "volumes" / "matrix.tar.gz"
+    _write_tar(matrix_archive, {})
+
+    manifest = dr.create_bundle_manifest(
+        snapshot_root,
+        env_file,
+        absent_volume_components=["matrix"],
+    )
+    scratch = tmp_path / "legacy-scratch"
+    summary = dr.verify_bundle(snapshot_root, scratch, ["all"])
+
+    assert manifest["absent_volume_components"] == ["matrix"]
+    assert manifest["volume_sqlite"]["matrix"] == []
+    with tarfile.open(matrix_archive, mode="r:gz") as archive:
+        assert archive.getmembers() == []
+    assert summary["absent_volumes"] == 1
+    assert summary["volumes"] == 5
+    assert (scratch / "volumes" / "matrix").is_dir()
+    assert list((scratch / "volumes" / "matrix").iterdir()) == []
+    assert (scratch / "application-data" / "matrix_session.json").is_file()
+    assert (
+        scratch / "application-data" / "matrix_session_store" / "store.db"
+    ).is_file()
+
+
+@pytest.mark.parametrize(
+    "members",
+    [
+        {"state.txt": b"not absent"},
+        {"directory/": b""},
+    ],
+)
+def test_manifest_rejects_nonempty_absent_volume_placeholder(
+    tmp_path: Path,
+    members: dict[str, bytes],
+) -> None:
+    _data_dir, snapshot_root, env_file = _prepare_bundle(tmp_path)
+    matrix_archive = snapshot_root / "components" / "volumes" / "matrix.tar.gz"
+    _write_tar(matrix_archive, members)
+
+    with pytest.raises(dr.RecoveryError, match="placeholder must be an empty archive"):
+        dr.create_bundle_manifest(
+            snapshot_root,
+            env_file,
+            absent_volume_components=["matrix"],
+        )
+
+
+def test_verify_rejects_nonempty_absent_volume_even_for_other_selection(
+    tmp_path: Path,
+) -> None:
+    _data_dir, snapshot_root, env_file = _prepare_bundle(tmp_path)
+    matrix_archive = snapshot_root / "components" / "volumes" / "matrix.tar.gz"
+    _write_tar(matrix_archive, {})
+    dr.create_bundle_manifest(
+        snapshot_root,
+        env_file,
+        absent_volume_components=["matrix"],
+    )
+
+    _write_tar(matrix_archive, {"directory/": b""})
+    manifest_path = snapshot_root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    artifact = next(
+        item
+        for item in manifest["artifacts"]
+        if item["path"] == "components/volumes/matrix.tar.gz"
+    )
+    artifact["size_bytes"] = matrix_archive.stat().st_size
+    artifact["sha256"] = hashlib.sha256(matrix_archive.read_bytes()).hexdigest()
+    manifest_path.write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+
+    with pytest.raises(dr.RecoveryError, match="placeholder must be an empty archive"):
+        dr.verify_bundle(snapshot_root, tmp_path / "scratch", ["application"])
+
+
+def test_verify_requires_empty_sqlite_inventory_for_absent_volume(
+    tmp_path: Path,
+) -> None:
+    _data_dir, snapshot_root, env_file = _prepare_bundle(tmp_path)
+    matrix_archive = snapshot_root / "components" / "volumes" / "matrix.tar.gz"
+    _write_tar(matrix_archive, {})
+    dr.create_bundle_manifest(
+        snapshot_root,
+        env_file,
+        absent_volume_components=["matrix"],
+    )
+    manifest_path = snapshot_root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["volume_sqlite"]["matrix"] = [{"unexpected": "entry"}]
+    manifest_path.write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+
+    with pytest.raises(dr.RecoveryError, match="SQLite inventory must be empty"):
+        dr.verify_bundle(snapshot_root, tmp_path / "scratch", ["application"])
+
+
+@pytest.mark.parametrize(
+    ("inventory", "message"),
+    [
+        ("matrix", "inventory is invalid"),
+        (["matrix", 1], "inventory is invalid"),
+        (["matrix", "matrix"], "contains duplicates"),
+        (["grafana"], "not permitted for: grafana"),
+    ],
+)
+def test_verify_rejects_invalid_absent_volume_inventory(
+    tmp_path: Path,
+    inventory: object,
+    message: str,
+) -> None:
+    _data_dir, snapshot_root, _env_file = _prepare_bundle(tmp_path)
+    manifest_path = snapshot_root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["absent_volume_components"] = inventory
+    manifest_path.write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+
+    with pytest.raises(dr.RecoveryError, match=message):
+        dr.verify_bundle(snapshot_root, tmp_path / "scratch", ["application"])
+
+
+def test_verify_accepts_older_v2_manifest_without_absent_volume_inventory(
+    tmp_path: Path,
+) -> None:
+    _data_dir, snapshot_root, _env_file = _prepare_bundle(tmp_path)
+    manifest_path = snapshot_root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    del manifest["absent_volume_components"]
+    manifest_path.write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+
+    summary = dr.verify_bundle(snapshot_root, tmp_path / "scratch", ["application"])
+
+    assert summary["absent_volumes"] == 0
 
 
 def test_manifest_contains_environment_names_but_never_values(tmp_path: Path) -> None:
@@ -1096,6 +1239,41 @@ def test_backup_quiesce_always_records_services_for_restart(tmp_path: Path) -> N
         "start scheduler api alertmanager matrix-alert-relay grafana prometheus "
         "bisq2-api"
     ) in commands
+
+
+def test_backup_quiesce_skips_undefined_legacy_matrix_relay(
+    tmp_path: Path,
+) -> None:
+    command_log = tmp_path / "legacy-compose.log"
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f"""
+            set -e
+            source "{BACKUP_SCRIPT}"
+            compose() {{
+                if [ "$1 $2 $3" = "ps --status running" ]; then
+                    printf '%s\n' scheduler api alertmanager grafana prometheus bisq2-api
+                    return 0
+                fi
+                printf '%s\n' "$*" >> "{command_log}"
+            }}
+            quiesce_services
+            resume_services
+            """,
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    commands = command_log.read_text(encoding="utf-8")
+    assert "stop --timeout 30 api" in commands
+    assert "stop --timeout 30 matrix-alert-relay" not in commands
+    assert "start scheduler api alertmanager grafana prometheus bisq2-api" in commands
 
 
 def test_qdrant_restore_stops_application_writers(tmp_path: Path) -> None:

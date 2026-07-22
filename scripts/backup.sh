@@ -36,7 +36,10 @@ initialize_paths() {
     INSTALL_DIR="$(cd "$INSTALL_DIR" && pwd -P)"
     DOCKER_DIR="$INSTALL_DIR/docker"
     DATA_DIR="$INSTALL_DIR/api/data"
-    DR_HELPER="$INSTALL_DIR/api/app/scripts/disaster_recovery.py"
+    # Use the helper from the reviewed script source. During the one-time
+    # release-gate transition the script runs from a detached candidate
+    # worktree while INSTALL_DIR still points at the older production checkout.
+    DR_HELPER="$PROJECT_ROOT/api/app/scripts/disaster_recovery.py"
     RECOVERY_CONTROL_DIR="$INSTALL_DIR/failed_updates/disaster-recovery"
     RECOVERY_FAILURE_MARKER="$RECOVERY_CONTROL_DIR/recovery-blocked"
     RECOVERY_LOCK_FILE="$RECOVERY_CONTROL_DIR/recovery.lock"
@@ -120,6 +123,12 @@ service_is_running() {
     local running_services
     running_services="$(compose ps --status running --services)" || return 2
     grep -Fxq "$1" <<< "$running_services"
+}
+
+service_is_configured() {
+    local configured_services
+    configured_services="$(compose config --services)" || return 2
+    grep -Fxq "$1" <<< "$configured_services"
 }
 
 resume_services() {
@@ -445,6 +454,15 @@ snapshot_volume() {
     tar -tzf "$destination" >/dev/null
 }
 
+snapshot_absent_volume() {
+    local component="$1"
+    local destination="$STAGING_DIR/components/volumes/$component.tar.gz"
+
+    log_warning "Recording absent legacy $component volume"
+    tar -czf "$destination" -T /dev/null
+    tar -tzf "$destination" >/dev/null
+}
+
 validate_gpg_recipient_fingerprint() {
     local normalized_recipient
     local key_listing
@@ -620,6 +638,7 @@ main() {
     local helper_container
     local helper_image
     local matrix_volume
+    local matrix_volume_absent=false
     local prometheus_volume
     local grafana_volume
     local bisq2_volume
@@ -627,12 +646,24 @@ main() {
     local timestamp
     local matrix_sync_session_file
     local matrix_alert_session_file
+    local status
     local -a matrix_snapshot_args=(--env-file "$DOCKER_DIR/.env")
+    local -a absent_volume_args=()
 
     validate_api_data_mount
     helper_container="$(container_id_for_service scheduler)"
     helper_image="$(docker inspect --format '{{.Image}}' "$helper_container")"
-    matrix_volume="$(volume_for_service_path matrix-alert-relay /data)"
+    if service_is_configured matrix-alert-relay; then
+        matrix_volume="$(volume_for_service_path matrix-alert-relay /data)"
+    else
+        status=$?
+        if [ "$status" -ne 1 ]; then
+            log_error "Could not inspect the Matrix relay service topology"
+            return "$status"
+        fi
+        matrix_volume_absent=true
+        absent_volume_args+=(--absent-volume-component matrix)
+    fi
     prometheus_volume="$(volume_for_service_path prometheus /prometheus)"
     grafana_volume="$(volume_for_service_path grafana /var/lib/grafana)"
     bisq2_volume="$(volume_for_service_path bisq2-api /opt/bisq2/data)"
@@ -654,6 +685,7 @@ main() {
     log_info "Creating Qdrant collection snapshots"
     compose run --rm --no-deps -T \
         --user "${APP_UID:-1001}:${APP_GID:-1001}" \
+        --volume "$DR_HELPER:/app/app/scripts/disaster_recovery.py:ro" \
         --entrypoint python api \
         -m app.scripts.disaster_recovery qdrant-export \
         > "$STAGING_DIR/components/qdrant/qdrant-snapshots.tar.gz"
@@ -665,7 +697,11 @@ main() {
         "${matrix_snapshot_args[@]}" \
         --output-dir "$STAGING_DIR" >/dev/null
 
-    snapshot_volume matrix "$matrix_volume" "$helper_image"
+    if [ "$matrix_volume_absent" = true ]; then
+        snapshot_absent_volume matrix
+    else
+        snapshot_volume matrix "$matrix_volume" "$helper_image"
+    fi
     snapshot_volume prometheus "$prometheus_volume" "$helper_image"
     snapshot_volume grafana "$grafana_volume" "$helper_image"
     snapshot_volume bisq2 "$bisq2_volume" "$helper_image"
@@ -676,7 +712,8 @@ main() {
     log_info "Building value-free configuration inventory and manifest"
     python3 "$DR_HELPER" create-manifest \
         --root "$STAGING_DIR" \
-        --env-file "$DOCKER_DIR/.env" >/dev/null
+        --env-file "$DOCKER_DIR/.env" \
+        "${absent_volume_args[@]}" >/dev/null
 
     timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
     encrypt_backup "$timestamp"

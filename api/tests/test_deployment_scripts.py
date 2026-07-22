@@ -118,6 +118,17 @@ def test_update_script_can_be_sourced_without_running_orchestration(
     assert "Creating system backup" not in result.stdout
 
 
+def test_deploy_does_not_stop_services_after_reporting_success() -> None:
+    deploy = DEPLOY_SH.read_text(encoding="utf-8")
+
+    success_index = deploy.index('echo "Deployment complete!"')
+    after_success = deploy[success_index:]
+
+    assert 'run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" up -d' in deploy
+    assert 'run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" down' not in after_success
+    assert after_success.count("Deployment complete!") == 1
+
+
 def test_update_migration_guard_never_overwrites_nonempty_faq_store(
     tmp_path: Path,
 ) -> None:

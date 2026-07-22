@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -147,6 +148,107 @@ def test_recovery_guard_blocks_both_entrypoints_and_requires_explicit_clear(
         """)
     assert cleared.returncode == 0, cleared.stdout + cleared.stderr
     assert not marker.exists()
+
+
+@pytest.mark.parametrize("script", [BACKUP_SCRIPT, RESTORE_SCRIPT])
+def test_staged_recovery_uses_helper_from_reviewed_script_source(
+    tmp_path: Path,
+    script: Path,
+) -> None:
+    install_dir = tmp_path / "older-production-checkout"
+    (install_dir / "api" / "data").mkdir(parents=True)
+
+    result = _run_bash(f"""
+        export BISQ_SUPPORT_INSTALL_DIR="{install_dir}"
+        source "{script}"
+        initialize_paths
+        printf '%s' "$DR_HELPER"
+        """)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.endswith(
+        str(REPO_ROOT / "api" / "app" / "scripts" / "disaster_recovery.py")
+    )
+    assert str(install_dir) not in result.stdout
+
+
+def test_staged_backup_mounts_reviewed_helper_into_api_image() -> None:
+    backup = BACKUP_SCRIPT.read_text(encoding="utf-8")
+
+    assert '--volume "$DR_HELPER:/app/app/scripts/disaster_recovery.py:ro"' in backup
+
+
+@pytest.mark.parametrize(
+    ("configured_services", "expected_status"),
+    [
+        ("api\nmatrix-alert-relay\nprometheus", 0),
+        ("api\nmatrix-alert-relay-shadow\nprometheus", 1),
+    ],
+)
+def test_matrix_relay_topology_detection_uses_exact_service_names(
+    configured_services: str,
+    expected_status: int,
+) -> None:
+    result = _run_bash(f"""
+        source "{BACKUP_SCRIPT}"
+        compose() {{ printf '%s\n' "{configured_services}"; }}
+        set +e
+        service_is_configured matrix-alert-relay
+        status=$?
+        set -e
+        printf '%s' "$status"
+        """)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout == str(expected_status)
+
+
+def test_matrix_relay_topology_inspection_failure_is_distinct_from_absence() -> None:
+    result = _run_bash(f"""
+        source "{BACKUP_SCRIPT}"
+        compose() {{ return 1; }}
+        set +e
+        service_is_configured matrix-alert-relay
+        status=$?
+        set -e
+        printf '%s' "$status"
+        """)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout == "2"
+
+
+def test_absent_matrix_relay_snapshot_is_a_zero_member_archive(
+    tmp_path: Path,
+) -> None:
+    staging = tmp_path / "staging"
+    (staging / "components" / "volumes").mkdir(parents=True)
+
+    result = _run_bash(f"""
+        source "{BACKUP_SCRIPT}"
+        STAGING_DIR="{staging}"
+        snapshot_absent_volume matrix
+        """)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    with tarfile.open(
+        staging / "components" / "volumes" / "matrix.tar.gz", mode="r:gz"
+    ) as archive:
+        assert archive.getmembers() == []
+
+
+def test_backup_only_synthesizes_matrix_volume_for_absent_relay_service() -> None:
+    backup = BACKUP_SCRIPT.read_text(encoding="utf-8")
+    present_branch = (
+        "if service_is_configured matrix-alert-relay; then\n"
+        '        matrix_volume="$(volume_for_service_path matrix-alert-relay /data)"'
+    )
+
+    assert present_branch in backup
+    assert "absent_volume_args+=(--absent-volume-component matrix)" in backup
+    assert 'if [ "$matrix_volume_absent" = true ]; then' in backup
+    assert "snapshot_absent_volume matrix" in backup
+    assert 'snapshot_volume matrix "$matrix_volume" "$helper_image"' in backup
 
 
 @pytest.mark.parametrize("script", [BACKUP_SCRIPT, RESTORE_SCRIPT])
