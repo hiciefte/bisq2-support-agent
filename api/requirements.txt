@@ -358,7 +358,7 @@ pathspec==1.1.1
     #   mypy
 peewee==3.19.0
     # via matrix-nio
-pillow==12.2.0
+pillow==12.3.0
     # via
     #   -r api/requirements.in
     #   matplotlib

@@ -178,6 +178,13 @@ def test_staged_backup_mounts_reviewed_helper_into_api_image() -> None:
     assert '--volume "$DR_HELPER:/app/app/scripts/disaster_recovery.py:ro"' in backup
 
 
+def test_staged_restore_mounts_reviewed_helper_for_all_qdrant_operations() -> None:
+    restore = RESTORE_SCRIPT.read_text(encoding="utf-8")
+
+    helper_mount = '--volume "$DR_HELPER:/app/app/scripts/disaster_recovery.py:ro"'
+    assert restore.count(helper_mount) == 4
+
+
 @pytest.mark.parametrize(
     ("configured_services", "expected_status"),
     [

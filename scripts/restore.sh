@@ -1019,6 +1019,7 @@ restore_qdrant() {
     log_info "Saving pre-restore Qdrant collection snapshots"
     compose run --rm --no-deps -T \
         --user "${APP_UID:-1001}:${APP_GID:-1001}" \
+        --volume "$DR_HELPER:/app/app/scripts/disaster_recovery.py:ro" \
         --entrypoint python api \
         -m app.scripts.disaster_recovery qdrant-export --allow-empty \
         > "$rollback_archive"
@@ -1028,6 +1029,7 @@ restore_qdrant() {
     log_info "Restoring Qdrant collection snapshots"
     compose run --rm --no-deps -T \
         --user "${APP_UID:-1001}:${APP_GID:-1001}" \
+        --volume "$DR_HELPER:/app/app/scripts/disaster_recovery.py:ro" \
         --entrypoint python api \
         -m app.scripts.disaster_recovery qdrant-import \
         "${import_args[@]}" \
@@ -1045,6 +1047,7 @@ rollback_applied_components() {
         log_warning "Rolling back Qdrant collections"
         if compose run --rm --no-deps -T \
             --user "${APP_UID:-1001}:${APP_GID:-1001}" \
+            --volume "$DR_HELPER:/app/app/scripts/disaster_recovery.py:ro" \
             --entrypoint python api \
             -m app.scripts.disaster_recovery qdrant-import --delete-absent \
             < "$WORK_DIR/pre-restore-qdrant.tar.gz"; then

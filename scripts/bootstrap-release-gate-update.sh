@@ -237,8 +237,9 @@ git -C "$PRODUCTION_REPOSITORY" merge-base --is-ancestor \
     || fail "candidate is not a forward update from production"
 
 MODEL_ENV_FILE="$PRODUCTION_REPOSITORY/docker/.env"
-[ -f "$MODEL_ENV_FILE" ] && [ ! -L "$MODEL_ENV_FILE" ] \
-    || fail "protected production model configuration is unavailable"
+if [ ! -f "$MODEL_ENV_FILE" ] || [ -L "$MODEL_ENV_FILE" ]; then
+    fail "protected production model configuration is unavailable"
+fi
 
 require_explicit_false() {
     local setting="$1"
@@ -297,10 +298,12 @@ done
 
 CANDIDATE_VERIFIER="$CANDIDATE_REPOSITORY/scripts/verify-release-ai-quality-gate.sh"
 CANDIDATE_UPDATER="$CANDIDATE_REPOSITORY/scripts/update.sh"
-[ -f "$CANDIDATE_VERIFIER" ] && [ ! -L "$CANDIDATE_VERIFIER" ] \
-    || fail "candidate release verifier is unavailable"
-[ -f "$CANDIDATE_UPDATER" ] && [ ! -L "$CANDIDATE_UPDATER" ] \
-    || fail "candidate updater is unavailable"
+if [ ! -f "$CANDIDATE_VERIFIER" ] || [ -L "$CANDIDATE_VERIFIER" ]; then
+    fail "candidate release verifier is unavailable"
+fi
+if [ ! -f "$CANDIDATE_UPDATER" ] || [ -L "$CANDIDATE_UPDATER" ]; then
+    fail "candidate updater is unavailable"
+fi
 
 echo "Verifying release evidence for exact commit $RELEASE_COMMIT..."
 if ! bash "$CANDIDATE_VERIFIER" \
