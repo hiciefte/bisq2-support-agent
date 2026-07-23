@@ -631,6 +631,8 @@ main() {
     capture_backup_target_identity
 
     acquire_recovery_lock
+    pin_existing_compose_project \
+        "$DOCKER_DIR" "$COMPOSE_FILE" existing || return 1
     trap cleanup EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM

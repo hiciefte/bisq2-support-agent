@@ -22,9 +22,16 @@ Do not begin the production change until all of these are true:
 - an encrypted off-host backup from the existing stack passed full scratch
   restore verification with the candidate recovery code;
 - the production checkout has no tracked or nonignored untracked source change;
+- exactly one running API container carries Compose labels for the existing
+  production Docker directory, has exactly `DATA_DIR=/data`, and binds `/data`
+  to the checkout's existing `api/data` directory;
+- the canonical Compose container set has no stale, orphaned,
+  duplicate-service, cross-project, or cross-working-directory container;
 - all six delivery and ChatOps switches listed below are explicitly `false`;
-- the base HTTP listener remains loopback-only, with no TLS overlay or redirect;
-  and
+- external HTTP ingress is blocked by the host or network firewall throughout
+  staging;
+- the candidate configuration uses base Compose mode, a loopback-only HTTP
+  bind, no TLS overlay or redirect, and `COOKIE_SECURE=false`; and
 - an operator owns the change window, terminal, rollback decision, and incident
   record.
 
@@ -147,25 +154,94 @@ MATRIX_CHATOPS_ENABLED=false
 BISQ2_CHANNEL_ENABLED=false
 BISQ2_CHATOPS_ENABLED=false
 ESCALATION_BISQ2_WS_ENABLED=false
+COOKIE_SECURE=false
 ```
 
 The bootstrap checks these names without printing any other value. The global
 switch also forces any persisted autonomous-delivery setting off at startup.
 Do not add Matrix or Bisq allowlisted response targets during this transition.
 Before invoking the bootstrap, use a clean operator shell and `unset` these six
-names plus `OPENAI_MODEL`. Also unset `COMPOSE_ENV_FILES`,
+names plus `COOKIE_SECURE`, `OPENAI_MODEL`,
+`BISQ_SUPPORT_COMPOSE_OVERRIDE_FILE`, `NGINX_HTTP_BIND_ADDRESS`,
+`NGINX_HTTPS_BIND_ADDRESS`, `NGINX_TLS_CERTIFICATE_DIR`,
+`NGINX_TLS_CERTIFICATE_FILENAME`, `NGINX_TLS_PRIVATE_KEY_FILENAME`, and
+`NGINX_TLS_REDIRECT_HTTP`. Also unset `COMPOSE_ENV_FILES`,
 `COMPOSE_DISABLE_ENV_FILE`, `COMPOSE_FILE`, `COMPOSE_PATH_SEPARATOR`,
 `COMPOSE_PROJECT_NAME`, `COMPOSE_PROFILES`, `DOCKER_HOST`, and `DOCKER_CONTEXT`.
 The bootstrap rejects all of these exported overrides because they could replace
 the verified environment, Compose project, service selection, or Docker daemon.
 
-For temporary browser testing, use base Compose mode with the HTTP bind set to
-the host's loopback interface, the Compose override selection empty, all TLS
-file settings empty, and HTTPS redirection disabled. Keep public firewall
-ingress closed. Reach the website and `/admin` only through an
-operator-established SSH local-forward whose target is the production
-loopback listener. Store the SSH target and ports in the operator shell, not in
-this repository.
+Do not set a project name to make the transition select a stack. The bootstrap
+finds the running API container by its exact Compose working-directory label,
+requires the match to be unique, derives its project name from Docker labels,
+and checks it against Compose's canonical container set. It rejects stale or
+orphaned containers instead of letting one satisfy a data-continuity check. It
+persists the label-derived name as the sole canonical `COMPOSE_PROJECT_NAME`
+assignment in protected `docker/.env`. While containers exist, production
+entry points rederive and validate the label identity and explicitly pin it. If
+`docker compose down` has removed the entire container set, only
+`scripts/start.sh` may fall back to that protected name to recreate the same
+project; other operations fail closed until the stack exists. No command may
+derive or start a new default project beside it. Zero or multiple matches,
+malformed labels, a conflicting persisted name, a different data bind, or a
+noncanonical container set are hard stops. Repair or disambiguate the existing
+stack under a separately reviewed plan.
+
+The legacy pre-transition stack may still publish HTTP on all host interfaces,
+so keep external firewall ingress closed before staging and throughout the
+window. Configure the candidate for base Compose mode with
+`NGINX_HTTP_BIND_ADDRESS=127.0.0.1`, an empty Compose override selection, empty
+TLS file settings, `NGINX_TLS_REDIRECT_HTTP=false`, and `COOKIE_SECURE=false`.
+Before checkout mutation, the bootstrap rejects a TLS overlay or non-loopback
+candidate configuration; after restart it inspects the live nginx container
+and requires exactly one HTTP binding on `127.0.0.1`. It also requires the live
+API container to use `COOKIE_SECURE=false`. Reach the website and `/admin` only
+through an operator-established SSH local-forward whose target is the
+production loopback listener. Store the SSH target and ports in the operator
+shell, not in this repository.
+
+Before staging, verify the closed firewall from an independent external
+network. Keep the reviewed URL only in that operator shell; a successful HTTP
+connection is a hard stop:
+
+```bash
+: "${EXTERNAL_HTTP_URL:?Set the reviewed external HTTP probe URL}"
+external_probe_result=0
+curl --silent --show-error --max-time 10 --output /dev/null \
+  "$EXTERNAL_HTTP_URL" || external_probe_result=$?
+case "$external_probe_result" in
+  0)
+    echo 'External HTTP ingress is still reachable' >&2
+    exit 1
+    ;;
+  7|28)
+    echo 'External HTTP ingress is closed'
+    ;;
+  *)
+    echo "External HTTP probe failed unexpectedly (curl exit ${external_probe_result})" >&2
+    exit 1
+    ;;
+esac
+```
+
+After the transition, establish the temporary forward in one operator
+workstation terminal. Keep the SSH destination and selected ports in the shell
+rather than this runbook:
+
+```bash
+ssh -N -L \
+  "${LOCAL_HTTP_PORT}:127.0.0.1:${PRODUCTION_HTTP_PORT}" \
+  "$SSH_TARGET"
+```
+
+In a second workstation terminal, probe both browser surfaces locally:
+
+```bash
+curl --fail --silent --show-error \
+  "http://127.0.0.1:${LOCAL_HTTP_PORT}/" >/dev/null
+curl --fail --silent --show-error \
+  "http://127.0.0.1:${LOCAL_HTTP_PORT}/admin" >/dev/null
+```
 
 This temporary mode deliberately has no domain or certificate lifecycle. It is
 not the clearnet launch configuration. Revisit `public-access.md` before any
@@ -186,11 +262,37 @@ From the candidate worktree, run:
 
 The bootstrap fails before handoff unless the branch still points to the exact
 commit, both worktrees are clean, the update is forward-only, production-test
-delivery is dark, and the exact commit/model quality evidence is valid. It then
-pins the already verified object behind a temporary local remote and invokes
-the candidate updater from memory. The normal updater performs its own second
+delivery is dark, and the exact commit/model quality evidence is valid. Before
+checkout mutation it passes the label-derived, nonsecret Compose project name
+into the candidate updater without printing it, validates the base/loopback
+exposure, and persists that project name in protected `docker/.env`. It pins the
+already verified object behind a temporary local remote, pins the
+already-running Compose project, and invokes the candidate updater from memory.
+One exclusive lifecycle lock is held from the initial identity capture through
+the update, post-update checks, and any guarded rollback. Backup, restore,
+health-repair, start, stop, update, and rollback operations fail closed while
+that lock is held.
+The normal updater performs its own second
 gate check, preserves the prior commit, rebuilds/restarts, checks health, and
-rolls back on handled failure. The bootstrap also catches a nonzero exit or
+rolls back on handled failure. Before declaring success, the bootstrap proves
+that the replacement API container still belongs to the same project and still
+binds the exact pre-transition application-data directory. It also requires
+every pre-existing service/destination persistent-mount mapping to retain the
+same bind source or named-volume identity; newly introduced mounts may be
+added. Persistent binds are limited to application data and `/var/log` state;
+source, configuration, secret, and host-telemetry binds are deliberately not
+state continuity records. This permits removal of the legacy API source bind
+while still protecting its `/data` bind. For project selection, created and
+exited API containers remain existing-stack anchors for backup, restore, and
+rollback; a restarting container is rejected as unstable. Release updates,
+including this live transition, require the API to be running. A cleanly
+stopped stack must be started and health-checked before an update; a crash loop
+requires rollback or disaster recovery. An existing FAQ database remains
+authoritative even when it contains zero rows; only an absent database triggers
+the one-time JSONL migration. Git reset and rollback are required to leave all
+ignored runtime data in place; the updater rejects a release that would track
+or overwrite it and never copies a live database or JSONL file back over an
+active writer. The bootstrap also catches a nonzero exit or
 handled signal after the checkout changes and invokes the candidate rollback
 function before removing its temporary remote.
 
@@ -207,14 +309,23 @@ test "$(git -C "$PRODUCTION_REPOSITORY" rev-parse HEAD)" = \
   "$CANDIDATE_COMMIT"
 test -z "$(git -C "$PRODUCTION_REPOSITORY" status --short)"
 "$PRODUCTION_REPOSITORY/scripts/check-health.sh"
+EXPECTED_BUILD_ID="build-$(git -C "$PRODUCTION_REPOSITORY" \
+  rev-parse --short "$CANDIDATE_COMMIT")"
+HEALTH_JSON="$(curl --fail --silent --show-error \
+  "http://127.0.0.1:${LOCAL_HTTP_PORT}/api/health")"
+test "$(jq -r '.status' <<< "$HEALTH_JSON")" = healthy
+test "$(jq -r '.build_id' <<< "$HEALTH_JSON")" = "$EXPECTED_BUILD_ID"
 ```
 
-- The readiness endpoint reports ready and its build ID is the exact candidate.
+- The API container healthcheck reports ready, and `/api/health` reports the
+  expected `build-<short-candidate-SHA>` value proven above.
 - Compose reports every expected critical service healthy, including the new
   Matrix alert relay; readiness does not imply a response channel is enabled.
 - The website, `/admin`, and a manual web-chat request work through the SSH
   tunnel.
-- The six runtime variables inside the API container are still `false`.
+- The bootstrap has revalidated that all six delivery variables and
+  `COOKIE_SECURE` occur exactly once as `false` inside the replacement API
+  container.
 - Prometheus targets and dashboards are healthy. Run an alert-delivery drill
   only after a human confirms its destination is a private staff-only Matrix
   room; this never authorizes support-room delivery.
@@ -239,7 +350,9 @@ Resume main merges only after the operator closes the change window.
 ## Failure and rollback
 
 - A failure before candidate-updater handoff leaves the production checkout and
-  services unchanged.
+  services unchanged. If exact evidence already passed, the protected Compose
+  `.env` may retain the verified project-name entry; it identifies the same
+  pre-existing stack and does not start or recreate a service.
 - A handled failure or signal after reset/build enters either the candidate
   updater's normal rollback or the bootstrap's final guarded rollback to the
   recorded prior commit while preserving production data.

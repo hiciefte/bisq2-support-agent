@@ -1164,7 +1164,12 @@ main() {
 
     if [ "$APPLY" = true ]; then
         acquire_recovery_lock
+        pin_existing_compose_project \
+            "$DOCKER_DIR" "$COMPOSE_FILE" existing || return 1
         validate_api_data_mount
+    elif component_selected qdrant; then
+        pin_existing_compose_project \
+            "$DOCKER_DIR" "$COMPOSE_FILE" existing || return 1
     fi
 
     local snapshot_root="$WORK_DIR/snapshot"

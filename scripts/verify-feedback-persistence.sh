@@ -176,6 +176,9 @@ check_feedback_service() {
 main() {
     local exit_code=0
 
+    pin_existing_compose_project \
+        "$DOCKER_DIR" "$COMPOSE_FILE" existing || return 1
+
     echo ""
 
     # Run all checks

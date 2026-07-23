@@ -44,6 +44,8 @@ fi
 check_required_commands docker jq awk
 check_docker_daemon
 check_docker_compose
+pin_existing_compose_project \
+    "$DOCKER_DIR" "$COMPOSE_FILE" existing
 
 timeout_seconds="${DRILL_TIMEOUT_SECONDS:-120}"
 if ! [[ "$timeout_seconds" =~ ^[0-9]+$ ]] || [ "$timeout_seconds" -lt 10 ]; then

@@ -88,7 +88,7 @@ validate_environment() {
     log_info "Validating environment..."
 
     # Check for required commands
-    if ! check_required_commands git docker jq; then
+    if ! check_required_commands git docker jq flock mktemp rm; then
         exit 1
     fi
 
@@ -99,6 +99,14 @@ validate_environment() {
 
     # Check if Docker daemon is running
     if ! check_docker_daemon; then
+        exit 1
+    fi
+
+    if ! pin_existing_compose_project \
+        "$DOCKER_DIR" "$COMPOSE_FILE" existing; then
+        exit 1
+    fi
+    if ! persist_compose_project_name "$DOCKER_DIR"; then
         exit 1
     fi
 
@@ -162,6 +170,11 @@ perform_rollback() {
     fi
 
     log_info "Rolling back to: $target_ref"
+
+    if ! ensure_runtime_data_git_boundary "$INSTALL_DIR" "$target_ref"; then
+        log_error "Rollback target crosses the production data boundary"
+        exit 1
+    fi
 
     # Confirm with user (unless automated)
     if [ -t 0 ]; then  # Check if running interactively
@@ -249,6 +262,8 @@ main() {
     if [ "$LIST_BACKUPS" = "true" ]; then
         list_available_backups
     fi
+
+    acquire_production_lifecycle_lock "$INSTALL_DIR" || exit 1
 
     # Validate environment
     validate_environment

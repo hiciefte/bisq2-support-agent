@@ -17,8 +17,12 @@ DEPLOY_SH = REPO_ROOT / "scripts" / "deploy.sh"
 BACKUP_SH = REPO_ROOT / "scripts" / "backup.sh"
 START_SH = REPO_ROOT / "scripts" / "start.sh"
 STOP_SH = REPO_ROOT / "scripts" / "stop.sh"
+RESTART_SH = REPO_ROOT / "scripts" / "restart.sh"
 ROLLBACK_TOR_SH = REPO_ROOT / "scripts" / "rollback-tor.sh"
 VERIFY_FEEDBACK_SH = REPO_ROOT / "scripts" / "verify-feedback-persistence.sh"
+DRILL_ALERT_SH = REPO_ROOT / "scripts" / "drill-alert-delivery.sh"
+CLEANUP_OLD_DATA_SH = REPO_ROOT / "scripts" / "cleanup_old_data.sh"
+TRANSITION_RUNBOOK = REPO_ROOT / "docs" / "runbooks" / "production-gate-transition.md"
 
 
 def clean_git_env(overrides: dict[str, str] | None = None) -> dict[str, str]:
@@ -118,6 +122,53 @@ def test_update_script_can_be_sourced_without_running_orchestration(
     assert "Creating system backup" not in result.stdout
 
 
+def test_real_update_main_holds_lifecycle_lock_and_preserves_order(
+    tmp_path: Path,
+) -> None:
+    log_file = tmp_path / "update-order.log"
+    result = run_bash(
+        f"""
+        source "{UPDATE_SH}"
+        record() {{ printf '%s\n' "$1" >> "{log_file}"; }}
+        acquire_production_lifecycle_lock() {{ record lock; }}
+        ensure_release_source_tree_clean() {{ record clean; }}
+        validate_environment() {{ record validate; }}
+        create_system_backup() {{ record backup; }}
+        perform_update() {{ record update; NO_REPO_UPDATES=false; export NO_REPO_UPDATES; }}
+        verify_release_ai_quality_gate() {{ record quality; }}
+        run_faq_migration() {{ record faq-boundary; }}
+        analyze_changes() {{ record analyze; }}
+        fix_permissions() {{ record permissions; }}
+        run_faq_sqlite_migration() {{ record faq-sqlite; }}
+        apply_updates() {{ record apply; }}
+        verify_feedback_persistence() {{ record feedback; }}
+        cleanup_backups() {{ record cleanup; }}
+        show_service_status() {{ record status; }}
+        main
+        """,
+        cwd=REPO_ROOT,
+        env={"BISQ_SUPPORT_INSTALL_DIR": str(tmp_path)},
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert log_file.read_text(encoding="utf-8").splitlines() == [
+        "lock",
+        "clean",
+        "validate",
+        "backup",
+        "update",
+        "quality",
+        "faq-boundary",
+        "analyze",
+        "permissions",
+        "faq-sqlite",
+        "apply",
+        "feedback",
+        "cleanup",
+        "status",
+    ]
+
+
 def test_deploy_does_not_stop_services_after_reporting_success() -> None:
     deploy = DEPLOY_SH.read_text(encoding="utf-8")
 
@@ -127,6 +178,123 @@ def test_deploy_does_not_stop_services_after_reporting_success() -> None:
     assert 'run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" up -d' in deploy
     assert 'run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" down' not in after_success
     assert after_success.count("Deployment complete!") == 1
+
+
+def test_existing_data_operations_pin_the_existing_compose_project() -> None:
+    update = UPDATE_SH.read_text(encoding="utf-8")
+    backup = BACKUP_SH.read_text(encoding="utf-8")
+    restore = (REPO_ROOT / "scripts" / "restore.sh").read_text(encoding="utf-8")
+
+    for script in (backup, restore):
+        assert "pin_existing_compose_project" in script
+        assert '"$DOCKER_DIR" "$COMPOSE_FILE" existing' in script
+    assert "pin_existing_compose_project" in update
+    assert '"$DOCKER_DIR" "$COMPOSE_FILE" running' in update
+    assert "validate_existing_api_data_identity" in update
+    assert '"$INSTALL_DIR/api/data" running' in update
+    assert "docker-api-1" not in update
+
+
+def test_existing_stack_entry_points_pin_before_compose_actions() -> None:
+    scripts = (
+        START_SH,
+        STOP_SH,
+        RESTART_SH,
+        ROLLBACK_SH,
+        CHECK_HEALTH_SH,
+        VERIFY_FEEDBACK_SH,
+        ROLLBACK_TOR_SH,
+        DRILL_ALERT_SH,
+        CLEANUP_OLD_DATA_SH,
+    )
+
+    for script_path in scripts:
+        script = script_path.read_text(encoding="utf-8")
+        assert any(
+            name in script
+            for name in (
+                "pin_existing_compose_project",
+                "pin_configured_or_existing_compose_project",
+            )
+        )
+
+    assert "pin_existing_compose_project" not in DEPLOY_SH.read_text(encoding="utf-8")
+
+
+def test_production_mutators_share_the_recovery_lifecycle_lock() -> None:
+    lifecycle_scripts = (
+        UPDATE_SH,
+        START_SH,
+        STOP_SH,
+        RESTART_SH,
+        ROLLBACK_SH,
+        CHECK_HEALTH_SH,
+        ROLLBACK_TOR_SH,
+        CLEANUP_OLD_DATA_SH,
+    )
+    for script_path in lifecycle_scripts:
+        assert "acquire_production_lifecycle_lock" in script_path.read_text(
+            encoding="utf-8"
+        )
+
+    common = COMMON_SH.read_text(encoding="utf-8")
+    backup = BACKUP_SH.read_text(encoding="utf-8")
+    restore = (REPO_ROOT / "scripts" / "restore.sh").read_text(encoding="utf-8")
+    assert 'failed_updates/disaster-recovery"' in common
+    assert (
+        'RECOVERY_CONTROL_DIR="$INSTALL_DIR/failed_updates/disaster-recovery"' in backup
+    )
+    assert (
+        'RECOVERY_CONTROL_DIR="$INSTALL_DIR/failed_updates/disaster-recovery"'
+        in restore
+    )
+
+
+def test_transition_runbook_proves_private_access_and_exact_build() -> None:
+    runbook = TRANSITION_RUNBOOK.read_text(encoding="utf-8")
+
+    assert "${EXTERNAL_HTTP_URL:?" in runbook
+    assert '"$EXTERNAL_HTTP_URL"' in runbook
+    assert "7|28)" in runbook
+    assert "failed unexpectedly" in runbook
+    assert '"$SSH_TARGET"' in runbook
+    assert "/admin" in runbook
+    assert 'EXPECTED_BUILD_ID="build-$(git -C' in runbook
+    assert "rev-parse --short" in runbook
+    assert "'.build_id'" in runbook
+
+
+def test_production_lifecycle_lock_is_reentrant_in_one_process(
+    tmp_path: Path,
+) -> None:
+    install_dir = tmp_path / "bisq-support-test"
+    install_dir.mkdir()
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    flock_log = tmp_path / "flock.log"
+    flock = fakebin / "flock"
+    flock.write_text(
+        "#!/bin/bash\n" f'printf \'%s\\n\' "$*" >> "{flock_log}"\n',
+        encoding="utf-8",
+    )
+    flock.chmod(0o755)
+
+    result = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        source "{COMMON_SH}"
+        setup_colors
+        acquire_production_lifecycle_lock "{install_dir}"
+        acquire_production_lifecycle_lock "{install_dir}"
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert flock_log.read_text(encoding="utf-8").splitlines() == ["-n 202"]
+    lock_file = install_dir / "failed_updates" / "disaster-recovery" / "recovery.lock"
+    assert lock_file.is_file()
+    assert lock_file.stat().st_mode & 0o777 == 0o600
 
 
 def test_update_migration_guard_never_overwrites_nonempty_faq_store(
@@ -141,11 +309,12 @@ def test_update_migration_guard_never_overwrites_nonempty_faq_store(
     fakebin.mkdir()
     docker_log = tmp_path / "docker.log"
     docker = fakebin / "docker"
+    api_container_id = "aaaaaaaaaaaa"
     docker.write_text(
         "#!/bin/bash\n"
         f'echo "$*" >> "{docker_log}"\n'
-        'if [ "$1" = "ps" ]; then echo "docker-api-1"; exit 0; fi\n'
-        'if [ "$1" = "exec" ]; then echo "7"; exit 0; fi\n'
+        f'if [ "$1" = "compose" ]; then echo "{api_container_id}"; exit 0; fi\n'
+        'if [ "$1" = "exec" ]; then echo "existing:7"; exit 0; fi\n'
         "exit 64\n",
         encoding="utf-8",
     )
@@ -154,6 +323,7 @@ def test_update_migration_guard_never_overwrites_nonempty_faq_store(
     result = run_bash(
         f"""
         export PATH="{fakebin}:$PATH"
+        export COMPOSE_PROJECT_NAME=legacy-project
         source "{UPDATE_SH}"
         INSTALL_DIR="{tmp_path}"
         DOCKER_DIR="{docker_dir}"
@@ -166,7 +336,56 @@ def test_update_migration_guard_never_overwrites_nonempty_faq_store(
 
     assert result.returncode == 0, result.stderr
     assert "SQLite already has 7 FAQs" in result.stdout
-    assert "app.scripts.migrate_to_sqlite" not in docker_log.read_text(encoding="utf-8")
+    docker_calls = docker_log.read_text(encoding="utf-8")
+    assert (
+        "compose --project-name legacy-project -f docker-compose.yml "
+        "ps --status running -q api"
+    ) in docker_calls
+    assert f"exec {api_container_id} python -c" in docker_calls
+    assert "app.scripts.migrate_to_sqlite" not in docker_calls
+
+
+def test_update_migration_guard_preserves_empty_authoritative_faq_store(
+    tmp_path: Path,
+) -> None:
+    migration_script = tmp_path / "api" / "app" / "scripts" / "migrate_to_sqlite.py"
+    migration_script.parent.mkdir(parents=True)
+    migration_script.write_text("# synthetic migration marker\n", encoding="utf-8")
+    docker_dir = tmp_path / "docker"
+    docker_dir.mkdir()
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    docker_log = tmp_path / "docker.log"
+    docker = fakebin / "docker"
+    api_container_id = "aaaaaaaaaaaa"
+    docker.write_text(
+        "#!/bin/bash\n"
+        f'echo "$*" >> "{docker_log}"\n'
+        f'if [ "$1" = "compose" ]; then echo "{api_container_id}"; exit 0; fi\n'
+        'if [ "$1" = "exec" ]; then echo "existing:0"; exit 0; fi\n'
+        "exit 64\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+
+    result = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        export COMPOSE_PROJECT_NAME=legacy-project
+        source "{UPDATE_SH}"
+        INSTALL_DIR="{tmp_path}"
+        DOCKER_DIR="{docker_dir}"
+        COMPOSE_FILE="docker-compose.yml"
+        run_faq_sqlite_migration
+        """,
+        cwd=REPO_ROOT,
+        env={"BISQ_SUPPORT_INSTALL_DIR": str(tmp_path)},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "SQLite already has 0 FAQs" in result.stdout
+    docker_calls = docker_log.read_text(encoding="utf-8")
+    assert "app.scripts.migrate_to_sqlite" not in docker_calls
 
 
 def test_update_migration_guard_aborts_when_faq_count_probe_fails(
@@ -181,10 +400,11 @@ def test_update_migration_guard_aborts_when_faq_count_probe_fails(
     fakebin.mkdir()
     docker_log = tmp_path / "docker.log"
     docker = fakebin / "docker"
+    api_container_id = "bbbbbbbbbbbb"
     docker.write_text(
         "#!/bin/bash\n"
         f'echo "$*" >> "{docker_log}"\n'
-        'if [ "$1" = "ps" ]; then echo "docker-api-1"; exit 0; fi\n'
+        f'if [ "$1" = "compose" ]; then echo "{api_container_id}"; exit 0; fi\n'
         'if [ "$1" = "exec" ]; then exit 70; fi\n'
         "exit 64\n",
         encoding="utf-8",
@@ -194,6 +414,7 @@ def test_update_migration_guard_aborts_when_faq_count_probe_fails(
     result = run_bash(
         f"""
         export PATH="{fakebin}:$PATH"
+        export COMPOSE_PROJECT_NAME=legacy-project
         source "{UPDATE_SH}"
         INSTALL_DIR="{tmp_path}"
         DOCKER_DIR="{docker_dir}"
@@ -206,7 +427,52 @@ def test_update_migration_guard_aborts_when_faq_count_probe_fails(
 
     assert result.returncode != 0
     assert "Could not verify the authoritative FAQ store" in result.stdout
-    assert "app.scripts.migrate_to_sqlite" not in docker_log.read_text(encoding="utf-8")
+    docker_calls = docker_log.read_text(encoding="utf-8")
+    assert f"exec {api_container_id} python -c" in docker_calls
+    assert "app.scripts.migrate_to_sqlite" not in docker_calls
+
+
+def test_update_migration_guard_refuses_stopped_api_without_starting_it(
+    tmp_path: Path,
+) -> None:
+    migration_script = tmp_path / "api" / "app" / "scripts" / "migrate_to_sqlite.py"
+    migration_script.parent.mkdir(parents=True)
+    migration_script.write_text("# synthetic migration marker\n", encoding="utf-8")
+    docker_dir = tmp_path / "docker"
+    docker_dir.mkdir()
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    docker_log = tmp_path / "docker.log"
+    docker = fakebin / "docker"
+    docker.write_text(
+        "#!/bin/bash\n"
+        f'echo "$*" >> "{docker_log}"\n'
+        'if [ "$1" = "compose" ]; then exit 0; fi\n'
+        "exit 64\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+
+    result = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        export COMPOSE_PROJECT_NAME=legacy-project
+        source "{UPDATE_SH}"
+        INSTALL_DIR="{tmp_path}"
+        DOCKER_DIR="{docker_dir}"
+        COMPOSE_FILE="docker-compose.yml"
+        run_faq_sqlite_migration
+        """,
+        cwd=REPO_ROOT,
+        env={"BISQ_SUPPORT_INSTALL_DIR": str(tmp_path)},
+    )
+
+    assert result.returncode != 0
+    assert "refusing to start a stale image" in result.stdout
+    docker_calls = docker_log.read_text(encoding="utf-8")
+    assert "ps --status running -q api" in docker_calls
+    assert "up -d api" not in docker_calls
+    assert "exec " not in docker_calls
 
 
 def test_source_deploy_paths_imports_custom_secrets_directory(tmp_path: Path) -> None:
@@ -290,6 +556,378 @@ def test_compose_helper_preserves_base_only_behavior(tmp_path: Path) -> None:
     assert docker_log.read_text(encoding="utf-8") == (
         "compose -f docker-compose.yml ps api\n"
     )
+
+
+def _write_compose_identity_docker(
+    fakebin: Path, log_path: Path, docker_dir: Path, data_dir: Path
+) -> None:
+    docker = fakebin / "docker"
+    docker.write_text(
+        "#!/bin/bash\n"
+        "set -euo pipefail\n"
+        f'printf \'%s\\n\' "$*" >> "{log_path}"\n'
+        "api_id=0123456789ab\n"
+        "qdrant_id=abcdef012345\n"
+        'canonical_ids="${FAKE_CANONICAL_IDS-$api_id\\\\n$qdrant_id}"\n'
+        'project_ids="${FAKE_PROJECT_IDS-$canonical_ids}"\n'
+        'working_ids="${FAKE_WORKING_IDS-$canonical_ids}"\n'
+        'if [ "$1" = ps ]; then\n'
+        '  if [[ "$*" == *"com.docker.compose.service=api"* ]]; then\n'
+        '    ids="${FAKE_API_IDS-$api_id}"\n'
+        '  elif [[ "$*" == *"com.docker.compose.project="* ]]; then\n'
+        '    ids="$project_ids"\n'
+        "  else\n"
+        '    ids="$working_ids"\n'
+        "  fi\n"
+        '  [ -z "$ids" ] || printf \'%b\\n\' "$ids"\n'
+        "  exit 0\n"
+        "fi\n"
+        'if [ "$1" = compose ]; then\n'
+        '  if [[ "$*" == *"ps --all --orphans=false --no-trunc -q"* ]]; then\n'
+        '    [ -z "$canonical_ids" ] || printf \'%b\\n\' "$canonical_ids"\n'
+        '  elif [[ "$*" == *"ps api"* ]]; then\n'
+        "    printf '%s\\n' \"$api_id\"\n"
+        "  fi\n"
+        "  exit 0\n"
+        "fi\n"
+        'if [ "$1" = inspect ] && [ "$2" = --format ]; then\n'
+        '  container_id="${4:-}"\n'
+        '  state="${FAKE_API_STATE:-running}"\n'
+        f'  working_dir="${{FAKE_WORKING_DIR:-{docker_dir}}}"\n'
+        '  if [[ "$3" == *"com.docker.compose.container-number"* ]]; then\n'
+        "    service=api\n"
+        '    [ "$container_id" = "$qdrant_id" ] && service=qdrant\n'
+        '    printf \'legacy-project|%s|%s|1|False|%s\\n\' "$working_dir" "$service" "$state"\n'
+        "    exit 0\n"
+        "  fi\n"
+        '  if [[ "$3" == *"com.docker.compose.oneoff"* ]] && [[ "$3" == *".State.Status"* ]]; then\n'
+        '    printf \'legacy-project|%s|api|False|%s\\n\' "$working_dir" "$state"\n'
+        "    exit 0\n"
+        "  fi\n"
+        '  if [ "$3" = \'{{index .Config.Labels "com.docker.compose.project"}}\' ]; then\n'
+        "    printf '%s\\n' legacy-project\n"
+        "    exit 0\n"
+        "  fi\n"
+        '  if [[ "$3" == *".Config.Env"* ]]; then\n'
+        "    printf '%b\\n' \"${FAKE_DATA_DIR_ENTRY-DATA_DIR=/data}\"\n"
+        "    exit 0\n"
+        "  fi\n"
+        '  if [[ "$3" == *\'.Destination "/data"\'* ]]; then\n'
+        f'    source="${{FAKE_DATA_SOURCE:-{data_dir}}}"\n'
+        "    printf 'bind|%s\\n' \"$source\"\n"
+        '    if [ "${FAKE_DUPLICATE_DATA_MOUNT:-false}" = true ]; then printf \'bind|%s\\n\' "$source"; fi\n'
+        "    exit 0\n"
+        "  fi\n"
+        '  if [[ "$3" == *"com.docker.compose.service"* ]] && [[ "$3" == *"volume|%s"* ]]; then\n'
+        '    if [ "$container_id" = "$api_id" ]; then\n'
+        f"      printf 'api|/data|bind|%s\\n' \"${{FAKE_DATA_SOURCE:-{data_dir}}}\"\n"
+        f"      if [ \"${{FAKE_LEGACY_SOURCE_BIND:-false}}\" = true ]; then printf 'api|/app/app|bind|%s\\n' '{data_dir.parent}'; fi\n"
+        '    elif [ "$container_id" = "$qdrant_id" ]; then\n'
+        "      printf 'qdrant|/qdrant/storage|volume|%s\\n' \"${FAKE_VOLUME_NAME:-legacy-qdrant-data}\"\n"
+        "      if [ \"${FAKE_DUPLICATE_VOLUME_MOUNT:-false}\" = true ]; then printf 'qdrant|/qdrant/storage|volume|other-data\\n'; fi\n"
+        "    fi\n"
+        "    exit 0\n"
+        "  fi\n"
+        "fi\n"
+        "exit 64\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+
+
+def test_compose_project_pin_reuses_stopped_stack_and_data(tmp_path: Path) -> None:
+    docker_dir = tmp_path / "docker"
+    data_dir = tmp_path / "api" / "data"
+    docker_dir.mkdir()
+    data_dir.mkdir(parents=True)
+    (docker_dir / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    docker_log = tmp_path / "docker.log"
+    _write_compose_identity_docker(fakebin, docker_log, docker_dir, data_dir)
+
+    result = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        unset COMPOSE_PROJECT_NAME BISQ_SUPPORT_COMPOSE_OVERRIDE_FILE
+        export FAKE_API_STATE=exited
+        export FAKE_LEGACY_SOURCE_BIND=true
+        source "{COMMON_SH}"
+        setup_colors
+        pin_existing_compose_project "{docker_dir}" docker-compose.yml existing
+        validate_existing_api_data_identity \
+            "{docker_dir}" docker-compose.yml "{data_dir}" existing
+        capture_compose_persistent_mounts "{docker_dir}" docker-compose.yml
+        run_docker_compose "{docker_dir}" docker-compose.yml ps api
+        printf 'project=%s\n' "$COMPOSE_PROJECT_NAME"
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "project=legacy-project" in result.stdout
+    assert f"api|/data|bind|{data_dir}" in result.stdout
+    assert "qdrant|/qdrant/storage|volume|legacy-qdrant-data" in result.stdout
+    assert "|/app/app|bind|" not in result.stdout
+    docker_calls = docker_log.read_text(encoding="utf-8").splitlines()
+    assert docker_calls[-1] == (
+        "compose --project-name legacy-project -f docker-compose.yml ps api"
+    )
+
+
+def test_compose_project_pin_rejects_ambiguous_existing_stack(tmp_path: Path) -> None:
+    docker_dir = tmp_path / "docker"
+    docker_dir.mkdir()
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    docker = fakebin / "docker"
+    docker.write_text(
+        "#!/bin/bash\n"
+        'if [ "$1" = ps ]; then\n'
+        "  printf '%s\\n' 0123456789ab abcdef012345\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 64\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+
+    result = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        unset COMPOSE_PROJECT_NAME
+        source "{COMMON_SH}"
+        setup_colors
+        pin_existing_compose_project "{docker_dir}" docker-compose.yml existing
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode != 0
+    assert "Exactly one API container" in result.stderr
+
+
+def test_compose_project_running_mode_rejects_stopped_api(tmp_path: Path) -> None:
+    docker_dir = tmp_path / "docker"
+    data_dir = tmp_path / "api" / "data"
+    docker_dir.mkdir()
+    data_dir.mkdir(parents=True)
+    (docker_dir / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    docker_log = tmp_path / "docker.log"
+    _write_compose_identity_docker(fakebin, docker_log, docker_dir, data_dir)
+
+    result = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        export FAKE_API_STATE=exited
+        source "{COMMON_SH}"
+        setup_colors
+        pin_existing_compose_project "{docker_dir}" docker-compose.yml running
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode != 0
+    assert "API container is not running" in result.stderr
+
+
+def test_persisted_project_fallback_rejects_foreign_project_collision(
+    tmp_path: Path,
+) -> None:
+    docker_dir = tmp_path / "docker"
+    data_dir = tmp_path / "api" / "data"
+    docker_dir.mkdir()
+    data_dir.mkdir(parents=True)
+    (docker_dir / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    (docker_dir / ".env").write_text(
+        "COMPOSE_PROJECT_NAME=legacy-project\n", encoding="utf-8"
+    )
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    docker_log = tmp_path / "docker.log"
+    _write_compose_identity_docker(fakebin, docker_log, docker_dir, data_dir)
+
+    result = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        export FAKE_API_IDS=''
+        export FAKE_CANONICAL_IDS=''
+        export FAKE_WORKING_IDS=''
+        export FAKE_PROJECT_IDS=111111111111
+        source "{COMMON_SH}"
+        setup_colors
+        pin_configured_or_existing_compose_project \
+            "{docker_dir}" docker-compose.yml
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode != 0
+    assert "occupied by a different working directory" in result.stderr
+
+
+def test_compose_project_pin_rejects_stale_project_container(tmp_path: Path) -> None:
+    docker_dir = tmp_path / "docker"
+    data_dir = tmp_path / "api" / "data"
+    docker_dir.mkdir()
+    data_dir.mkdir(parents=True)
+    (docker_dir / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    docker_log = tmp_path / "docker.log"
+    _write_compose_identity_docker(fakebin, docker_log, docker_dir, data_dir)
+
+    result = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        export FAKE_PROJECT_IDS='0123456789ab\nabcdef012345\n111111111111'
+        source "{COMMON_SH}"
+        setup_colors
+        pin_existing_compose_project "{docker_dir}" docker-compose.yml existing
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode != 0
+    assert "ambiguous or stale containers" in result.stderr
+
+
+def test_api_data_identity_rejects_duplicate_setting_and_mount(tmp_path: Path) -> None:
+    docker_dir = tmp_path / "docker"
+    data_dir = tmp_path / "api" / "data"
+    docker_dir.mkdir()
+    data_dir.mkdir(parents=True)
+    (docker_dir / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    docker_log = tmp_path / "docker.log"
+    _write_compose_identity_docker(fakebin, docker_log, docker_dir, data_dir)
+
+    duplicate_env = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        export FAKE_DATA_DIR_ENTRY='DATA_DIR=/data\nDATA_DIR=/data'
+        source "{COMMON_SH}"
+        setup_colors
+        pin_existing_compose_project "{docker_dir}" docker-compose.yml existing
+        validate_existing_api_data_identity \
+            "{docker_dir}" docker-compose.yml "{data_dir}" existing
+        """,
+        cwd=REPO_ROOT,
+    )
+    duplicate_mount = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        export FAKE_DUPLICATE_DATA_MOUNT=true
+        source "{COMMON_SH}"
+        setup_colors
+        pin_existing_compose_project "{docker_dir}" docker-compose.yml existing
+        validate_existing_api_data_identity \
+            "{docker_dir}" docker-compose.yml "{data_dir}" existing
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert duplicate_env.returncode != 0
+    assert "exactly DATA_DIR=/data" in duplicate_env.stderr
+    assert duplicate_mount.returncode != 0
+    assert "data mount has invalid identity" in duplicate_mount.stderr
+
+
+def test_compose_mount_capture_rejects_duplicate_logical_mount(tmp_path: Path) -> None:
+    docker_dir = tmp_path / "docker"
+    data_dir = tmp_path / "api" / "data"
+    docker_dir.mkdir()
+    data_dir.mkdir(parents=True)
+    (docker_dir / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    docker_log = tmp_path / "docker.log"
+    _write_compose_identity_docker(fakebin, docker_log, docker_dir, data_dir)
+
+    result = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        export FAKE_DUPLICATE_VOLUME_MOUNT=true
+        source "{COMMON_SH}"
+        setup_colors
+        pin_existing_compose_project "{docker_dir}" docker-compose.yml existing
+        capture_compose_persistent_mounts "{docker_dir}" docker-compose.yml
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode != 0
+    assert "mount identity is duplicated" in result.stderr
+
+
+def test_persisted_compose_project_survives_container_removal(tmp_path: Path) -> None:
+    docker_dir = tmp_path / "docker"
+    data_dir = tmp_path / "api" / "data"
+    docker_dir.mkdir()
+    data_dir.mkdir(parents=True)
+    (docker_dir / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    (docker_dir / ".env").write_text("OPENAI_MODEL=test-model\n", encoding="utf-8")
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    docker_log = tmp_path / "docker.log"
+    _write_compose_identity_docker(fakebin, docker_log, docker_dir, data_dir)
+
+    result = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        source "{COMMON_SH}"
+        setup_colors
+        pin_configured_or_existing_compose_project \
+            "{docker_dir}" docker-compose.yml
+        unset COMPOSE_PROJECT_NAME
+        export FAKE_API_IDS=''
+        export FAKE_CANONICAL_IDS=''
+        export FAKE_PROJECT_IDS=''
+        export FAKE_WORKING_IDS=''
+        pin_configured_or_existing_compose_project \
+            "{docker_dir}" docker-compose.yml
+        printf '%s' "$COMPOSE_PROJECT_NAME"
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert result.stdout.endswith("legacy-project")
+    env_text = (docker_dir / ".env").read_text(encoding="utf-8")
+    assert env_text.count("COMPOSE_PROJECT_NAME=legacy-project") == 1
+
+
+def test_compose_project_pin_rejects_export_form_persisted_override(
+    tmp_path: Path,
+) -> None:
+    docker_dir = tmp_path / "docker"
+    data_dir = tmp_path / "api" / "data"
+    docker_dir.mkdir()
+    data_dir.mkdir(parents=True)
+    (docker_dir / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    (docker_dir / ".env").write_text(
+        "export COMPOSE_PROJECT_NAME=other-project\n", encoding="utf-8"
+    )
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    docker_log = tmp_path / "docker.log"
+    _write_compose_identity_docker(fakebin, docker_log, docker_dir, data_dir)
+
+    result = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        source "{COMMON_SH}"
+        setup_colors
+        pin_existing_compose_project "{docker_dir}" docker-compose.yml existing
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode != 0
+    assert "one canonical assignment" in result.stderr
 
 
 def test_compose_helper_applies_persisted_tls_override(tmp_path: Path) -> None:
@@ -404,6 +1042,37 @@ def test_compose_helper_rejects_stale_tls_inputs_without_override(
 
     assert result.returncode != 0
     assert "conflicts with clearnet TLS settings" in result.stderr
+    assert not docker_log.exists()
+
+
+def test_compose_helper_rejects_export_form_exposure_override(
+    tmp_path: Path,
+) -> None:
+    docker_dir = tmp_path / "docker"
+    docker_dir.mkdir()
+    (docker_dir / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    (docker_dir / ".env").write_text(
+        "NGINX_HTTP_BIND_ADDRESS=127.0.0.1\n"
+        "export NGINX_HTTP_BIND_ADDRESS=0.0.0.0\n",
+        encoding="utf-8",
+    )
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    docker_log = tmp_path / "docker.log"
+    _write_recording_docker(fakebin, docker_log)
+
+    result = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        unset BISQ_SUPPORT_COMPOSE_OVERRIDE_FILE NGINX_HTTP_BIND_ADDRESS
+        source "{COMMON_SH}"
+        run_docker_compose "{docker_dir}" docker-compose.yml up -d nginx
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode != 0
+    assert "one canonical assignment" in result.stderr
     assert not docker_log.exists()
 
 
@@ -896,6 +1565,148 @@ def test_preserve_production_data_command_substitution_returns_empty_without_dat
     assert "Backing up production data files" in result.stderr
     assert "No production data files found to backup" in result.stderr
     assert not list((repo / "api" / "data").glob(".backup_*"))
+
+
+def test_release_update_never_copies_live_runtime_data(tmp_path: Path) -> None:
+    repo = tmp_path / "bisq-support-test"
+    data_dir = repo / "api" / "data"
+    data_dir.mkdir(parents=True)
+    init_git_repo(repo)
+    tracked = repo / "tracked.txt"
+    tracked.write_text("reviewed\n", encoding="utf-8")
+    run_git(repo, "add", "tracked.txt")
+    run_git(repo, "commit", "-m", "base")
+    runtime_file = data_dir / "conversations.jsonl"
+    runtime_file.write_text("live-write\n", encoding="utf-8")
+    copy_marker = tmp_path / "runtime-copy-called"
+
+    result = run_bash(
+        f"""
+        source "{GIT_UTILS_SH}"
+        ensure_repository_update_safe() {{ return 0; }}
+        ensure_release_source_tree_clean() {{ return 0; }}
+        check_local_changes() {{ return 1; }}
+        fetch_remote() {{ return 0; }}
+        reset_to_remote() {{ return 0; }}
+        ensure_runtime_data_git_boundary() {{ return 0; }}
+        preserve_production_data() {{ touch "{copy_marker}"; return 0; }}
+        restore_production_data() {{ touch "{copy_marker}"; return 0; }}
+        set +e
+        update_repository "{repo}" origin main false
+        status=$?
+        set -e
+        [ "$status" -eq 2 ]
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert runtime_file.read_text(encoding="utf-8") == "live-write\n"
+    assert not copy_marker.exists()
+
+
+def test_runtime_data_boundary_rejects_tracked_database(tmp_path: Path) -> None:
+    repo = tmp_path / "bisq-support-test"
+    data_dir = repo / "api" / "data"
+    data_dir.mkdir(parents=True)
+    init_git_repo(repo)
+    database = data_dir / "faqs.db"
+    database.write_bytes(b"fixture")
+    run_git(repo, "add", "-f", "api/data/faqs.db")
+    run_git(repo, "commit", "-m", "track unsafe runtime data")
+
+    result = run_bash(
+        f"""
+        source "{GIT_UTILS_SH}"
+        ensure_runtime_data_git_boundary "{repo}" HEAD
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode != 0
+    assert "must not track production runtime data" in result.stdout
+
+
+def test_runtime_data_boundary_rejects_data_root_replacement(tmp_path: Path) -> None:
+    for replacement_type in ("file", "symlink"):
+        repo = tmp_path / replacement_type
+        data_dir = repo / "api" / "data"
+        data_dir.mkdir(parents=True)
+        init_git_repo(repo)
+        (repo / ".gitignore").write_text("api/data/faqs.db\n", encoding="utf-8")
+        (data_dir / "keep.txt").write_text("reviewed\n", encoding="utf-8")
+        run_git(repo, "add", ".gitignore", "api/data/keep.txt")
+        run_git(repo, "commit", "-m", "base")
+        base_ref = run_git(repo, "rev-parse", "HEAD").stdout.strip()
+
+        run_git(repo, "rm", "-r", "api/data")
+        (repo / "api").mkdir(exist_ok=True)
+        if replacement_type == "file":
+            data_dir.write_text("replacement\n", encoding="utf-8")
+        else:
+            data_dir.symlink_to("replacement")
+        run_git(repo, "add", "-f", "api/data")
+        run_git(repo, "commit", "-m", "replace data root")
+        target_ref = run_git(repo, "rev-parse", "HEAD").stdout.strip()
+
+        run_git(repo, "reset", "--hard", base_ref)
+        database = data_dir / "faqs.db"
+        database.write_bytes(b"live database")
+        result = run_bash(
+            f"""
+            source "{GIT_UTILS_SH}"
+            boundary_status=0
+            ensure_runtime_data_git_boundary "{repo}" "{target_ref}" || boundary_status=$?
+            if [ "$boundary_status" -eq 0 ]; then
+                git -C "{repo}" reset --hard "{target_ref}"
+            fi
+            exit "$boundary_status"
+            """,
+            cwd=REPO_ROOT,
+        )
+
+        assert result.returncode != 0
+        assert database.read_bytes() == b"live database"
+
+
+def test_runtime_data_boundary_rejects_content_below_database(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "bisq-support-test"
+    data_dir = repo / "api" / "data"
+    data_dir.mkdir(parents=True)
+    init_git_repo(repo)
+    (repo / ".gitignore").write_text("api/data/faqs.db\n", encoding="utf-8")
+    (data_dir / "keep.txt").write_text("reviewed\n", encoding="utf-8")
+    run_git(repo, "add", ".gitignore", "api/data/keep.txt")
+    run_git(repo, "commit", "-m", "base")
+    base_ref = run_git(repo, "rev-parse", "HEAD").stdout.strip()
+
+    database_dir = data_dir / "faqs.db"
+    database_dir.mkdir()
+    (database_dir / "child").write_text("replacement\n", encoding="utf-8")
+    run_git(repo, "add", "-f", "api/data/faqs.db/child")
+    run_git(repo, "commit", "-m", "nest content below database")
+    target_ref = run_git(repo, "rev-parse", "HEAD").stdout.strip()
+
+    run_git(repo, "reset", "--hard", base_ref)
+    database = data_dir / "faqs.db"
+    database.write_bytes(b"live database")
+    result = run_bash(
+        f"""
+        source "{GIT_UTILS_SH}"
+        boundary_status=0
+        ensure_runtime_data_git_boundary "{repo}" "{target_ref}" || boundary_status=$?
+        if [ "$boundary_status" -eq 0 ]; then
+            git -C "{repo}" reset --hard "{target_ref}"
+        fi
+        exit "$boundary_status"
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode != 0
+    assert database.read_bytes() == b"live database"
 
 
 def test_update_repository_aborts_before_git_work_when_preservation_fails(

@@ -323,6 +323,20 @@ def test_alert_delivery_drill_confirms_receiver_success(tmp_path: Path) -> None:
         'printf \'%s\\n\' "$*" >> "$DRILL_TEST_CALL_LOG"\n'
         'case "$*" in\n'
         '  info|"compose version") exit 0 ;;\n'
+        "  ps\\ --all*) printf '%s\\n' aaaaaaaaaaaa; exit 0 ;;\n"
+        '  *"inspect --format"*"container-number"*)\n'
+        "    printf 'drilltest|%s|api|1|false|running\\n' \"$DRILL_TEST_DOCKER_DIR\"\n"
+        "    exit 0\n"
+        "    ;;\n"
+        '  *"inspect --format"*"project.working_dir"*)\n'
+        "    printf 'drilltest|%s|api|false|running\\n' \"$DRILL_TEST_DOCKER_DIR\"\n"
+        "    exit 0\n"
+        "    ;;\n"
+        "  *\"inspect --format\"*) printf 'drilltest\\n'; exit 0 ;;\n"
+        '  *" ps --all --orphans=false "*)\n'
+        "    printf 'aaaaaaaaaaaa\\n'\n"
+        "    exit 0\n"
+        "    ;;\n"
         '  *"/metrics"*)\n'
         '    state=$(cat "$DRILL_TEST_STATE")\n'
         "    printf '%s\\n' \\\n"
@@ -346,6 +360,7 @@ def test_alert_delivery_drill_confirms_receiver_success(tmp_path: Path) -> None:
         "PATH": f"{fakebin}{os.pathsep}{os.environ['PATH']}",
         "DRILL_TEST_CALL_LOG": str(call_log),
         "DRILL_TEST_STATE": str(state_file),
+        "DRILL_TEST_DOCKER_DIR": str(REPO_ROOT / "docker"),
         "DRILL_TIMEOUT_SECONDS": "10",
     }
 

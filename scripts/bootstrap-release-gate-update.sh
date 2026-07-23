@@ -17,6 +17,9 @@ PINNED_BRANCH="candidate"
 HANDOFF_STARTED=false
 UPDATE_COMPLETED=false
 PRODUCTION_HEAD=""
+ACTIVE_COMPOSE_PROJECT=""
+ACTIVE_API_DATA_SOURCE=""
+ACTIVE_PERSISTENT_MOUNTS=""
 
 usage() {
     cat <<'EOF'
@@ -147,7 +150,7 @@ if [[ ! "$RELEASE_COMMIT" =~ ^[0-9a-f]{40,64}$ ]]; then
     fail "--commit must be a full Git object ID"
 fi
 
-for command_name in awk curl git jq tr; do
+for command_name in awk cp curl docker flock git grep jq mktemp mv rm sort tr; do
     command -v "$command_name" >/dev/null 2>&1 \
         || fail "required command is unavailable: $command_name"
 done
@@ -243,21 +246,38 @@ fi
 
 require_explicit_false() {
     local setting="$1"
-    local count
-    local value
+    local assignment_state=""
+    local assignment_count=""
+    local canonical_count=""
+    local value=""
+    local extra_state=""
 
-    count=$(awk -v key="$setting" '
-        index($0, key "=") == 1 { count++ }
-        END { print count + 0 }
-    ' "$MODEL_ENV_FILE")
-    [ "$count" -eq 1 ] \
-        || fail "$setting must appear exactly once in protected configuration"
-    value=$(awk -v key="$setting" '
-        index($0, key "=") == 1 {
-            print substr($0, length(key) + 2)
-            exit
+    assignment_state=$(awk -v key="$setting" '
+        {
+            raw = $0
+            normalized = $0
+            sub(/^[[:space:]]+/, "", normalized)
+            if (normalized ~ /^export[[:space:]]+/) {
+                sub(/^export[[:space:]]+/, "", normalized)
+            }
+            if (normalized ~ ("^" key "([[:space:]]*=|[[:space:]]*$)")) {
+                assignments++
+                if (index(raw, key "=") == 1) {
+                    canonical++
+                    value = substr(raw, length(key) + 2)
+                }
+            }
         }
-    ' "$MODEL_ENV_FILE")
+        END {
+            printf "%d|%d|%s\n", assignments + 0, canonical + 0, value
+        }
+    ' "$MODEL_ENV_FILE") || fail "$setting could not be parsed"
+    IFS='|' read -r assignment_count canonical_count value extra_state \
+        <<< "$assignment_state"
+    [ "$assignment_count" -eq 1 ] \
+        && [ "$canonical_count" -eq 1 ] \
+        && [ -z "$extra_state" ] \
+        || fail "$setting must use one canonical protected assignment"
     [ "$value" = false ] \
         || fail "$setting must remain false for production testing"
 }
@@ -271,6 +291,39 @@ for dark_setting in \
     ESCALATION_BISQ2_WS_ENABLED; do
     require_explicit_false "$dark_setting"
 done
+require_explicit_false COOKIE_SECURE
+
+require_compose_control_absent() {
+    local setting="$1"
+    local assignment_count=""
+
+    assignment_count=$(awk -v key="$setting" '
+        {
+            normalized = $0
+            sub(/^[[:space:]]+/, "", normalized)
+            if (normalized ~ /^export[[:space:]]+/) {
+                sub(/^export[[:space:]]+/, "", normalized)
+            }
+            if (normalized ~ ("^" key "([[:space:]]*=|[[:space:]]*$)")) {
+                assignments++
+            }
+        }
+        END { print assignments + 0 }
+    ' "$MODEL_ENV_FILE") || fail "$setting could not be inspected"
+    [ "$assignment_count" -eq 0 ] \
+        || fail "$setting must be absent from protected Compose configuration"
+}
+
+for compose_control in \
+    COMPOSE_ENV_FILES \
+    COMPOSE_DISABLE_ENV_FILE \
+    COMPOSE_FILE \
+    COMPOSE_PATH_SEPARATOR \
+    COMPOSE_PROFILES \
+    DOCKER_HOST \
+    DOCKER_CONTEXT; do
+    require_compose_control_absent "$compose_control"
+done
 
 # Docker Compose gives exported shell variables precedence over docker/.env.
 # Reject these critical overrides instead of silently evaluating one value and
@@ -283,6 +336,14 @@ for protected_setting in \
     BISQ2_CHANNEL_ENABLED \
     BISQ2_CHATOPS_ENABLED \
     ESCALATION_BISQ2_WS_ENABLED \
+    COOKIE_SECURE \
+    NGINX_HTTP_BIND_ADDRESS \
+    NGINX_HTTPS_BIND_ADDRESS \
+    NGINX_TLS_CERTIFICATE_DIR \
+    NGINX_TLS_CERTIFICATE_FILENAME \
+    NGINX_TLS_PRIVATE_KEY_FILENAME \
+    NGINX_TLS_REDIRECT_HTTP \
+    BISQ_SUPPORT_COMPOSE_OVERRIDE_FILE \
     COMPOSE_ENV_FILES \
     COMPOSE_DISABLE_ENV_FILE \
     COMPOSE_FILE \
@@ -290,7 +351,8 @@ for protected_setting in \
     COMPOSE_PROJECT_NAME \
     COMPOSE_PROFILES \
     DOCKER_HOST \
-    DOCKER_CONTEXT; do
+    DOCKER_CONTEXT \
+    BISQ_SUPPORT_LIFECYCLE_LOCK_FD; do
     if printenv "$protected_setting" >/dev/null 2>&1; then
         fail "$protected_setting must not be exported by the operator shell"
     fi
@@ -298,12 +360,39 @@ done
 
 CANDIDATE_VERIFIER="$CANDIDATE_REPOSITORY/scripts/verify-release-ai-quality-gate.sh"
 CANDIDATE_UPDATER="$CANDIDATE_REPOSITORY/scripts/update.sh"
+CANDIDATE_COMMON="$CANDIDATE_REPOSITORY/scripts/lib/common.sh"
 if [ ! -f "$CANDIDATE_VERIFIER" ] || [ -L "$CANDIDATE_VERIFIER" ]; then
     fail "candidate release verifier is unavailable"
 fi
 if [ ! -f "$CANDIDATE_UPDATER" ] || [ -L "$CANDIDATE_UPDATER" ]; then
     fail "candidate updater is unavailable"
 fi
+if [ ! -f "$CANDIDATE_COMMON" ] || [ -L "$CANDIDATE_COMMON" ]; then
+    fail "candidate production helper library is unavailable"
+fi
+
+# Resolve the live project from Docker's labels, never from a caller-provided
+# name. This permits an existing non-default project while preventing Compose
+# from creating a parallel empty stack during the handoff.
+# shellcheck disable=SC1090
+source "$CANDIDATE_COMMON"
+setup_colors
+acquire_production_lifecycle_lock "$PRODUCTION_REPOSITORY" \
+    || fail "another production lifecycle operation is active"
+pin_existing_compose_project \
+    "$PRODUCTION_REPOSITORY/docker" docker-compose.yml running \
+    || fail "existing production Compose project could not be pinned"
+ACTIVE_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME"
+ACTIVE_API_DATA_SOURCE=$(
+    cd "$PRODUCTION_REPOSITORY/api/data" 2>/dev/null && pwd -P
+) || fail "existing production application data directory is unavailable"
+validate_existing_api_data_identity \
+    "$PRODUCTION_REPOSITORY/docker" docker-compose.yml \
+    "$ACTIVE_API_DATA_SOURCE" running \
+    || fail "existing production API data identity is invalid"
+ACTIVE_PERSISTENT_MOUNTS=$(capture_compose_persistent_mounts \
+    "$PRODUCTION_REPOSITORY/docker" docker-compose.yml) \
+    || fail "existing production persistent mount identity is unavailable"
 
 echo "Verifying release evidence for exact commit $RELEASE_COMMIT..."
 if ! bash "$CANDIDATE_VERIFIER" \
@@ -332,6 +421,7 @@ echo "Release evidence verified; handing off to the candidate updater."
 export BISQ_SUPPORT_INSTALL_DIR="$PRODUCTION_REPOSITORY"
 export GIT_REMOTE="$TRANSITION_REMOTE"
 export GIT_BRANCH="$PINNED_BRANCH"
+export COMPOSE_PROJECT_NAME="$ACTIVE_COMPOSE_PROJECT"
 unset INSTALL_DIR DOCKER_DIR COMPOSE_FILE
 
 # shellcheck disable=SC1090
@@ -345,8 +435,49 @@ RESOLVED_DOCKER_DIR="$(cd "$DOCKER_DIR" 2>/dev/null && pwd -P)" \
     || fail "candidate updater resolved a different installation checkout"
 [ "$RESOLVED_DOCKER_DIR" = "$PRODUCTION_REPOSITORY/docker" ] \
     || fail "candidate updater resolved a different Docker directory"
+if [ -n "${BISQ_SUPPORT_COMPOSE_OVERRIDE_FILE:-}" ]; then
+    fail "production testing requires base Compose mode without a TLS overlay"
+fi
+validate_base_compose_exposure "$DOCKER_DIR" \
+    || fail "candidate base HTTP exposure is not loopback-only"
+
+# Preserve the label-derived project across a later `docker compose down`.
+# Docker Compose reads this protected project .env automatically, so future
+# start/stop/recovery commands cannot fall back to a parallel default project.
+persist_compose_project_name "$PRODUCTION_REPOSITORY/docker" \
+    || fail "existing production Compose project could not be persisted"
 
 HANDOFF_STARTED=true
 main
+pin_existing_compose_project \
+    "$PRODUCTION_REPOSITORY/docker" docker-compose.yml running \
+    || fail "production Compose project identity changed during transition"
+validate_existing_api_data_identity \
+    "$PRODUCTION_REPOSITORY/docker" docker-compose.yml \
+    "$ACTIVE_API_DATA_SOURCE" running \
+    || fail "production API data identity changed during transition"
+UPDATED_PERSISTENT_MOUNTS=$(capture_compose_persistent_mounts \
+    "$PRODUCTION_REPOSITORY/docker" docker-compose.yml) \
+    || fail "production persistent mount identity is unavailable after transition"
+validate_compose_loopback_http_binding \
+    "$PRODUCTION_REPOSITORY/docker" docker-compose.yml \
+    || fail "production HTTP listener is not loopback-only after transition"
+validate_api_runtime_false_settings \
+    "$PRODUCTION_REPOSITORY/docker" \
+    AUTONOMOUS_DELIVERY_ENABLED \
+    MATRIX_SYNC_ENABLED \
+    MATRIX_CHATOPS_ENABLED \
+    BISQ2_CHANNEL_ENABLED \
+    BISQ2_CHATOPS_ENABLED \
+    ESCALATION_BISQ2_WS_ENABLED \
+    || fail "production response channels are not dark after transition"
+validate_api_http_cookie_mode \
+    "$PRODUCTION_REPOSITORY/docker" \
+    || fail "production API cookie mode is unsafe for temporary HTTP testing"
+while IFS= read -r mount_identity; do
+    [ -n "$mount_identity" ] || continue
+    grep -Fqx -- "$mount_identity" <<< "$UPDATED_PERSISTENT_MOUNTS" \
+        || fail "production persistent mount identity changed during transition"
+done <<< "$ACTIVE_PERSISTENT_MOUNTS"
 UPDATE_COMPLETED=true
 echo "Production transition completed at exact commit $RELEASE_COMMIT."

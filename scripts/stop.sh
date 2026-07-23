@@ -20,6 +20,11 @@ setup_colors
 source_deploy_paths "/etc/bisq-support/deploy.env" || true
 # --- End Source Environment Configuration --- #
 
+acquire_production_lifecycle_lock "$PROJECT_ROOT" || exit 1
+pin_existing_compose_project \
+    "$DOCKER_DIR" "$COMPOSE_FILE" existing || exit 1
+persist_compose_project_name "$DOCKER_DIR" || exit 1
+
 # Navigate to the Docker directory
 cd "$DOCKER_DIR" || {
     echo "Error: Failed to change to Docker directory: $DOCKER_DIR"
