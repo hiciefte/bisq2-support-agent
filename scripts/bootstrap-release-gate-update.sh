@@ -274,10 +274,11 @@ require_explicit_false() {
     ' "$MODEL_ENV_FILE") || fail "$setting could not be parsed"
     IFS='|' read -r assignment_count canonical_count value extra_state \
         <<< "$assignment_state"
-    [ "$assignment_count" -eq 1 ] \
-        && [ "$canonical_count" -eq 1 ] \
-        && [ -z "$extra_state" ] \
-        || fail "$setting must use one canonical protected assignment"
+    if [ "$assignment_count" -ne 1 ] \
+        || [ "$canonical_count" -ne 1 ] \
+        || [ -n "$extra_state" ]; then
+        fail "$setting must use one canonical protected assignment"
+    fi
     [ "$value" = false ] \
         || fail "$setting must remain false for production testing"
 }
