@@ -255,7 +255,13 @@ def test_transition_runbook_proves_private_access_and_exact_build() -> None:
 
     assert "${EXTERNAL_HTTP_URL:?" in runbook
     assert '"$EXTERNAL_HTTP_URL"' in runbook
-    assert "7|28)" in runbook
+    assert "  7)" in runbook
+    assert "7|28)" not in runbook
+    assert (
+        "  28)\n"
+        "    echo 'External HTTP probe timed out; ingress closure is unproven' >&2\n"
+        "    exit 1"
+    ) in runbook
     assert "failed unexpectedly" in runbook
     assert '"$SSH_TARGET"' in runbook
     assert "/admin" in runbook
@@ -473,6 +479,17 @@ def test_update_migration_guard_refuses_stopped_api_without_starting_it(
     assert "ps --status running -q api" in docker_calls
     assert "up -d api" not in docker_calls
     assert "exec " not in docker_calls
+
+
+def test_update_migration_logs_use_unique_private_temp_files() -> None:
+    update_script = UPDATE_SH.read_text(encoding="utf-8")
+
+    assert 'mktemp "/tmp/bisq-support-migration-dryrun.XXXXXXXX"' in update_script
+    assert 'mktemp "/tmp/bisq-support-migration.XXXXXXXX"' in update_script
+    assert 'tee "$dryrun_log"' in update_script
+    assert 'tee "$migration_log"' in update_script
+    assert "tee /tmp/migration" not in update_script
+    assert 'rm -f -- "$dryrun_log" "$migration_log"' in update_script
 
 
 def test_source_deploy_paths_imports_custom_secrets_directory(tmp_path: Path) -> None:

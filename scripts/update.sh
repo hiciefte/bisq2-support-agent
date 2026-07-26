@@ -664,22 +664,35 @@ else:
     log_info "SQLite DB is absent - running initial migration from JSONL..."
 
     # Run migration in dry-run mode first
+    local dryrun_log=""
+    local migration_log=""
+    if ! dryrun_log=$(mktemp "/tmp/bisq-support-migration-dryrun.XXXXXXXX"); then
+        log_error "Could not create a private migration dry-run log"
+        return 1
+    fi
     log_info "Running SQLite migration dry-run..."
-    if docker exec "$api_container_id" python -m app.scripts.migrate_to_sqlite --dry-run 2>&1 | tee /tmp/migration_dryrun.log; then
+    if docker exec "$api_container_id" python -m app.scripts.migrate_to_sqlite --dry-run 2>&1 | tee "$dryrun_log"; then
         log_success "Dry-run completed successfully"
 
         # Run actual migration
+        if ! migration_log=$(mktemp "/tmp/bisq-support-migration.XXXXXXXX"); then
+            rm -f -- "$dryrun_log"
+            log_error "Could not create a private migration log"
+            return 1
+        fi
         log_info "Running SQLite migration..."
-        if docker exec "$api_container_id" python -m app.scripts.migrate_to_sqlite 2>&1 | tee /tmp/migration.log; then
+        if docker exec "$api_container_id" python -m app.scripts.migrate_to_sqlite 2>&1 | tee "$migration_log"; then
+            rm -f -- "$dryrun_log" "$migration_log"
             log_success "SQLite migration completed successfully"
             return 0
         else
-            log_error "SQLite migration failed - check /tmp/migration.log for details"
+            rm -f -- "$dryrun_log"
+            log_error "SQLite migration failed - check $migration_log for details"
             return 1
         fi
     else
         log_error "SQLite migration dry-run failed - aborting migration"
-        log_info "Check /tmp/migration_dryrun.log for details"
+        log_info "Check $dryrun_log for details"
         return 1
     fi
 }

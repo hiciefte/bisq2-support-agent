@@ -201,8 +201,9 @@ production loopback listener. Store the SSH target and ports in the operator
 shell, not in this repository.
 
 Before staging, verify the closed firewall from an independent external
-network. Keep the reviewed URL only in that operator shell; a successful HTTP
-connection is a hard stop:
+network. Keep the reviewed URL only in that operator shell. A successful HTTP
+connection is a hard stop, and only an immediate connection failure (curl exit
+7) proves closure. A timeout is inconclusive and also stops staging:
 
 ```bash
 : "${EXTERNAL_HTTP_URL:?Set the reviewed external HTTP probe URL}"
@@ -214,8 +215,12 @@ case "$external_probe_result" in
     echo 'External HTTP ingress is still reachable' >&2
     exit 1
     ;;
-  7|28)
+  7)
     echo 'External HTTP ingress is closed'
+    ;;
+  28)
+    echo 'External HTTP probe timed out; ingress closure is unproven' >&2
+    exit 1
     ;;
   *)
     echo "External HTTP probe failed unexpectedly (curl exit ${external_probe_result})" >&2
