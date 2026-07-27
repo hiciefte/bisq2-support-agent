@@ -268,6 +268,7 @@ def test_transition_runbook_proves_private_access_and_exact_build() -> None:
     assert 'EXPECTED_BUILD_ID="build-$(git -C' in runbook
     assert "rev-parse --short" in runbook
     assert "'.build_id'" in runbook
+    assert "`BISQ_SUPPORT_LIFECYCLE_LOCK_FD`" in runbook
 
 
 def test_production_lifecycle_lock_is_reentrant_in_one_process(

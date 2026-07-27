@@ -167,7 +167,8 @@ names plus `COOKIE_SECURE`, `OPENAI_MODEL`,
 `NGINX_TLS_CERTIFICATE_FILENAME`, `NGINX_TLS_PRIVATE_KEY_FILENAME`, and
 `NGINX_TLS_REDIRECT_HTTP`. Also unset `COMPOSE_ENV_FILES`,
 `COMPOSE_DISABLE_ENV_FILE`, `COMPOSE_FILE`, `COMPOSE_PATH_SEPARATOR`,
-`COMPOSE_PROJECT_NAME`, `COMPOSE_PROFILES`, `DOCKER_HOST`, and `DOCKER_CONTEXT`.
+`COMPOSE_PROJECT_NAME`, `COMPOSE_PROFILES`, `DOCKER_HOST`, `DOCKER_CONTEXT`, and
+`BISQ_SUPPORT_LIFECYCLE_LOCK_FD`.
 The bootstrap rejects all of these exported overrides because they could replace
 the verified environment, Compose project, service selection, or Docker daemon.
 
