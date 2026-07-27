@@ -319,7 +319,6 @@ services:
       - DATA_RETENTION_DAYS=${DATA_RETENTION_DAYS:-30}
       - NODE_ENV=production
       - NEXT_TELEMETRY_DISABLED=1
-    command: npm run start
     depends_on:
       api:
         condition: service_healthy

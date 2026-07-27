@@ -98,6 +98,7 @@ def test_web_image_contains_only_pinned_fixed_runtime_dependencies() -> None:
     dockerfile = (REPO_ROOT / "docker" / "web" / "Dockerfile").read_text(
         encoding="utf-8"
     )
+    compose_web = _load_yaml(COMPOSE_PATH)["services"]["web"]
     builder, runtime = dockerfile.split("# Stage 2: Runtime", maxsplit=1)
 
     assert "RUN npm run build" in builder
@@ -112,6 +113,7 @@ def test_web_image_contains_only_pinned_fixed_runtime_dependencies() -> None:
     assert "rm -f /usr/local/bin/npm /usr/local/bin/npx" in runtime
     assert "npm install --global" not in runtime
     assert 'CMD ["node", "node_modules/next/dist/bin/next", "start"]' in runtime
+    assert "command" not in compose_web
 
 
 def test_bisq_build_fetches_and_verifies_a_full_commit() -> None:
