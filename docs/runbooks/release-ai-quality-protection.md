@@ -4,21 +4,31 @@ This is a human-run repository-administration procedure. It creates no
 deployment and must be completed before the release workflow is allowed to use
 provider or marker credentials.
 
-## Identities to choose
+## Identities and marker App
 
-Choose three identities and record only their numeric account IDs while running
-this procedure:
+Choose two human identities and record only their numeric account IDs while
+running this procedure:
 
-- one trusted human environment reviewer;
+- one trusted environment reviewer; and
 - one release manager allowed to create or delete `release/*` branches and
-  `v*` tags; and
-- one dedicated marker identity whose fine-grained token can write repository
-  contents and nothing else.
+  `v*` tags.
 
-The marker identity must not be a general developer account. Its token belongs
-only in the protected `release-ai-quality` environment. Do not use the default
-workflow token as the marker credential because any repository workflow would
-share that application identity.
+Create a dedicated GitHub App for quality-marker lifecycle operations. Configure
+it with all of these restrictions:
+
+- install it on this repository only, using selected-repository access;
+- grant only repository `Contents: Read and write` (implicit metadata read is
+  expected);
+- grant no organization or account permissions;
+- disable webhooks and subscribe to no events; and
+- generate a private key only for the protected environment secret described
+  below.
+
+Record the App's numeric App ID separately from its public client ID. The
+ruleset uses the numeric App ID as an `Integration` actor. The workflow uses the
+client ID and private key to mint a short-lived installation token for the
+current repository. Do not use a personal access token or the default workflow
+token as the marker credential.
 
 ## Render the reviewed payloads
 
@@ -32,7 +42,7 @@ REPOSITORY="$(gh repo view --json name --jq '.name')"
 ENVIRONMENT="release-ai-quality"
 ENVIRONMENT_REVIEWER_ID=""
 RELEASE_MANAGER_ID=""
-MARKER_IDENTITY_ID=""
+MARKER_APP_ID=""
 
 if ! [[ "$ENVIRONMENT_REVIEWER_ID" =~ ^[1-9][0-9]*$ ]]; then
   echo "Invalid ENVIRONMENT_REVIEWER_ID" >&2
@@ -42,8 +52,8 @@ if ! [[ "$RELEASE_MANAGER_ID" =~ ^[1-9][0-9]*$ ]]; then
   echo "Invalid RELEASE_MANAGER_ID" >&2
   exit 1
 fi
-if ! [[ "$MARKER_IDENTITY_ID" =~ ^[1-9][0-9]*$ ]]; then
-  echo "Invalid MARKER_IDENTITY_ID" >&2
+if ! [[ "$MARKER_APP_ID" =~ ^[1-9][0-9]*$ ]]; then
+  echo "Invalid MARKER_APP_ID" >&2
   exit 1
 fi
 
@@ -64,7 +74,7 @@ jq --argjson id "$RELEASE_MANAGER_ID" \
   '.bypass_actors[0].actor_id = $id' \
   docs/runbooks/release-ai-quality-version-tags.json \
   > "$WORK_DIR/version-tags.json"
-jq --argjson id "$MARKER_IDENTITY_ID" \
+jq --argjson id "$MARKER_APP_ID" \
   '.bypass_actors[0].actor_id = $id' \
   docs/runbooks/release-ai-quality-marker-tags.json \
   > "$WORK_DIR/marker-tags.json"
@@ -103,18 +113,26 @@ gh api --method POST \
 ```
 
 Store both credentials interactively in the environment. Never define either
-name as a repository or organization secret.
+secret name as a repository or organization secret, and never pass a secret
+value on a command line.
 
 ```bash
 gh secret set AI_QUALITY_GATE_OPENAI_API_KEY --env "$ENVIRONMENT"
-gh secret set AI_QUALITY_GATE_MARKER_TOKEN --env "$ENVIRONMENT"
+gh secret set AI_QUALITY_GATE_MARKER_APP_PRIVATE_KEY --env "$ENVIRONMENT"
 ```
 
-Set the non-secret model identity to the exact intended production model:
+Set the App client ID as a non-secret environment variable. Set the model
+identity to the exact intended production model as a repository variable:
 
 ```bash
+gh variable set AI_QUALITY_GATE_MARKER_APP_CLIENT_ID --env "$ENVIRONMENT"
 gh variable set AI_QUALITY_GATE_OPENAI_MODEL
 ```
+
+The App action deliberately omits `owner` and `repositories`, which scopes each
+installation token to the current repository. It requests only `contents:
+write`, leaves the job's default workflow token read-only, and revokes the
+installation token at the end of each marker job.
 
 ## Apply the ref rulesets
 
@@ -139,7 +157,7 @@ gh api --method POST \
 
 These rules make release-branch changes review-only, limit release branch and
 version-tag lifecycle operations to the release manager, and limit quality
-marker creation, movement, and deletion to the dedicated marker identity.
+marker creation, movement, and deletion to the dedicated GitHub App.
 
 ## Verify before first use
 
@@ -154,7 +172,14 @@ gh api --paginate \
 gh api --paginate "repos/${OWNER}/${REPOSITORY}/rulesets"
 gh secret list --env "$ENVIRONMENT"
 gh variable list
+gh variable list --env "$ENVIRONMENT"
 ```
+
+Inspect the marker ruleset and require the bypass actor to be `Integration`,
+with the exact numeric App ID and `always` bypass mode. In the GitHub App
+settings, confirm the installation still selects only this repository, the only
+nonimplicit permission is repository Contents read/write, and no webhook or
+event subscription has been added.
 
 Finally, run the workflow from a reviewed `release/*` branch. Confirm the
 environment requires approval, the sanitized artifact passes review, and the
@@ -164,3 +189,8 @@ failed test run. It must also reject tracked or nonignored untracked source
 changes. A version tag for another commit or model must fail its
 marker-verification job. Do not enable any response channel while performing
 this validation.
+
+The temporary single-human exception is a separate, explicitly non-launch-ready
+profile. Use `single-operator-production-testing.md` only for private
+production testing, and restore this canonical protection before public launch
+or autoresponse testing.

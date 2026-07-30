@@ -1,6 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+# shellcheck disable=SC1091
+source "$script_dir/lib/common.sh"
+setup_colors
+source_deploy_paths "/etc/bisq-support/deploy.env" || true
+
 dry_run=false
 if [ "${1:-}" = "--dry-run" ]; then
     dry_run=true
@@ -9,15 +15,16 @@ elif [ "$#" -gt 0 ]; then
     exit 2
 fi
 
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-compose=(
-    docker compose
-    --project-directory "$repo_root"
-    -f "$repo_root/docker/docker-compose.yml"
-)
+repo_root=$(cd "$script_dir/.." && pwd)
+docker_dir="$repo_root/docker"
+compose_file="docker-compose.yml"
+acquire_production_lifecycle_lock "$repo_root"
+pin_existing_compose_project \
+    "$docker_dir" "$compose_file" existing
 command=(/scripts/privacy-retention.sh)
 if [ "$dry_run" = true ]; then
     command+=(--dry-run)
 fi
 
-exec "${compose[@]}" exec -T scheduler "${command[@]}"
+run_docker_compose "$docker_dir" "$compose_file" \
+    exec -T scheduler "${command[@]}"

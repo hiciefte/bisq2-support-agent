@@ -49,7 +49,8 @@ WORKDIR /app
 RUN apk add --no-cache \
   libcrypto3=3.5.7-r0 \
   libssl3=3.5.7-r0 && \
-  npm install --global npm@11.18.0
+  rm -rf /usr/local/lib/node_modules/npm && \
+  rm -f /usr/local/bin/npm /usr/local/bin/npx
 
 # Copy built application, node_modules and next.config.js
 COPY --from=builder /build/.next ./.next
@@ -68,4 +69,4 @@ ENV PORT=3000
 EXPOSE 3000
 
 # Run the application
-CMD ["npm", "run", "start"]
+CMD ["node", "node_modules/next/dist/bin/next", "start"]

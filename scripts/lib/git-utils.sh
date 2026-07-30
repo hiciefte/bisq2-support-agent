@@ -408,6 +408,134 @@ restore_production_data() {
     fi
 }
 
+ensure_runtime_data_git_boundary() {
+    local repo_dir="$1"
+    local ref="$2"
+    local current_type=""
+    local entry=""
+    local local_type=""
+    local metadata=""
+    local mode=""
+    local path=""
+    local tree_paths=""
+    local target_type=""
+    local status=0
+    local saw_data_root=false
+
+    if ! git -C "$repo_dir" rev-parse --verify "$ref^{commit}" >/dev/null 2>&1; then
+        log_error "Release data boundary reference is invalid"
+        return 1
+    fi
+    if ! git -C "$repo_dir" rev-parse --verify "HEAD^{commit}" >/dev/null 2>&1; then
+        log_error "Current release data boundary reference is invalid"
+        return 1
+    fi
+    tree_paths=$(mktemp "${TMPDIR:-/tmp}/release-data-boundary.XXXXXXXX") || {
+        log_error "Could not stage the release data boundary check"
+        return 1
+    }
+    if ! git -C "$repo_dir" ls-tree -rzt \
+        "$ref" -- api/data > "$tree_paths"; then
+        rm -f -- "$tree_paths"
+        log_error "Could not inspect the release data boundary"
+        return 1
+    fi
+    while IFS= read -r -d '' entry; do
+        metadata=${entry%%$'\t'*}
+        path=${entry#*$'\t'}
+        mode=${metadata%% *}
+        metadata=${metadata#* }
+        target_type=${metadata%% *}
+
+        case "$path" in
+            api/data)
+                saw_data_root=true
+                ;;
+            api/data/*)
+                ;;
+            *)
+                continue
+                ;;
+        esac
+
+        if [ "$path" = "api/data" ] && [ "$target_type" != "tree" ]; then
+            log_error "Release commit replaces the production data directory"
+            status=1
+            break
+        fi
+        case "$path" in
+            api/data/*.db|api/data/*.db/*|\
+                api/data/*.db-wal|api/data/*.db-wal/*|\
+                api/data/*.db-shm|api/data/*.db-shm/*|\
+                api/data/*.db-journal|api/data/*.db-journal/*|\
+                api/data/conversations.jsonl|api/data/conversations.jsonl/*|\
+                api/data/processed_message_ids.jsonl|\
+                api/data/processed_message_ids.jsonl/*)
+                log_error "Release commit must not track production runtime data"
+                status=1
+                break
+                ;;
+        esac
+
+        if [ "$mode" = "120000" ]; then
+            log_error "Release commit must not link through the production data directory"
+            status=1
+            break
+        fi
+        case "$target_type:$mode" in
+            tree:040000|blob:100644|blob:100755)
+                ;;
+            *)
+                log_error "Release commit has an unsupported production data entry"
+                status=1
+                break
+                ;;
+        esac
+
+        current_type=""
+        current_type=$(git -C "$repo_dir" cat-file -t "HEAD:$path" 2>/dev/null || true)
+        if [ -n "$current_type" ] && [ "$current_type" != "$target_type" ]; then
+            log_error "Release commit changes a production data path type"
+            status=1
+            break
+        fi
+
+        local_type="missing"
+        if [ -L "$repo_dir/$path" ]; then
+            local_type="symlink"
+        elif [ -d "$repo_dir/$path" ]; then
+            local_type="tree"
+        elif [ -f "$repo_dir/$path" ]; then
+            local_type="blob"
+        elif [ -e "$repo_dir/$path" ]; then
+            local_type="other"
+        fi
+        if [ "$local_type" != "missing" ] && [ "$local_type" != "$target_type" ]; then
+            log_error "Release commit changes a live production data path type"
+            status=1
+            break
+        fi
+        if [ "$local_type" != "missing" ] && [ -z "$current_type" ]; then
+            log_error "Release commit would overwrite untracked production data"
+            status=1
+            break
+        fi
+        if [ -z "$current_type" ] \
+            && GIT_LITERAL_PATHSPECS=1 git -C "$repo_dir" check-ignore \
+                --no-index --quiet -- "$path"; then
+            log_error "Release commit must not track ignored production data"
+            status=1
+            break
+        fi
+    done < "$tree_paths"
+    if [ "$status" -eq 0 ] && [ "$saw_data_root" != true ]; then
+        log_error "Release commit does not contain the production data directory"
+        status=1
+    fi
+    rm -f -- "$tree_paths"
+    return "$status"
+}
+
 # Function to verify FAQ SQLite database status
 # NOTE: This is a verification function - SQLite is the authoritative source for FAQs.
 # The migration from JSONL to SQLite is handled by run_faq_sqlite_migration() in update.sh
@@ -469,10 +597,14 @@ update_repository() {
         return 1
     fi
 
-    # CRITICAL: Preserve production data BEFORE any git operations
-    if ! data_backup_dir=$(preserve_production_data "$repo_dir"); then
-        log_error "Failed to preserve production data; aborting repository update"
-        return 1
+    # Local-development updates retain the historical safeguard. Reviewed
+    # release updates never copy live runtime files: git is required to leave
+    # that ignored data untouched, and the exact target is checked below.
+    if [ "$allow_local_changes" = true ]; then
+        if ! data_backup_dir=$(preserve_production_data "$repo_dir"); then
+            log_error "Failed to preserve production data; aborting repository update"
+            return 1
+        fi
     fi
 
     # Check for local changes and stash if needed
@@ -509,10 +641,16 @@ update_repository() {
             restore_stash "$repo_dir"
         fi
         # Restore production data on failure
-        if [ -n "$data_backup_dir" ]; then
+        if [ "$allow_local_changes" = true ] && [ -n "$data_backup_dir" ]; then
             restore_production_data "$repo_dir" "$data_backup_dir"
         fi
         return 1
+    fi
+
+    if [ "$allow_local_changes" != true ]; then
+        ensure_runtime_data_git_boundary "$repo_dir" HEAD || return 1
+        ensure_runtime_data_git_boundary \
+            "$repo_dir" "$remote/$branch" || return 1
     fi
 
     # Reset to remote branch
@@ -521,14 +659,14 @@ update_repository() {
             restore_stash "$repo_dir"
         fi
         # Restore production data on failure
-        if [ -n "$data_backup_dir" ]; then
+        if [ "$allow_local_changes" = true ] && [ -n "$data_backup_dir" ]; then
             restore_production_data "$repo_dir" "$data_backup_dir"
         fi
         return 1
     fi
 
     # CRITICAL: Restore production data AFTER git reset
-    if [ -n "$data_backup_dir" ]; then
+    if [ "$allow_local_changes" = true ] && [ -n "$data_backup_dir" ]; then
         if ! restore_production_data "$repo_dir" "$data_backup_dir"; then
             log_error "Failed to restore production data"
             return 1
@@ -972,6 +1110,7 @@ export -f fetch_remote
 export -f reset_to_remote
 export -f preserve_production_data
 export -f restore_production_data
+export -f ensure_runtime_data_git_boundary
 export -f run_faq_migration
 export -f update_repository
 export -f needs_rebuild

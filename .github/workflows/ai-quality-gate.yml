@@ -31,17 +31,25 @@ jobs:
     environment: release-ai-quality
     permissions:
       contents: read
-    env:
-      GH_TOKEN: ${{ secrets.AI_QUALITY_GATE_MARKER_TOKEN }}
     outputs:
       model_sha256: ${{ steps.model.outputs.model_sha256 }}
     steps:
+      - name: Mint marker installation token
+        id: marker-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.AI_QUALITY_GATE_MARKER_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AI_QUALITY_GATE_MARKER_APP_PRIVATE_KEY }}
+          permission-contents: write
+
       - name: Remove prior markers for this commit
         shell: bash
+        env:
+          GH_TOKEN: ${{ steps.marker-token.outputs.token }}
         run: |
           set -euo pipefail
           if [ -z "${GH_TOKEN:-}" ]; then
-            echo "AI quality marker credential is not configured" >&2
+            echo "AI quality marker installation token is unavailable" >&2
             exit 1
           fi
           endpoint="repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/release-ai-quality/${GITHUB_SHA}"
@@ -259,15 +267,24 @@ jobs:
     permissions:
       contents: read
     env:
-      GH_TOKEN: ${{ secrets.AI_QUALITY_GATE_MARKER_TOKEN }}
       MODEL_SHA256: ${{ needs.invalidate-pass-marker.outputs.model_sha256 }}
     steps:
+      - name: Mint marker installation token
+        id: marker-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.AI_QUALITY_GATE_MARKER_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AI_QUALITY_GATE_MARKER_APP_PRIVATE_KEY }}
+          permission-contents: write
+
       - name: Bind quality result to release commit
         shell: bash
+        env:
+          GH_TOKEN: ${{ steps.marker-token.outputs.token }}
         run: |
           set -euo pipefail
           if [ -z "${GH_TOKEN:-}" ]; then
-            echo "AI quality marker credential is not configured" >&2
+            echo "AI quality marker installation token is unavailable" >&2
             exit 1
           fi
           if [[ ! "$MODEL_SHA256" =~ ^[0-9a-f]{64}$ ]]; then

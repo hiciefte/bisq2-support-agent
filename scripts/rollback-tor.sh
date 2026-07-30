@@ -158,6 +158,10 @@ require_clearnet_tls_selection() {
         return 1
     fi
 
+    acquire_production_lifecycle_lock "$INSTALL_DIR" || return 1
+    pin_existing_compose_project \
+        "$DOCKER_DIR" "$COMPOSE_FILE" existing || return 1
+
     if ! run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" config --quiet; then
         log_error "Clearnet TLS Compose configuration is invalid"
         return 1
@@ -188,6 +192,9 @@ if ! check_root; then
     log_error "This script must be run as root"
     exit 1
 fi
+
+pin_existing_compose_project \
+    "$DOCKER_DIR" "$COMPOSE_FILE" existing || exit 1
 
 # Exposure mode is a human decision. Validate the persisted TLS choice before
 # stopping Tor or changing any production state.
@@ -280,7 +287,8 @@ if systemctl is-active --quiet tor; then
     exit 1
 fi
 
-if docker ps | grep -q nginx; then
+if [ -n "$(run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" \
+    ps --status running -q nginx)" ]; then
     log_success "Nginx container is running"
 else
     log_error "Nginx container is not running!"

@@ -58,15 +58,23 @@ Repository administrators must first apply
 namespace. Administrators then configure:
 
 - environment secret `AI_QUALITY_GATE_OPENAI_API_KEY`;
-- environment secret `AI_QUALITY_GATE_MARKER_TOKEN`, owned by the dedicated
-  marker identity and limited to repository contents; and
+- environment secret `AI_QUALITY_GATE_MARKER_APP_PRIVATE_KEY`;
+- environment variable `AI_QUALITY_GATE_MARKER_APP_CLIENT_ID`; and
 - Actions variable `AI_QUALITY_GATE_OPENAI_MODEL`, set to the same model ID as
   the intended production release.
 
-Neither credential may exist as a repository or organization secret. Every job
-that can read one uses the protected environment, its required human reviewer,
-and its `main` or `release/*` deployment policy. Version-tag verification uses
-only the read-only default workflow token and never receives either credential.
+The two secret credentials may not exist as repository or organization secrets.
+Every job that can read one uses the protected environment, its required human
+reviewer, and its `main` or `release/*` deployment policy. Version-tag
+verification uses only the read-only default workflow token and never receives
+either credential.
+
+The marker App is installed only on this repository with repository Contents
+read/write and no other nonimplicit permission, webhook, or event subscription.
+Each marker job uses the pinned App-token action to mint a short-lived token
+scoped to the current repository and `contents: write`; the token is revoked at
+job completion. The job's default workflow token remains read-only. A personal
+access token cannot replace this App boundary.
 
 The model variable must use the strict `openai:<model-id>` form. It is validated
 before dotenv rendering, hashed before report construction, and never archived
@@ -96,10 +104,21 @@ are retained as build artifacts for 30 days, including failed gate reports.
 5. Create the intended version tag and confirm its marker-verification job.
 6. Run the normal deployment or update script.
 
-Before every fresh-answer run, the environment-scoped marker identity removes
-prior quality markers for the exact commit. Runs targeting the same commit are
-serialized even when one arrived from a branch and another from a tag. A passing
-run publishes the lightweight tag
+The one-time gated production-soak transition may instead use an explicit
+manual run on `main` without creating a version tag. Main must remain frozen at
+that exact commit from workflow dispatch through the update, and the procedure
+in `docs/runbooks/production-gate-transition.md` must be followed. This testing
+exception does not waive fresh answers, protected-environment review, the exact
+commit/model marker, backup verification, or any release gate. The explicit
+single-human variant in
+`docs/runbooks/single-operator-production-testing.md` lets the workflow
+initiator perform that manual environment review during private experimental
+testing. It changes identity separation only and is never launch evidence.
+
+Before every fresh-answer run, an environment-scoped installation token for the
+marker App removes prior quality markers for the exact commit. Runs targeting
+the same commit are serialized even when one arrived from a branch and another
+from a tag. A passing run publishes the lightweight tag
 `release-ai-quality/<commit>/<model-sha256>`; a failed, timed-out, or cancelled
 evaluation after invalidation leaves no marker. The model credential is not
 available to either marker job.
@@ -136,9 +155,9 @@ human-controlled process.
 
 The committed protection runbook restricts `release/*` and `v*` lifecycle
 operations to the chosen release manager, requires reviewed changes on release
-branches, and allows only the dedicated marker identity to create, move, or
-delete `release-ai-quality/**` tags. Applying and verifying those controls is a
-human admin step; the deployment verifier still fails closed when a marker is
+branches, and allows only the dedicated GitHub App to create, move, or delete
+`release-ai-quality/**` tags. Applying and verifying those controls is a human
+admin step; the deployment verifier still fails closed when a marker is
 missing, moved, or unreachable.
 
 ## Failure triage

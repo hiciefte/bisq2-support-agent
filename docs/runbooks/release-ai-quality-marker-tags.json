@@ -5,7 +5,7 @@
   "bypass_actors": [
     {
       "actor_id": 0,
-      "actor_type": "User",
+      "actor_type": "Integration",
       "bypass_mode": "always"
     }
   ],

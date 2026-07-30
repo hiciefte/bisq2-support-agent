@@ -45,7 +45,10 @@ initialize_paths() {
     INSTALL_DIR="$(cd "$INSTALL_DIR" && pwd -P)"
     DOCKER_DIR="$INSTALL_DIR/docker"
     DATA_DIR="$INSTALL_DIR/api/data"
-    DR_HELPER="$INSTALL_DIR/api/app/scripts/disaster_recovery.py"
+    # Keep verification code bound to the reviewed script source. This permits
+    # a detached candidate worktree to verify a pre-gate production backup
+    # without copying candidate files into the live checkout.
+    DR_HELPER="$PROJECT_ROOT/api/app/scripts/disaster_recovery.py"
     RECOVERY_CONTROL_DIR="$INSTALL_DIR/failed_updates/disaster-recovery"
     RECOVERY_FAILURE_MARKER="$RECOVERY_CONTROL_DIR/recovery-blocked"
     RECOVERY_LOCK_FILE="$RECOVERY_CONTROL_DIR/recovery.lock"
@@ -1016,6 +1019,7 @@ restore_qdrant() {
     log_info "Saving pre-restore Qdrant collection snapshots"
     compose run --rm --no-deps -T \
         --user "${APP_UID:-1001}:${APP_GID:-1001}" \
+        --volume "$DR_HELPER:/app/app/scripts/disaster_recovery.py:ro" \
         --entrypoint python api \
         -m app.scripts.disaster_recovery qdrant-export --allow-empty \
         > "$rollback_archive"
@@ -1025,6 +1029,7 @@ restore_qdrant() {
     log_info "Restoring Qdrant collection snapshots"
     compose run --rm --no-deps -T \
         --user "${APP_UID:-1001}:${APP_GID:-1001}" \
+        --volume "$DR_HELPER:/app/app/scripts/disaster_recovery.py:ro" \
         --entrypoint python api \
         -m app.scripts.disaster_recovery qdrant-import \
         "${import_args[@]}" \
@@ -1042,6 +1047,7 @@ rollback_applied_components() {
         log_warning "Rolling back Qdrant collections"
         if compose run --rm --no-deps -T \
             --user "${APP_UID:-1001}:${APP_GID:-1001}" \
+            --volume "$DR_HELPER:/app/app/scripts/disaster_recovery.py:ro" \
             --entrypoint python api \
             -m app.scripts.disaster_recovery qdrant-import --delete-absent \
             < "$WORK_DIR/pre-restore-qdrant.tar.gz"; then
@@ -1158,7 +1164,12 @@ main() {
 
     if [ "$APPLY" = true ]; then
         acquire_recovery_lock
+        pin_existing_compose_project \
+            "$DOCKER_DIR" "$COMPOSE_FILE" existing || return 1
         validate_api_data_mount
+    elif component_selected qdrant; then
+        pin_existing_compose_project \
+            "$DOCKER_DIR" "$COMPOSE_FILE" existing || return 1
     fi
 
     local snapshot_root="$WORK_DIR/snapshot"

@@ -50,6 +50,28 @@ credentials must be escrowed separately under the organization's key-custody
 policy. A backup is not recoverable if its age identity or GPG private key is
 lost.
 
+### Legacy Matrix relay exception
+
+An installation from before the isolated Matrix alert relay was introduced has
+no relay service or named volume to snapshot. When candidate recovery tooling
+is deliberately run against that older Compose project, it records `matrix` in
+the manifest's `absent_volume_components`, writes a canonical zero-member
+placeholder archive, and continues to capture Matrix session/store files from
+`DATA_DIR`. Scratch verification reports this as one absent volume.
+
+This exception applies only when an exact `compose config --services` inventory
+proves that the relay service is not defined. If the service is defined but its
+container or volume is unavailable, backup fails. No other volume may be marked
+absent, and manifest creation and verification both reject a nonempty
+placeholder.
+
+A later `matrix` or `all` restore into a current stack restores the application
+Matrix files and deliberately initializes the relay volume empty after saving a
+rollback preimage. The relay must establish a fresh authenticated session; keep
+all autoresponse switches disabled while checking readiness. Immediately after
+the one-time upgrade, create and scratch-verify a new full backup. The new set
+must report zero absent volumes before the legacy set is retired.
+
 ## One-time human decisions
 
 Before scheduling backups, an operator must choose and document:
@@ -131,6 +153,11 @@ created Compose service containers so the script can identify their exact image
 IDs. It never connects the scratch service to the production Compose network.
 Verification of selections that exclude Qdrant does not require a live API
 container or application-data bind mount.
+
+Use the recovery helper from the same or a newer reviewed release than the
+backup creator. The one-time existing-production transition is documented in
+`docs/runbooks/production-gate-transition.md`; its detached candidate scripts
+are designed to read the older live checkout without copying code into it.
 
 ## Restore selected components
 

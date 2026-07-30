@@ -81,3 +81,12 @@ When a workflow job is renamed, update the context in
 `docs/runbooks/branch-protection.json` in the same pull request. After that
 pull request's old checks pass, a repository administrator applies the updated
 payload and verifies the new check name before merging subsequent work.
+
+## Temporary single-operator testing
+
+`single-operator-production-testing.md` defines the narrowly scoped,
+non-launch-ready exception for private production testing. Its separate payload
+sets the approval count to zero but preserves pull requests, all five strict
+checks, administrator enforcement, signed commits, and force-push/deletion
+blocks. Never edit this canonical payload to enter that mode, and restore this
+payload before public exposure or autoresponse testing.

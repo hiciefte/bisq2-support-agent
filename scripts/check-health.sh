@@ -213,14 +213,22 @@ case "${1:-}" in
         ;;
     "--quiet"|"-q")
         # Run main function but suppress some output
+        acquire_production_lifecycle_lock "$PROJECT_ROOT" >/dev/null
+        pin_existing_compose_project \
+            "$DOCKER_DIR" "$COMPOSE_FILE" existing >/dev/null
         main 2>/dev/null
         ;;
     "--json")
         # JSON output for monitoring systems
+        pin_existing_compose_project \
+            "$DOCKER_DIR" "$COMPOSE_FILE" existing >/dev/null
         run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" ps --format json | jq -s '.'
         ;;
     "")
         # Default behavior
+        acquire_production_lifecycle_lock "$PROJECT_ROOT"
+        pin_existing_compose_project \
+            "$DOCKER_DIR" "$COMPOSE_FILE" existing
         main
         ;;
     *)

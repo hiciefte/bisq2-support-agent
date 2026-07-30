@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 from pathlib import Path
@@ -13,7 +14,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_PATH = REPO_ROOT / "docker" / "docker-compose.yml"
 LOCAL_COMPOSE_PATH = REPO_ROOT / "docker" / "docker-compose.local.yml"
 BRANCH_PROTECTION_PAYLOAD = REPO_ROOT / "docs" / "runbooks" / "branch-protection.json"
+SINGLE_OPERATOR_BRANCH_PROTECTION_PAYLOAD = (
+    REPO_ROOT / "docs" / "runbooks" / "branch-protection.single-operator-testing.json"
+)
 BRANCH_PROTECTION_RUNBOOK = REPO_ROOT / "docs" / "runbooks" / "branch-protection.md"
+SINGLE_OPERATOR_RUNBOOK = (
+    REPO_ROOT / "docs" / "runbooks" / "single-operator-production-testing.md"
+)
 DIGEST_REF_PATTERN = re.compile(r"^\S+@sha256:[0-9a-f]{64}$")
 
 
@@ -98,6 +105,7 @@ def test_web_image_contains_only_pinned_fixed_runtime_dependencies() -> None:
     dockerfile = (REPO_ROOT / "docker" / "web" / "Dockerfile").read_text(
         encoding="utf-8"
     )
+    compose_web = _load_yaml(COMPOSE_PATH)["services"]["web"]
     builder, runtime = dockerfile.split("# Stage 2: Runtime", maxsplit=1)
 
     assert "RUN npm run build" in builder
@@ -108,7 +116,11 @@ def test_web_image_contains_only_pinned_fixed_runtime_dependencies() -> None:
 
     assert "libcrypto3=3.5.7-r0" in runtime
     assert "libssl3=3.5.7-r0" in runtime
-    assert "npm install --global npm@11.18.0" in runtime
+    assert "rm -rf /usr/local/lib/node_modules/npm" in runtime
+    assert "rm -f /usr/local/bin/npm /usr/local/bin/npx" in runtime
+    assert "npm install --global" not in runtime
+    assert 'CMD ["node", "node_modules/next/dist/bin/next", "start"]' in runtime
+    assert "command" not in compose_web
 
 
 def test_bisq_build_fetches_and_verifies_a_full_commit() -> None:
@@ -158,3 +170,74 @@ def test_branch_protection_runbook_is_human_executed_and_verifiable() -> None:
     assert "required_approving_review_count" in runbook
     assert "allow_force_pushes" in runbook
     assert "allow_deletions" in runbook
+
+
+def test_single_operator_main_profile_changes_only_approval_count() -> None:
+    canonical = json.loads(BRANCH_PROTECTION_PAYLOAD.read_text(encoding="utf-8"))
+    single_operator = json.loads(
+        SINGLE_OPERATOR_BRANCH_PROTECTION_PAYLOAD.read_text(encoding="utf-8")
+    )
+    expected = copy.deepcopy(canonical)
+    expected["required_pull_request_reviews"]["required_approving_review_count"] = 0
+
+    assert single_operator == expected
+
+
+def test_single_operator_runbook_retains_technical_release_gates() -> None:
+    runbook = SINGLE_OPERATOR_RUNBOOK.read_text(encoding="utf-8")
+    normalized_runbook = " ".join(runbook.split())
+    apply_section, restore_section = runbook.split(
+        "## Restore launch-ready separation", maxsplit=1
+    )
+
+    assert "not launch-ready" in runbook
+    assert "does not authorize a production change" in runbook
+    assert "required_signatures" in runbook
+    assert "branch-protection.single-operator-testing.json" in runbook
+    assert "release-ai-quality-environment.single-operator-testing.json" in runbook
+    assert (
+        "release-ai-quality-release-branch-changes.single-operator-testing.json"
+        in runbook
+    )
+    assert "release-ai-quality-release-branch-lifecycle.json" in runbook
+    assert "release-ai-quality-version-tags.json" in runbook
+    assert apply_section.count('select(.name == "Release branch lifecycle")') == 1
+    assert apply_section.count('select(.name == "Version tag lifecycle")') == 1
+    assert apply_section.count('jq --argjson id "$OPERATOR_ID"') == 3
+    assert '--input "$WORK_DIR/release-branch-lifecycle.json"' in apply_section
+    assert '--input "$WORK_DIR/version-tags.json"' in apply_section
+    assert apply_section.count("rulesets/${RELEASE_LIFECYCLE_RULESET_ID}") == 2
+    assert apply_section.count("rulesets/${VERSION_TAG_RULESET_ID}") == 2
+    assert restore_section.count('select(.name == "Release branch lifecycle")') == 1
+    assert restore_section.count('select(.name == "Version tag lifecycle")') == 1
+    assert 'RELEASE_MANAGER_ID=""' in restore_section
+    assert '[[ "$RELEASE_MANAGER_ID" =~ ^[1-9][0-9]*$ ]]' in restore_section
+    assert 'test "$INDEPENDENT_REVIEWER_ID" != "$RELEASE_MANAGER_ID"' in restore_section
+    assert restore_section.count('jq --argjson id "$RELEASE_MANAGER_ID"') == 2
+    assert (
+        '--input "$WORK_DIR/release-branch-lifecycle.canonical.json"' in restore_section
+    )
+    assert '--input "$WORK_DIR/version-tags.canonical.json"' in restore_section
+    assert restore_section.count("rulesets/${RELEASE_LIFECYCLE_RULESET_ID}") == 1
+    assert restore_section.count("rulesets/${VERSION_TAG_RULESET_ID}") == 1
+    assert "AI_QUALITY_GATE_MARKER_APP_PRIVATE_KEY" in runbook
+    assert "AI_QUALITY_GATE_MARKER_APP_CLIENT_ID" in runbook
+    assert ".prevent_self_review] | first" in runbook
+    assert "id: .reviewer.id" in runbook
+    for disabled_switch in (
+        "AUTONOMOUS_DELIVERY_ENABLED=false",
+        "MATRIX_SYNC_ENABLED=false",
+        "MATRIX_CHATOPS_ENABLED=false",
+        "BISQ2_CHANNEL_ENABLED=false",
+        "BISQ2_CHATOPS_ENABLED=false",
+        "ESCALATION_BISQ2_WS_ENABLED=false",
+    ):
+        assert disabled_switch in runbook
+    assert "--input docs/runbooks/branch-protection.json" in runbook
+    assert "--input docs/runbooks/release-ai-quality-release-branch-changes.json" in (
+        runbook
+    )
+    assert (
+        "Evidence approved under the single-operator profile is not launch evidence"
+        in normalized_runbook
+    )

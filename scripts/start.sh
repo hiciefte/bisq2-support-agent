@@ -23,6 +23,7 @@ echo "========================================================"
 # We only source deploy.env for settings allowlisted by source_deploy_paths.
 DEPLOY_ENV="/etc/bisq-support/deploy.env"
 source_deploy_paths "$DEPLOY_ENV" || true
+acquire_production_lifecycle_lock "$PROJECT_ROOT" || exit 1
 
 # Validate docker/.env has required app config
 DOCKER_ENV="$DOCKER_DIR/.env"
@@ -38,6 +39,10 @@ fi
 # --- End Source Environment Configuration --- #
 
 if ! validate_runtime_configuration "$DOCKER_ENV"; then
+    exit 1
+fi
+if ! pin_configured_or_existing_compose_project \
+    "$DOCKER_DIR" "$COMPOSE_FILE"; then
     exit 1
 fi
 

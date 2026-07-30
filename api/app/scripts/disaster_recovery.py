@@ -52,6 +52,7 @@ REQUIRED_VOLUME_COMPONENTS = (
     "bisq2",
     "alertmanager",
 )
+ALLOWED_ABSENT_VOLUME_COMPONENTS = frozenset({"matrix"})
 FORMAT_VERSION = 2
 
 
@@ -561,6 +562,41 @@ def _volume_sqlite_manifest(archive_path: Path) -> list[dict[str, Any]]:
         return _sqlite_entries_in_directory(root)
 
 
+def _volume_archive_is_empty(archive_path: Path) -> bool:
+    with tarfile.open(archive_path, mode="r:gz") as archive:
+        for member in archive:
+            _safe_archive_member(member)
+            return False
+    return True
+
+
+def _validate_absent_volume_components(
+    raw_components: Iterable[str],
+) -> list[str]:
+    if isinstance(raw_components, (str, bytes)):
+        raise RecoveryError("Absent volume component inventory is invalid")
+    components = list(raw_components)
+    if any(not isinstance(component, str) for component in components):
+        raise RecoveryError("Absent volume component inventory is invalid")
+    if len(components) != len(set(components)):
+        raise RecoveryError("Absent volume component inventory contains duplicates")
+    invalid = set(components) - ALLOWED_ABSENT_VOLUME_COMPONENTS
+    if invalid:
+        raise RecoveryError(
+            "Volume absence is not permitted for: " + ", ".join(sorted(invalid))
+        )
+    return sorted(components)
+
+
+def _absent_volume_components_from_manifest(manifest: dict[str, Any]) -> list[str]:
+    raw_components = manifest.get("absent_volume_components", [])
+    if not isinstance(raw_components, list) or any(
+        not isinstance(component, str) for component in raw_components
+    ):
+        raise RecoveryError("Absent volume component inventory is invalid")
+    return _validate_absent_volume_components(raw_components)
+
+
 def normalize_volume_archive(source_archive: Path, output_archive: Path) -> int:
     """Replace SQLite files in a stopped-volume archive with API backups.
 
@@ -653,8 +689,13 @@ def normalize_volume_archive(source_archive: Path, output_archive: Path) -> int:
     return len(replacements)
 
 
-def create_bundle_manifest(root: Path, env_file: Path) -> dict[str, Any]:
+def create_bundle_manifest(
+    root: Path,
+    env_file: Path,
+    absent_volume_components: Iterable[str] = (),
+) -> dict[str, Any]:
     root = root.resolve()
+    absent_volumes = _validate_absent_volume_components(absent_volume_components)
     application_manifest_path = root / "manifest/application.json"
     if not application_manifest_path.is_file():
         raise RecoveryError("Application snapshot manifest is missing")
@@ -672,6 +713,10 @@ def create_bundle_manifest(root: Path, env_file: Path) -> dict[str, Any]:
         archive = root / f"components/volumes/{component}.tar.gz"
         if not archive.is_file():
             raise RecoveryError(f"{component} volume snapshot is missing")
+        if component in absent_volumes and not _volume_archive_is_empty(archive):
+            raise RecoveryError(
+                f"Absent {component} volume placeholder must be an empty archive"
+            )
         volume_sqlite[component] = _volume_sqlite_manifest(archive)
 
     entries = application_manifest.get("entries")
@@ -718,6 +763,7 @@ def create_bundle_manifest(root: Path, env_file: Path) -> dict[str, Any]:
         )
 
     manifest = {
+        "absent_volume_components": absent_volumes,
         "artifacts": artifacts,
         "components_available": sorted(components),
         "created_at": _now_iso(),
@@ -1046,6 +1092,21 @@ def verify_bundle(
     if manifest.get("format_version") != FORMAT_VERSION:
         raise RecoveryError("Unsupported backup format")
 
+    absent_volumes = _absent_volume_components_from_manifest(manifest)
+    volume_sqlite = manifest.get("volume_sqlite")
+    if not isinstance(volume_sqlite, dict):
+        raise RecoveryError("Volume SQLite manifest is invalid")
+    for component in absent_volumes:
+        archive = snapshot_root / f"components/volumes/{component}.tar.gz"
+        if not archive.is_file() or not _volume_archive_is_empty(archive):
+            raise RecoveryError(
+                f"Absent {component} volume placeholder must be an empty archive"
+            )
+        if volume_sqlite.get(component) != []:
+            raise RecoveryError(
+                f"Absent {component} volume SQLite inventory must be empty"
+            )
+
     variable_names = manifest.get("environment_variable_names")
     if not isinstance(variable_names, list) or any(
         not isinstance(name, str) or not ENV_NAME_RE.fullmatch(name)
@@ -1075,6 +1136,7 @@ def verify_bundle(
         if expected_collections != actual_collections:
             raise RecoveryError("Qdrant collection inventory mismatch")
     return {
+        "absent_volumes": len(absent_volumes),
         "application_files": application_count,
         "artifacts": artifact_count,
         "qdrant_collections": qdrant_count,
@@ -1579,6 +1641,12 @@ def _build_parser() -> argparse.ArgumentParser:
     manifest_parser = subparsers.add_parser("create-manifest")
     manifest_parser.add_argument("--root", type=Path, required=True)
     manifest_parser.add_argument("--env-file", type=Path, required=True)
+    manifest_parser.add_argument(
+        "--absent-volume-component",
+        action="append",
+        choices=sorted(ALLOWED_ABSENT_VOLUME_COMPONENTS),
+        default=[],
+    )
 
     verify_parser = subparsers.add_parser("verify-bundle")
     verify_parser.add_argument("--snapshot-root", type=Path, required=True)
@@ -1637,10 +1705,20 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(json.dumps({"files": len(manifest["entries"])}, sort_keys=True))
         elif args.command == "create-manifest":
-            manifest = create_bundle_manifest(args.root, args.env_file)
+            manifest = create_bundle_manifest(
+                args.root,
+                args.env_file,
+                args.absent_volume_component,
+            )
             print(
                 json.dumps(
-                    {"components": manifest["components_available"]}, sort_keys=True
+                    {
+                        "absent_volume_components": manifest[
+                            "absent_volume_components"
+                        ],
+                        "components": manifest["components_available"],
+                    },
+                    sort_keys=True,
                 )
             )
         elif args.command == "verify-bundle":

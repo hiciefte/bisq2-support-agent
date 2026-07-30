@@ -37,7 +37,7 @@ validate_environment() {
     log_info "Validating environment..."
 
     # Check for required commands
-    if ! check_required_commands git docker jq curl openssl; then
+    if ! check_required_commands git docker jq curl openssl flock mktemp rm; then
         exit 1
     fi
 
@@ -48,6 +48,19 @@ validate_environment() {
 
     # Check if Docker daemon is running
     if ! check_docker_daemon; then
+        exit 1
+    fi
+
+    if ! pin_existing_compose_project \
+        "$DOCKER_DIR" "$COMPOSE_FILE" running; then
+        exit 1
+    fi
+    if ! persist_compose_project_name "$DOCKER_DIR"; then
+        exit 1
+    fi
+
+    if ! validate_existing_api_data_identity \
+        "$DOCKER_DIR" "$COMPOSE_FILE" "$INSTALL_DIR/api/data" running; then
         exit 1
     fi
 
@@ -122,10 +135,6 @@ rollback_update() {
         exit 2
     }
 
-    # CRITICAL: Preserve production data before rollback
-    local rollback_data_backup
-    rollback_data_backup=$(preserve_production_data "$INSTALL_DIR")
-
     # Save current state and logs
     log_info "Saving current state for debugging..."
     {
@@ -134,7 +143,7 @@ rollback_update() {
         echo "Current Git Hash: $(git rev-parse HEAD)"
         echo "Rolling back to: $PREV_HEAD"
         echo "Working Directory: $(pwd)"
-        echo "Production Data Backup: $rollback_data_backup"
+        echo "Production Data: preserved in place outside the Git boundary"
         echo -e "\nGit Status:"
         git status
         echo -e "\nLast Git Logs:"
@@ -156,23 +165,17 @@ rollback_update() {
         log_warning "Error stopping containers. Continuing with rollback..."
     }
 
-    # Reset to previous working version
+    # Reset only after proving the prior release cannot overwrite runtime data.
     cd "$INSTALL_DIR" || exit 2
+    if ! ensure_runtime_data_git_boundary "$INSTALL_DIR" "$PREV_HEAD"; then
+        log_error "CRITICAL: Prior release crosses the production data boundary"
+        exit 2
+    fi
     if ! rollback_to_ref "$INSTALL_DIR" "$PREV_HEAD"; then
         log_error "CRITICAL: Failed to reset to previous version"
         log_error "Manual intervention required"
         log_error "Details saved in: $failed_dir"
         exit 2
-    fi
-
-    # CRITICAL: Restore production data after rollback
-    if [ -n "$rollback_data_backup" ]; then
-        if ! restore_production_data "$INSTALL_DIR" "$rollback_data_backup"; then
-            log_error "CRITICAL: Failed to restore production data during rollback"
-            log_error "Production data backup: $rollback_data_backup"
-            log_error "Manual intervention required"
-            exit 2
-        fi
     fi
 
     # Recompute BUILD_ID to reflect rolled-back commit
@@ -594,11 +597,12 @@ fix_permissions() {
 }
 
 # Run FAQ SQLite migration if needed
-# NOTE: Migration is SKIPPED if SQLite DB already has FAQs.
+# NOTE: Migration is SKIPPED if the SQLite DB already exists, even when empty.
 # SQLite is the authoritative source - JSONL is only for initial migration.
 # To force re-migration, manually delete faqs.db first.
 run_faq_sqlite_migration() {
     log_info "Checking for FAQ SQLite migration needs..."
+    local api_container_id=""
 
     # Check if migration script exists
     if [ ! -f "$INSTALL_DIR/api/app/scripts/migrate_to_sqlite.py" ]; then
@@ -606,19 +610,30 @@ run_faq_sqlite_migration() {
         return 0
     fi
 
-    # Check if API container is running
-    if ! docker ps --format '{{.Names}}' | grep -q "docker-api-1"; then
-        log_warning "API container not running - starting services first..."
-        cd "$DOCKER_DIR" || return 1
-        run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" up -d api
-        sleep 10
+    # Resolve the API through the pinned Compose project. A hard-coded
+    # container name would silently select the wrong stack for a legacy custom
+    # project name.
+    if ! api_container_id=$(run_docker_compose \
+        "$DOCKER_DIR" "$COMPOSE_FILE" ps --status running -q api); then
+        log_error "Could not inspect the API container in the pinned Compose project"
+        return 1
+    fi
+    if [ -z "$api_container_id" ]; then
+        log_error "API container is not running; refusing to start a stale image before the candidate build"
+        return 1
+    fi
+    if [ -z "$api_container_id" ] \
+        || [[ "$api_container_id" == *$'\n'* ]] \
+        || [[ ! "$api_container_id" =~ ^[0-9a-f]{12,64}$ ]]; then
+        log_error "Pinned Compose project did not resolve exactly one API container"
+        return 1
     fi
 
-    # CRITICAL: Skip migration if SQLite already has FAQs
+    # CRITICAL: Skip migration whenever SQLite already exists.
     # SQLite is the authoritative source after initial migration
     # Running migration again would overwrite verified status and lose production changes
-    local faq_count
-    if ! faq_count=$(docker exec docker-api-1 python -c "
+    local faq_state
+    if ! faq_state=$(docker exec "$api_container_id" python -c "
 import sqlite3
 from pathlib import Path
 db_path = Path('/data/faqs.db')
@@ -626,43 +641,58 @@ if db_path.exists():
     conn = sqlite3.connect(str(db_path))
     count = conn.execute('SELECT COUNT(*) FROM faqs').fetchone()[0]
     conn.close()
-    print(count)
+    print(f'existing:{count}')
 else:
-    print(0)
+    print('missing')
 " 2>/dev/null); then
         log_error "Could not verify the authoritative FAQ store; refusing to run migration"
         return 1
     fi
 
-    if [[ ! "$faq_count" =~ ^[0-9]+$ ]]; then
-        log_error "FAQ count probe returned an invalid value; refusing to run migration"
+    if [ "$faq_state" != missing ] \
+        && [[ ! "$faq_state" =~ ^existing:[0-9]+$ ]]; then
+        log_error "FAQ store probe returned an invalid value; refusing to run migration"
         return 1
     fi
 
-    if [ "$faq_count" -gt 0 ]; then
+    if [[ "$faq_state" == existing:* ]]; then
+        local faq_count="${faq_state#existing:}"
         log_success "SQLite already has $faq_count FAQs - skipping migration (SQLite is authoritative)"
         return 0
     fi
 
-    log_info "SQLite DB is empty - running initial migration from JSONL..."
+    log_info "SQLite DB is absent - running initial migration from JSONL..."
 
     # Run migration in dry-run mode first
+    local dryrun_log=""
+    local migration_log=""
+    if ! dryrun_log=$(mktemp "/tmp/bisq-support-migration-dryrun.XXXXXXXX"); then
+        log_error "Could not create a private migration dry-run log"
+        return 1
+    fi
     log_info "Running SQLite migration dry-run..."
-    if docker exec docker-api-1 python -m app.scripts.migrate_to_sqlite --dry-run 2>&1 | tee /tmp/migration_dryrun.log; then
+    if docker exec "$api_container_id" python -m app.scripts.migrate_to_sqlite --dry-run 2>&1 | tee "$dryrun_log"; then
         log_success "Dry-run completed successfully"
 
         # Run actual migration
+        if ! migration_log=$(mktemp "/tmp/bisq-support-migration.XXXXXXXX"); then
+            rm -f -- "$dryrun_log"
+            log_error "Could not create a private migration log"
+            return 1
+        fi
         log_info "Running SQLite migration..."
-        if docker exec docker-api-1 python -m app.scripts.migrate_to_sqlite 2>&1 | tee /tmp/migration.log; then
+        if docker exec "$api_container_id" python -m app.scripts.migrate_to_sqlite 2>&1 | tee "$migration_log"; then
+            rm -f -- "$dryrun_log" "$migration_log"
             log_success "SQLite migration completed successfully"
             return 0
         else
-            log_error "SQLite migration failed - check /tmp/migration.log for details"
+            rm -f -- "$dryrun_log"
+            log_error "SQLite migration failed - check $migration_log for details"
             return 1
         fi
     else
         log_error "SQLite migration dry-run failed - aborting migration"
-        log_info "Check /tmp/migration_dryrun.log for details"
+        log_info "Check $dryrun_log for details"
         return 1
     fi
 }
@@ -706,6 +736,8 @@ verify_feedback_persistence() {
 
 # Main execution flow
 main() {
+    acquire_production_lifecycle_lock "$INSTALL_DIR" || exit 1
+
     # Reject source changes before backups, fetches, resets, or stash handling.
     if ! ensure_release_source_tree_clean "$INSTALL_DIR"; then
         log_error "Release update requires a clean source tree"
