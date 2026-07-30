@@ -6,11 +6,13 @@ data. It lets one trusted operator open and merge pull requests, approve the
 protected AI-quality jobs they dispatched, and manage reviewed release refs.
 It is not launch-ready and does not authorize a production change by itself.
 
-The canonical launch profiles remain:
+The canonical launch payloads changed or re-rendered by this profile remain:
 
 - `branch-protection.json`;
-- `release-ai-quality-environment.json`; and
-- `release-ai-quality-release-branch-changes.json`.
+- `release-ai-quality-environment.json`;
+- `release-ai-quality-release-branch-changes.json`;
+- `release-ai-quality-release-branch-lifecycle.json`; and
+- `release-ai-quality-version-tags.json`.
 
 This profile changes only the human separation controls:
 
@@ -20,6 +22,8 @@ This profile changes only the human separation controls:
 | Environment self-review | blocked | allowed |
 | Release pull-request approvals | 1 | 0 |
 | Release last-push approval | required | not required |
+| Release-branch lifecycle bypass | designated release manager | operator |
+| Version-tag lifecycle bypass | designated release manager | operator |
 
 Pull requests, the five exact strict checks, stale-review dismissal,
 release-branch review-thread resolution, administrator enforcement,
@@ -62,6 +66,8 @@ documented in the transition runbook; it requires no domain or TLS lifecycle.
 Run from the exact reviewed checkout with an authenticated repository
 administrator. Set `OPERATOR_LOGIN` in the protected operator shell. These
 commands change repository controls only; they do not touch a deployment.
+Freeze merges and release-ref operations until every apply and verification
+step succeeds.
 
 The App, variables, secrets, deployment policies, lifecycle ruleset, and marker
 ruleset from `release-ai-quality-protection.md` must be complete before the
@@ -88,6 +94,16 @@ RELEASE_CHANGES_RULESET_ID="$(
     --jq '.[] | select(.name == "Release branch reviewed changes") | .id'
 )"
 [[ "$RELEASE_CHANGES_RULESET_ID" =~ ^[1-9][0-9]*$ ]]
+RELEASE_LIFECYCLE_RULESET_ID="$(
+  gh api --paginate "repos/${OWNER}/${REPOSITORY}/rulesets" \
+    --jq '.[] | select(.name == "Release branch lifecycle") | .id'
+)"
+[[ "$RELEASE_LIFECYCLE_RULESET_ID" =~ ^[1-9][0-9]*$ ]]
+VERSION_TAG_RULESET_ID="$(
+  gh api --paginate "repos/${OWNER}/${REPOSITORY}/rulesets" \
+    --jq '.[] | select(.name == "Version tag lifecycle") | .id'
+)"
+[[ "$VERSION_TAG_RULESET_ID" =~ ^[1-9][0-9]*$ ]]
 
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
@@ -96,12 +112,32 @@ jq --argjson id "$OPERATOR_ID" \
   '.reviewers[0].id = $id' \
   docs/runbooks/release-ai-quality-environment.single-operator-testing.json \
   > "$WORK_DIR/environment.json"
+jq --argjson id "$OPERATOR_ID" \
+  '.bypass_actors[0].actor_id = $id' \
+  docs/runbooks/release-ai-quality-release-branch-lifecycle.json \
+  > "$WORK_DIR/release-branch-lifecycle.json"
+jq --argjson id "$OPERATOR_ID" \
+  '.bypass_actors[0].actor_id = $id' \
+  docs/runbooks/release-ai-quality-version-tags.json \
+  > "$WORK_DIR/version-tags.json"
 
 gh api --method PUT \
   -H "Accept: application/vnd.github+json" \
   -H "X-GitHub-Api-Version: 2026-03-10" \
   "repos/${OWNER}/${REPOSITORY}/environments/${ENVIRONMENT}" \
   --input "$WORK_DIR/environment.json"
+
+gh api --method PUT \
+  -H "Accept: application/vnd.github+json" \
+  -H "X-GitHub-Api-Version: 2026-03-10" \
+  "repos/${OWNER}/${REPOSITORY}/rulesets/${RELEASE_LIFECYCLE_RULESET_ID}" \
+  --input "$WORK_DIR/release-branch-lifecycle.json"
+
+gh api --method PUT \
+  -H "Accept: application/vnd.github+json" \
+  -H "X-GitHub-Api-Version: 2026-03-10" \
+  "repos/${OWNER}/${REPOSITORY}/rulesets/${VERSION_TAG_RULESET_ID}" \
+  --input "$WORK_DIR/version-tags.json"
 
 gh api --method PUT \
   -H "Accept: application/vnd.github+json" \
@@ -161,6 +197,12 @@ gh api \
 gh api \
   "repos/${OWNER}/${REPOSITORY}/rulesets/${RELEASE_CHANGES_RULESET_ID}"
 
+gh api \
+  "repos/${OWNER}/${REPOSITORY}/rulesets/${RELEASE_LIFECYCLE_RULESET_ID}"
+
+gh api \
+  "repos/${OWNER}/${REPOSITORY}/rulesets/${VERSION_TAG_RULESET_ID}"
+
 gh api --paginate \
   "repos/${OWNER}/${REPOSITORY}/environments/${ENVIRONMENT}/deployment-branch-policies"
 
@@ -195,10 +237,10 @@ reviewed production model. Never print any secret value.
 ## Restore launch-ready separation
 
 Before public exposure, any Matrix or Bisq shadow/allowlist work, autoresponse
-testing, or launch, freeze merges and release operations. Choose an independent
-environment reviewer and reapply the canonical profiles. Initialize a fresh
-operator shell; do not rely on variables or temporary files from the earlier
-application:
+testing, or launch, freeze merges and release operations. Choose a designated
+release manager and a separate, independent environment reviewer, then reapply
+the canonical profiles. Initialize a fresh operator shell; do not rely on
+variables or temporary files from the earlier application:
 
 ```bash
 set -euo pipefail
@@ -214,23 +256,56 @@ RELEASE_CHANGES_RULESET_ID="$(
     --jq '.[] | select(.name == "Release branch reviewed changes") | .id'
 )"
 [[ "$RELEASE_CHANGES_RULESET_ID" =~ ^[1-9][0-9]*$ ]]
+RELEASE_LIFECYCLE_RULESET_ID="$(
+  gh api --paginate "repos/${OWNER}/${REPOSITORY}/rulesets" \
+    --jq '.[] | select(.name == "Release branch lifecycle") | .id'
+)"
+[[ "$RELEASE_LIFECYCLE_RULESET_ID" =~ ^[1-9][0-9]*$ ]]
+VERSION_TAG_RULESET_ID="$(
+  gh api --paginate "repos/${OWNER}/${REPOSITORY}/rulesets" \
+    --jq '.[] | select(.name == "Version tag lifecycle") | .id'
+)"
+[[ "$VERSION_TAG_RULESET_ID" =~ ^[1-9][0-9]*$ ]]
 
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
 INDEPENDENT_REVIEWER_ID=""
 [[ "$INDEPENDENT_REVIEWER_ID" =~ ^[1-9][0-9]*$ ]]
+RELEASE_MANAGER_ID=""
+[[ "$RELEASE_MANAGER_ID" =~ ^[1-9][0-9]*$ ]]
+test "$INDEPENDENT_REVIEWER_ID" != "$RELEASE_MANAGER_ID"
 
 jq --argjson id "$INDEPENDENT_REVIEWER_ID" \
   '.reviewers[0].id = $id' \
   docs/runbooks/release-ai-quality-environment.json \
   > "$WORK_DIR/environment.canonical.json"
+jq --argjson id "$RELEASE_MANAGER_ID" \
+  '.bypass_actors[0].actor_id = $id' \
+  docs/runbooks/release-ai-quality-release-branch-lifecycle.json \
+  > "$WORK_DIR/release-branch-lifecycle.canonical.json"
+jq --argjson id "$RELEASE_MANAGER_ID" \
+  '.bypass_actors[0].actor_id = $id' \
+  docs/runbooks/release-ai-quality-version-tags.json \
+  > "$WORK_DIR/version-tags.canonical.json"
 
 gh api --method PUT \
   -H "Accept: application/vnd.github+json" \
   -H "X-GitHub-Api-Version: 2026-03-10" \
   "repos/${OWNER}/${REPOSITORY}/environments/${ENVIRONMENT}" \
   --input "$WORK_DIR/environment.canonical.json"
+
+gh api --method PUT \
+  -H "Accept: application/vnd.github+json" \
+  -H "X-GitHub-Api-Version: 2026-03-10" \
+  "repos/${OWNER}/${REPOSITORY}/rulesets/${RELEASE_LIFECYCLE_RULESET_ID}" \
+  --input "$WORK_DIR/release-branch-lifecycle.canonical.json"
+
+gh api --method PUT \
+  -H "Accept: application/vnd.github+json" \
+  -H "X-GitHub-Api-Version: 2026-03-10" \
+  "repos/${OWNER}/${REPOSITORY}/rulesets/${VERSION_TAG_RULESET_ID}" \
+  --input "$WORK_DIR/version-tags.canonical.json"
 
 gh api --method PUT \
   -H "Accept: application/vnd.github+json" \

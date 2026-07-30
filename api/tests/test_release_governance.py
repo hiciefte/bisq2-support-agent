@@ -186,6 +186,9 @@ def test_single_operator_main_profile_changes_only_approval_count() -> None:
 def test_single_operator_runbook_retains_technical_release_gates() -> None:
     runbook = SINGLE_OPERATOR_RUNBOOK.read_text(encoding="utf-8")
     normalized_runbook = " ".join(runbook.split())
+    apply_section, restore_section = runbook.split(
+        "## Restore launch-ready separation", maxsplit=1
+    )
 
     assert "not launch-ready" in runbook
     assert "does not authorize a production change" in runbook
@@ -196,6 +199,27 @@ def test_single_operator_runbook_retains_technical_release_gates() -> None:
         "release-ai-quality-release-branch-changes.single-operator-testing.json"
         in runbook
     )
+    assert "release-ai-quality-release-branch-lifecycle.json" in runbook
+    assert "release-ai-quality-version-tags.json" in runbook
+    assert apply_section.count('select(.name == "Release branch lifecycle")') == 1
+    assert apply_section.count('select(.name == "Version tag lifecycle")') == 1
+    assert apply_section.count('jq --argjson id "$OPERATOR_ID"') == 3
+    assert '--input "$WORK_DIR/release-branch-lifecycle.json"' in apply_section
+    assert '--input "$WORK_DIR/version-tags.json"' in apply_section
+    assert apply_section.count("rulesets/${RELEASE_LIFECYCLE_RULESET_ID}") == 2
+    assert apply_section.count("rulesets/${VERSION_TAG_RULESET_ID}") == 2
+    assert restore_section.count('select(.name == "Release branch lifecycle")') == 1
+    assert restore_section.count('select(.name == "Version tag lifecycle")') == 1
+    assert 'RELEASE_MANAGER_ID=""' in restore_section
+    assert '[[ "$RELEASE_MANAGER_ID" =~ ^[1-9][0-9]*$ ]]' in restore_section
+    assert 'test "$INDEPENDENT_REVIEWER_ID" != "$RELEASE_MANAGER_ID"' in restore_section
+    assert restore_section.count('jq --argjson id "$RELEASE_MANAGER_ID"') == 2
+    assert (
+        '--input "$WORK_DIR/release-branch-lifecycle.canonical.json"' in restore_section
+    )
+    assert '--input "$WORK_DIR/version-tags.canonical.json"' in restore_section
+    assert restore_section.count("rulesets/${RELEASE_LIFECYCLE_RULESET_ID}") == 1
+    assert restore_section.count("rulesets/${VERSION_TAG_RULESET_ID}") == 1
     assert "AI_QUALITY_GATE_MARKER_APP_PRIVATE_KEY" in runbook
     assert "AI_QUALITY_GATE_MARKER_APP_CLIENT_ID" in runbook
     assert ".prevent_self_review] | first" in runbook

@@ -321,7 +321,16 @@ def test_protection_payloads_scope_credentials_and_release_refs() -> None:
     }
 
     assert version_tags["target"] == "tag"
+    assert version_tags["enforcement"] == "active"
     assert version_tags["conditions"]["ref_name"]["include"] == ["refs/tags/v*"]
+    assert version_tags["bypass_actors"] == [
+        {"actor_id": 0, "actor_type": "User", "bypass_mode": "always"}
+    ]
+    assert {rule["type"] for rule in version_tags["rules"]} == {
+        "creation",
+        "update",
+        "deletion",
+    }
     assert marker_tags["target"] == "tag"
     assert marker_tags["conditions"]["ref_name"]["include"] == [
         "refs/tags/release-ai-quality/**/*"
