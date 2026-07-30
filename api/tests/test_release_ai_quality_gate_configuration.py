@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -23,11 +24,19 @@ EMPTY_OFFERBOOK_FIXTURE = (
 )
 PROTECTION_RUNBOOK = REPO_ROOT / "docs/runbooks/release-ai-quality-protection.md"
 ENVIRONMENT_PAYLOAD = REPO_ROOT / "docs/runbooks/release-ai-quality-environment.json"
+SINGLE_OPERATOR_ENVIRONMENT_PAYLOAD = (
+    REPO_ROOT
+    / "docs/runbooks/release-ai-quality-environment.single-operator-testing.json"
+)
 RELEASE_BRANCH_LIFECYCLE = (
     REPO_ROOT / "docs/runbooks/release-ai-quality-release-branch-lifecycle.json"
 )
 RELEASE_BRANCH_CHANGES = (
     REPO_ROOT / "docs/runbooks/release-ai-quality-release-branch-changes.json"
+)
+SINGLE_OPERATOR_RELEASE_BRANCH_CHANGES = (
+    REPO_ROOT
+    / "docs/runbooks/release-ai-quality-release-branch-changes.single-operator-testing.json"
 )
 VERSION_TAG_RULESET = REPO_ROOT / "docs/runbooks/release-ai-quality-version-tags.json"
 MARKER_TAG_RULESET = REPO_ROOT / "docs/runbooks/release-ai-quality-marker-tags.json"
@@ -144,10 +153,23 @@ def test_workflow_actions_are_commit_pinned_and_secret_is_narrowly_scoped() -> N
     assert action_refs
     assert all(re.fullmatch(r"[0-9a-f]{40}", ref) for ref in action_refs)
     assert workflow.count("secrets.AI_QUALITY_GATE_OPENAI_API_KEY") == 1
-    assert workflow.count("secrets.AI_QUALITY_GATE_MARKER_TOKEN") == 2
+    assert "AI_QUALITY_GATE_MARKER_TOKEN" not in workflow
+    assert workflow.count("secrets.AI_QUALITY_GATE_MARKER_APP_PRIVATE_KEY") == 2
+    assert workflow.count("vars.AI_QUALITY_GATE_MARKER_APP_CLIENT_ID") == 2
+    assert (
+        workflow.count(
+            "actions/create-github-app-token@"
+            "bcd2ba49218906704ab6c1aa796996da409d3eb1"
+        )
+        == 2
+    )
+    assert workflow.count("permission-contents: write") == 2
+    assert workflow.count("steps.marker-token.outputs.token") == 2
     assert workflow.count("environment: release-ai-quality") == 3
     assert "permissions:\n      contents: read" in workflow
-    assert "contents: write" not in workflow
+    assert re.search(r"(?m)^\s{6}contents: write\s*$", workflow) is None
+    assert "github.repository_owner" not in workflow
+    assert "github.event.repository.name" not in workflow
 
     build_index = workflow.index("Build release-candidate API image")
     runtime_config_index = workflow.index("Prepare isolated quality-gate environment")
@@ -159,7 +181,9 @@ def test_workflow_actions_are_commit_pinned_and_secret_is_narrowly_scoped() -> N
 
     version_tag_job = workflow[workflow.index("verify-version-tag:") :]
     assert "secrets.AI_QUALITY_GATE_OPENAI_API_KEY" not in version_tag_job
-    assert "secrets.AI_QUALITY_GATE_MARKER_TOKEN" not in version_tag_job
+    assert "AI_QUALITY_GATE_MARKER_APP_PRIVATE_KEY" not in version_tag_job
+    assert "AI_QUALITY_GATE_MARKER_APP_CLIENT_ID" not in version_tag_job
+    assert "actions/create-github-app-token" not in version_tag_job
     assert "environment: release-ai-quality" not in version_tag_job
     assert "GH_TOKEN: ${{ github.token }}" in version_tag_job
 
@@ -302,7 +326,7 @@ def test_protection_payloads_scope_credentials_and_release_refs() -> None:
     assert marker_tags["conditions"]["ref_name"]["include"] == [
         "refs/tags/release-ai-quality/**/*"
     ]
-    assert marker_tags["bypass_actors"][0]["actor_type"] == "User"
+    assert marker_tags["bypass_actors"][0]["actor_type"] == "Integration"
     assert {rule["type"] for rule in marker_tags["rules"]} == {
         "creation",
         "update",
@@ -317,11 +341,37 @@ def test_protection_runbook_renders_ids_and_uses_environment_secrets() -> None:
     assert ".reviewers[0].id = $id" in runbook
     assert ".bypass_actors[0].actor_id = $id" in runbook
     assert "gh secret set AI_QUALITY_GATE_OPENAI_API_KEY --env" in runbook
-    assert "gh secret set AI_QUALITY_GATE_MARKER_TOKEN --env" in runbook
+    assert "gh secret set AI_QUALITY_GATE_MARKER_APP_PRIVATE_KEY --env" in runbook
+    assert "gh variable set AI_QUALITY_GATE_MARKER_APP_CLIENT_ID --env" in runbook
+    assert "AI_QUALITY_GATE_MARKER_TOKEN" not in runbook
+    assert "MARKER_APP_ID" in runbook
+    assert "personal access token" in runbook
     assert "Never define either" in runbook
     assert "repository or organization secret" in runbook
     assert "deployment-branch-policies" in runbook
     assert '"repos/${OWNER}/${REPOSITORY}/rulesets"' in runbook
+
+
+def test_single_operator_quality_profiles_change_only_identity_separation() -> None:
+    canonical_environment = json.loads(ENVIRONMENT_PAYLOAD.read_text(encoding="utf-8"))
+    single_environment = json.loads(
+        SINGLE_OPERATOR_ENVIRONMENT_PAYLOAD.read_text(encoding="utf-8")
+    )
+    expected_environment = copy.deepcopy(canonical_environment)
+    expected_environment["prevent_self_review"] = False
+    assert single_environment == expected_environment
+
+    canonical_changes = json.loads(RELEASE_BRANCH_CHANGES.read_text(encoding="utf-8"))
+    single_changes = json.loads(
+        SINGLE_OPERATOR_RELEASE_BRANCH_CHANGES.read_text(encoding="utf-8")
+    )
+    expected_changes = copy.deepcopy(canonical_changes)
+    pull_request = next(
+        rule for rule in expected_changes["rules"] if rule["type"] == "pull_request"
+    )
+    pull_request["parameters"]["required_approving_review_count"] = 0
+    pull_request["parameters"]["require_last_push_approval"] = False
+    assert single_changes == expected_changes
 
 
 def test_remote_pass_marker_must_match_exact_release_commit(tmp_path: Path) -> None:

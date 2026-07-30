@@ -14,7 +14,9 @@ a copied script, a manual reset, or a new empty deployment.
 Do not begin the production change until all of these are true:
 
 - the candidate pull request is approved, merged, and green at an exact commit;
-- main branch protection from `branch-protection.md` is applied and verified;
+- either canonical main protection from `branch-protection.md` or the
+  temporary profile from `single-operator-production-testing.md` is applied
+  and verified;
 - the protected environment and ref rules from
   `release-ai-quality-protection.md` are applied and verified;
 - a fresh-answer workflow passed for the exact candidate commit and production
@@ -44,11 +46,16 @@ A repository administrator first follows:
 1. `docs/runbooks/branch-protection.md`;
 2. `docs/runbooks/release-ai-quality-protection.md`.
 
-The environment reviewer must be a trusted human other than the workflow
-initiator. The release manager and dedicated marker identity must be the
-reviewed identities recorded during setup. Enter provider and marker
-credentials only through the protected environment's interactive secret flow;
-never put their values in a command, issue, artifact, or operator log. Set
+For canonical launch protection, the environment reviewer must be a trusted
+human other than the workflow initiator. During private experimental testing,
+`single-operator-production-testing.md` permits the recorded operator to be the
+initiator, reviewer, and release manager. That exception changes identity
+separation only; every technical hard stop in this runbook remains.
+
+The marker identity is always the repository-scoped GitHub App recorded during
+setup, never the human operator. Enter the provider credential and App private
+key only through the protected environment's interactive secret flow; never
+put their values in a command, issue, artifact, or operator log. Set
 `AI_QUALITY_GATE_OPENAI_MODEL` to the exact `OPENAI_MODEL` selected in the
 protected production configuration.
 
@@ -63,11 +70,13 @@ test "$(git rev-parse "$CANDIDATE_COMMIT^{commit}")" = "$CANDIDATE_COMMIT"
 gh workflow run ai-quality-gate.yml --ref "$CANDIDATE_REF"
 ```
 
-The separate environment reviewer approves the protected jobs. Locate the
-newest manual run whose `headSha` equals `CANDIDATE_COMMIT`, wait for all three
-quality jobs to succeed, and download only its dynamically named sanitized
-report. Review every case result and metric. Confirm that the marker namespace
-contains an exact commit/model marker without printing the raw model value.
+The required environment reviewer approves the protected jobs. Under the
+single-operator profile, this is the same recorded operator; under canonical
+protection, it is the separate reviewer. Locate the newest manual run whose
+`headSha` equals `CANDIDATE_COMMIT`, wait for all three quality jobs to succeed,
+and download only its dynamically named sanitized report. Review every case
+result and metric. Confirm that the marker namespace contains an exact
+commit/model marker without printing the raw model value.
 
 Before touching production, fetch main again and require it still points to the
 same candidate:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 from pathlib import Path
@@ -13,7 +14,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_PATH = REPO_ROOT / "docker" / "docker-compose.yml"
 LOCAL_COMPOSE_PATH = REPO_ROOT / "docker" / "docker-compose.local.yml"
 BRANCH_PROTECTION_PAYLOAD = REPO_ROOT / "docs" / "runbooks" / "branch-protection.json"
+SINGLE_OPERATOR_BRANCH_PROTECTION_PAYLOAD = (
+    REPO_ROOT / "docs" / "runbooks" / "branch-protection.single-operator-testing.json"
+)
 BRANCH_PROTECTION_RUNBOOK = REPO_ROOT / "docs" / "runbooks" / "branch-protection.md"
+SINGLE_OPERATOR_RUNBOOK = (
+    REPO_ROOT / "docs" / "runbooks" / "single-operator-production-testing.md"
+)
 DIGEST_REF_PATTERN = re.compile(r"^\S+@sha256:[0-9a-f]{64}$")
 
 
@@ -163,3 +170,48 @@ def test_branch_protection_runbook_is_human_executed_and_verifiable() -> None:
     assert "required_approving_review_count" in runbook
     assert "allow_force_pushes" in runbook
     assert "allow_deletions" in runbook
+
+
+def test_single_operator_main_profile_changes_only_approval_count() -> None:
+    canonical = json.loads(BRANCH_PROTECTION_PAYLOAD.read_text(encoding="utf-8"))
+    single_operator = json.loads(
+        SINGLE_OPERATOR_BRANCH_PROTECTION_PAYLOAD.read_text(encoding="utf-8")
+    )
+    expected = copy.deepcopy(canonical)
+    expected["required_pull_request_reviews"]["required_approving_review_count"] = 0
+
+    assert single_operator == expected
+
+
+def test_single_operator_runbook_retains_technical_release_gates() -> None:
+    runbook = SINGLE_OPERATOR_RUNBOOK.read_text(encoding="utf-8")
+    normalized_runbook = " ".join(runbook.split())
+
+    assert "not launch-ready" in runbook
+    assert "does not authorize a production change" in runbook
+    assert "required_signatures" in runbook
+    assert "branch-protection.single-operator-testing.json" in runbook
+    assert "release-ai-quality-environment.single-operator-testing.json" in runbook
+    assert (
+        "release-ai-quality-release-branch-changes.single-operator-testing.json"
+        in runbook
+    )
+    assert "AI_QUALITY_GATE_MARKER_APP_PRIVATE_KEY" in runbook
+    assert "AI_QUALITY_GATE_MARKER_APP_CLIENT_ID" in runbook
+    for disabled_switch in (
+        "AUTONOMOUS_DELIVERY_ENABLED=false",
+        "MATRIX_SYNC_ENABLED=false",
+        "MATRIX_CHATOPS_ENABLED=false",
+        "BISQ2_CHANNEL_ENABLED=false",
+        "BISQ2_CHATOPS_ENABLED=false",
+        "ESCALATION_BISQ2_WS_ENABLED=false",
+    ):
+        assert disabled_switch in runbook
+    assert "--input docs/runbooks/branch-protection.json" in runbook
+    assert "--input docs/runbooks/release-ai-quality-release-branch-changes.json" in (
+        runbook
+    )
+    assert (
+        "Evidence approved under the single-operator profile is not launch evidence"
+        in normalized_runbook
+    )
