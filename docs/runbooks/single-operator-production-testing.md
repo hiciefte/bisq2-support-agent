@@ -150,9 +150,11 @@ gh api \
 gh api \
   "repos/${OWNER}/${REPOSITORY}/environments/${ENVIRONMENT}" \
   --jq '{
-    prevent_self_review,
+    prevent_self_review:
+      ([.protection_rules[] | select(.type == "required_reviewers") |
+        .prevent_self_review] | first),
     reviewers: [.protection_rules[] | select(.type == "required_reviewers") |
-      .reviewers[] | {type, id}],
+      .reviewers[] | {type, id: .reviewer.id}],
     deployment_branch_policy
   }'
 

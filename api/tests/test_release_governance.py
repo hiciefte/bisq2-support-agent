@@ -198,6 +198,8 @@ def test_single_operator_runbook_retains_technical_release_gates() -> None:
     )
     assert "AI_QUALITY_GATE_MARKER_APP_PRIVATE_KEY" in runbook
     assert "AI_QUALITY_GATE_MARKER_APP_CLIENT_ID" in runbook
+    assert ".prevent_self_review] | first" in runbook
+    assert "id: .reviewer.id" in runbook
     for disabled_switch in (
         "AUTONOMOUS_DELIVERY_ENABLED=false",
         "MATRIX_SYNC_ENABLED=false",
