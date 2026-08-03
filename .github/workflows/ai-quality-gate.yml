@@ -214,7 +214,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker compose $COMPOSE_FILES exec -T api \
+          docker compose $COMPOSE_FILES exec --user bisq-support -T api \
             python -m app.scripts.release_ai_quality_gate \
             --samples /data/evaluation/release_ai_quality_samples_v1.json \
             --output /data/evaluation/release_ai_quality.summary.json \
