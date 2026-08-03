@@ -244,6 +244,19 @@ def test_workflow_clears_and_strictly_validates_report_before_upload() -> None:
     assert "AI_QUALITY_GATE_OPENAI_MODEL" not in upload_block
 
 
+def test_workflow_generates_report_as_the_application_user() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    generate_index = workflow.index("Generate and score fresh answers")
+    ensure_index = workflow.index("Ensure a sanitized result exists")
+    generate_block = workflow[generate_index:ensure_index]
+
+    assert (
+        "docker compose $COMPOSE_FILES exec --user bisq-support -T api"
+        in generate_block
+    )
+    assert "docker compose $COMPOSE_FILES exec -T api" not in generate_block
+
+
 def test_unsafe_prior_report_cannot_be_uploaded_when_safety_step_fails() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
     upload_index = workflow.index("Archive sanitized quality report")
