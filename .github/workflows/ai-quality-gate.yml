@@ -236,7 +236,13 @@ jobs:
         shell: bash
         run: |
           docker compose $COMPOSE_FILES down --volumes --remove-orphans || true
-          python -c 'from pathlib import Path; Path("docker/.env").unlink(missing_ok=True)'
+          python - <<'PY'
+          from pathlib import Path
+
+          Path("docker/.env").unlink(missing_ok=True)
+          for name in ("escalations.db", "escalations.db-wal", "escalations.db-shm"):
+              Path("api/data", name).unlink(missing_ok=True)
+          PY
 
       - name: Archive sanitized quality report
         if: ${{ always() && steps.report_safety.outcome == 'success' }}

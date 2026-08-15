@@ -257,6 +257,18 @@ def test_workflow_generates_report_as_the_application_user() -> None:
     assert "docker compose $COMPOSE_FILES exec -T api" not in generate_block
 
 
+def test_workflow_removes_the_isolated_escalation_store() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    stop_index = workflow.index("Stop isolated release-candidate stack")
+    upload_index = workflow.index("Archive sanitized quality report")
+    stop_block = workflow[stop_index:upload_index]
+
+    assert '("escalations.db", "escalations.db-wal", "escalations.db-shm")' in (
+        stop_block
+    )
+    assert 'Path("api/data", name).unlink(missing_ok=True)' in stop_block
+
+
 def test_unsafe_prior_report_cannot_be_uploaded_when_safety_step_fails() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
     upload_index = workflow.index("Archive sanitized quality report")

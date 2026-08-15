@@ -2,16 +2,22 @@ from __future__ import annotations
 
 import copy
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from app.channels.escalation_localization import render_escalation_notice
 from app.prompts.runtime_policy import SAFETY_REFLEX_WARNING
 from app.scripts.release_ai_quality_gate import (
+    DEFAULT_API_BASE_URL,
+    ReviewDraft,
     build_release_gate_summary,
     generate_fresh_rows,
     load_release_sample_set,
+    load_review_draft,
 )
 from app.scripts.release_ai_quality_report import (
     AGGREGATE_FAILURE_CODES,
@@ -67,12 +73,16 @@ def _passing_rows() -> tuple[dict[str, Any], list[dict[str, Any]]]:
             "requires_human": False,
             "routing_action": "auto_send",
             "mcp_tools": [],
+            "evaluation_source": "delivered",
             **response_by_case[case_id],
         }
+        if response["requires_human"]:
+            response["evaluation_source"] = "review_draft"
         rows.append(
             {
                 **sample,
                 "answer": answer_by_case[case_id],
+                "review_delivery_valid": (True if response["requires_human"] else None),
                 "source_urls": (
                     [reviewed_wiki_url] if case_id == "wiki-spv-resync" else []
                 ),
@@ -286,6 +296,25 @@ def test_required_answer_terms_do_not_match_inside_larger_tokens() -> None:
     assert "per_sample_gate_failed" in summary["gate"]["failures"]
 
 
+def test_review_gate_rejects_an_invalid_public_replacement() -> None:
+    manifest, rows = _passing_rows()
+    candidate = copy.deepcopy(rows)
+    escalation_case = next(
+        row for row in candidate if row["case_id"] == "explicit-human-escalation"
+    )
+    escalation_case["review_delivery_valid"] = False
+
+    summary = _build_summary(manifest, candidate)
+
+    result = next(
+        row
+        for row in summary["per_sample"]
+        if row["case_id"] == "explicit-human-escalation"
+    )
+    assert "review_answer_not_replaced" in result["gate"]["failures"]
+    assert "per_sample_gate_failed" in summary["gate"]["failures"]
+
+
 def test_failed_summary_archives_only_allowlisted_failure_codes() -> None:
     manifest, rows = _passing_rows()
     candidate = copy.deepcopy(rows)
@@ -313,6 +342,7 @@ async def test_generation_queries_full_pipeline_without_hook_bypass() -> None:
     _, samples = _loaded_samples()
     sample = next(row for row in samples if row["case_id"] == "live-market-price")
     requests: list[httpx.Request] = []
+    review_draft_loader = AsyncMock(return_value=None)
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
@@ -337,25 +367,378 @@ async def test_generation_queries_full_pipeline_without_hook_bypass() -> None:
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         rows = await generate_fresh_rows(
             client,
-            api_url="http://localhost",
+            api_url=DEFAULT_API_BASE_URL,
             samples=[sample],
             timeout_seconds=5,
+            review_draft_loader=review_draft_loader,
         )
 
     payload = json.loads(requests[1].content)
     assert payload == {"question": sample["question"], "chat_history": []}
+    review_draft_loader.assert_not_awaited()
     assert rows[0]["release_response"] == {
         "request_error": None,
         "requires_human": False,
         "routing_action": "auto_send",
         "mcp_tools": ["get_market_prices"],
+        "evaluation_source": "delivered",
     }
     assert "sensitive tool payload" not in json.dumps(rows[0]["release_response"])
 
 
 @pytest.mark.asyncio
+async def test_generation_scores_redacted_review_draft_after_public_replacement() -> (
+    None
+):
+    manifest, samples = _loaded_samples()
+    sample = next(
+        row for row in samples if row["case_id"] == "explicit-human-escalation"
+    )
+    message_id = "web_01234567-89ab-4cde-8fab-0123456789ab"
+    public_notice = "A team member will review this and follow up."
+    review_draft = "Use mediation and wait for human review."
+    review_draft_loader = AsyncMock(
+        return_value=ReviewDraft(
+            answer=review_draft,
+            expected_delivery=public_notice,
+        )
+    )
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/health/ready":
+            return httpx.Response(200, json={"status": "ready"})
+        return httpx.Response(
+            200,
+            json={
+                "answer": public_notice,
+                "sources": [],
+                "message_id": message_id,
+                "requires_human": True,
+                "routing_action": "needs_human",
+                "mcp_tools_used": [],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        rows = await generate_fresh_rows(
+            client,
+            api_url=DEFAULT_API_BASE_URL,
+            samples=[sample],
+            timeout_seconds=5,
+            review_draft_loader=review_draft_loader,
+        )
+
+    assert json.loads(requests[1].content) == {
+        "question": sample["question"],
+        "chat_history": [],
+    }
+    review_draft_loader.assert_awaited_once_with(message_id)
+    assert rows[0]["answer"] == review_draft
+    assert rows[0]["review_delivery_valid"] is True
+    assert rows[0]["release_response"]["evaluation_source"] == "review_draft"
+
+    summary = _build_summary(manifest, rows)
+    assert summary["per_sample"][0]["response_contract"]["evaluation_source"] == (
+        "review_draft"
+    )
+    serialized = json.dumps(summary)
+    assert review_draft not in serialized
+    assert public_notice not in serialized
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "unsafe_delivery",
+    (
+        "Use mediation and wait for human review.",
+        (
+            "A team member will review this and follow up.\n\n"
+            "Use mediation and wait for human review."
+        ),
+        "A team member will review this and follow up.\n\nUse mediation",
+    ),
+)
+async def test_generation_rejects_public_draft_leakage(
+    unsafe_delivery: str,
+) -> None:
+    manifest, samples = _loaded_samples()
+    sample = next(
+        row for row in samples if row["case_id"] == "explicit-human-escalation"
+    )
+    message_id = "web_01234567-89ab-4cde-8fab-0123456789ab"
+    public_notice = "A team member will review this and follow up."
+    review_draft = "Use mediation and wait for human review."
+    review_draft_loader = AsyncMock(
+        return_value=ReviewDraft(
+            answer=review_draft,
+            expected_delivery=public_notice,
+        )
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health/ready":
+            return httpx.Response(200, json={"status": "ready"})
+        return httpx.Response(
+            200,
+            json={
+                "answer": unsafe_delivery,
+                "sources": [],
+                "message_id": message_id,
+                "requires_human": True,
+                "routing_action": "needs_human",
+                "mcp_tools_used": [],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        rows = await generate_fresh_rows(
+            client,
+            api_url=DEFAULT_API_BASE_URL,
+            samples=[sample],
+            timeout_seconds=5,
+            review_draft_loader=review_draft_loader,
+        )
+
+    assert rows[0]["review_delivery_valid"] is False
+    summary = _build_summary(manifest, rows)
+    result = summary["per_sample"][0]
+    assert "review_answer_not_replaced" in result["gate"]["failures"]
+    serialized = json.dumps(summary)
+    assert review_draft not in serialized
+    assert unsafe_delivery not in serialized
+
+
+@pytest.mark.asyncio
+async def test_generation_fails_closed_when_review_draft_is_unavailable() -> None:
+    manifest, samples = _loaded_samples()
+    sample = next(
+        row for row in samples if row["case_id"] == "explicit-human-escalation"
+    )
+    message_id = "web_01234567-89ab-4cde-8fab-0123456789ab"
+    review_draft_loader = AsyncMock(return_value=None)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health/ready":
+            return httpx.Response(200, json={"status": "ready"})
+        return httpx.Response(
+            200,
+            json={
+                "answer": "A team member will review this and follow up.",
+                "sources": [],
+                "message_id": message_id,
+                "requires_human": True,
+                "routing_action": "needs_human",
+                "mcp_tools_used": [],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        rows = await generate_fresh_rows(
+            client,
+            api_url=DEFAULT_API_BASE_URL,
+            samples=[sample],
+            timeout_seconds=5,
+            review_draft_loader=review_draft_loader,
+        )
+
+    summary = _build_summary(manifest, rows)
+    result = summary["per_sample"][0]
+    assert result["response_contract"]["evaluation_source"] == "unavailable"
+    assert result["gate"]["passed"] is False
+    assert "review_draft_unavailable" in result["gate"]["failures"]
+    assert "empty_answer" in result["gate"]["failures"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("message_id", "routing_action"),
+    (
+        (None, "needs_human"),
+        ("not-a-web-message-id", "needs_human"),
+        ("web_01234567-89ab-4cde-8fab-0123456789ab", "unknown"),
+    ),
+)
+async def test_generation_fails_closed_for_missing_identity_or_unknown_routing(
+    message_id: str | None,
+    routing_action: str,
+) -> None:
+    manifest, samples = _loaded_samples()
+    sample = next(
+        row for row in samples if row["case_id"] == "explicit-human-escalation"
+    )
+    review_draft_loader = AsyncMock(return_value=None)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health/ready":
+            return httpx.Response(200, json={"status": "ready"})
+        payload: dict[str, Any] = {
+            "answer": "A team member will review this and follow up.",
+            "sources": [],
+            "requires_human": False,
+            "routing_action": routing_action,
+            "mcp_tools_used": [],
+        }
+        if message_id is not None:
+            payload["message_id"] = message_id
+        return httpx.Response(200, json=payload)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        rows = await generate_fresh_rows(
+            client,
+            api_url=DEFAULT_API_BASE_URL,
+            samples=[sample],
+            timeout_seconds=5,
+            review_draft_loader=review_draft_loader,
+        )
+
+    if message_id and message_id.startswith("web_"):
+        review_draft_loader.assert_awaited_once_with(message_id)
+    else:
+        review_draft_loader.assert_not_awaited()
+    result = _build_summary(manifest, rows)["per_sample"][0]
+    assert result["response_contract"]["evaluation_source"] == "unavailable"
+    assert "review_draft_unavailable" in result["gate"]["failures"]
+
+
+@pytest.mark.asyncio
+async def test_generation_sanitizes_review_loader_exceptions() -> None:
+    manifest, samples = _loaded_samples()
+    sample = next(
+        row for row in samples if row["case_id"] == "explicit-human-escalation"
+    )
+    private_detail = "private database exception detail"
+    review_draft_loader = AsyncMock(side_effect=RuntimeError(private_detail))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health/ready":
+            return httpx.Response(200, json={"status": "ready"})
+        return httpx.Response(
+            200,
+            json={
+                "answer": "A team member will review this and follow up.",
+                "sources": [],
+                "message_id": "web_01234567-89ab-4cde-8fab-0123456789ab",
+                "requires_human": True,
+                "routing_action": "needs_human",
+                "mcp_tools_used": [],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        rows = await generate_fresh_rows(
+            client,
+            api_url=DEFAULT_API_BASE_URL,
+            samples=[sample],
+            timeout_seconds=5,
+            review_draft_loader=review_draft_loader,
+        )
+
+    summary = _build_summary(manifest, rows)
+    assert "review_draft_unavailable" in summary["per_sample"][0]["gate"]["failures"]
+    assert private_detail not in json.dumps(rows)
+    assert private_detail not in json.dumps(summary)
+
+
+@pytest.mark.asyncio
+async def test_review_draft_loader_reads_only_valid_web_escalations(
+    tmp_path: Path,
+) -> None:
+    from app.models.escalation import EscalationCreate
+    from app.services.escalation.escalation_repository import EscalationRepository
+
+    db_path = tmp_path / "escalations.db"
+    repository = EscalationRepository(str(db_path))
+    await repository.initialize()
+    message_id = "web_01234567-89ab-4cde-8fab-0123456789ab"
+    await repository.create(
+        EscalationCreate(
+            message_id=message_id,
+            channel="web",
+            user_id="quality-gate",
+            question="Reviewed question",
+            ai_draft_answer_original="PII-filtered review draft",
+            ai_draft_answer="Canonical draft",
+            confidence_score=0.0,
+            routing_action="needs_human",
+        )
+    )
+
+    review_draft = await load_review_draft(str(db_path), message_id)
+    assert review_draft == ReviewDraft(
+        answer="PII-filtered review draft",
+        expected_delivery=render_escalation_notice(
+            channel_id="web",
+            escalation_id=1,
+            support_handle="support",
+        ),
+    )
+    assert await load_review_draft(str(db_path), "not-a-web-message-id") is None
+
+    warning_message_id = "web_aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+    warning_draft = f"{SAFETY_REFLEX_WARNING}\n\nEscalated draft"
+    warning_escalation = await repository.create(
+        EscalationCreate(
+            message_id=warning_message_id,
+            channel="web",
+            user_id="quality-gate",
+            question="Reviewed question",
+            ai_draft_answer_original=warning_draft,
+            ai_draft_answer=warning_draft,
+            confidence_score=0.0,
+            routing_action="needs_human",
+        )
+    )
+    warning_review_draft = await load_review_draft(
+        str(db_path),
+        warning_message_id,
+    )
+    warning_notice = render_escalation_notice(
+        channel_id="web",
+        escalation_id=warning_escalation.id,
+        support_handle="support",
+    )
+    assert warning_review_draft == ReviewDraft(
+        answer=warning_draft,
+        expected_delivery=f"{SAFETY_REFLEX_WARNING}\n\n{warning_notice}",
+    )
+
+    other_channel_id = "web_11111111-2222-4333-8444-555555555555"
+    await repository.create(
+        EscalationCreate(
+            message_id=other_channel_id,
+            channel="matrix",
+            user_id="quality-gate",
+            question="Reviewed question",
+            ai_draft_answer_original="Other-channel draft",
+            ai_draft_answer="Other-channel draft",
+            confidence_score=0.0,
+            routing_action="needs_human",
+        )
+    )
+    assert await load_review_draft(str(db_path), other_channel_id) is None
+
+
+@pytest.mark.asyncio
+async def test_review_draft_loader_does_not_create_a_missing_database(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "missing.db"
+
+    with pytest.raises(sqlite3.OperationalError):
+        await load_review_draft(
+            str(db_path),
+            "web_01234567-89ab-4cde-8fab-0123456789ab",
+        )
+
+    assert not db_path.exists()
+
+
+@pytest.mark.asyncio
 async def test_generation_records_safe_http_failure_without_response_detail() -> None:
     _, samples = _loaded_samples()
+    review_draft_loader = AsyncMock(return_value=None)
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/health/ready":
@@ -365,10 +748,13 @@ async def test_generation_records_safe_http_failure_without_response_detail() ->
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         rows = await generate_fresh_rows(
             client,
-            api_url="http://localhost",
+            api_url=DEFAULT_API_BASE_URL,
             samples=[samples[0]],
             timeout_seconds=5,
+            review_draft_loader=review_draft_loader,
         )
 
     assert rows[0]["release_response"]["request_error"] == "http_error"
+    assert rows[0]["release_response"]["evaluation_source"] == "unavailable"
+    review_draft_loader.assert_not_awaited()
     assert "internal exception detail" not in json.dumps(rows)

@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-REPORT_SCHEMA_VERSION = 1
+REPORT_SCHEMA_VERSION = 2
 MODEL_ID_PATTERN = re.compile(r"^openai:[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 SAFE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,80}$")
 SAFE_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{0,80}$")
@@ -31,6 +31,8 @@ PER_SAMPLE_FAILURE_CODES = frozenset(
         "request_failed",
         "required_answer_term_missing",
         "required_mcp_tool_missing",
+        "review_answer_not_replaced",
+        "review_draft_unavailable",
         "review_delivery_required",
         "routing_action_not_allowed",
         "scam_warning_present_mismatch",
@@ -60,6 +62,8 @@ AGGREGATE_FAILURE_CODES = frozenset(
 REQUEST_ERROR_CODES = frozenset(
     {"http_error", "invalid_response", "request_failed", "timeout"}
 )
+EVALUATION_SOURCES = frozenset({"delivered", "review_draft", "unavailable"})
+DIRECT_EVALUATION_ROUTING_ACTIONS = frozenset({"auto_send", "needs_clarification"})
 
 METRIC_KEYS = frozenset(
     {
@@ -227,7 +231,15 @@ def _validate_per_sample(value: Any) -> None:
 
     response = _exact_object(
         sample["response_contract"],
-        frozenset({"request_error", "requires_human", "routing_action", "mcp_tools"}),
+        frozenset(
+            {
+                "request_error",
+                "requires_human",
+                "routing_action",
+                "mcp_tools",
+                "evaluation_source",
+            }
+        ),
         "Response contract",
     )
     request_error = response["request_error"]
@@ -235,11 +247,28 @@ def _validate_per_sample(value: Any) -> None:
         raise ValueError("Response request error is unsafe")
     if not isinstance(response["requires_human"], bool):
         raise ValueError("Response requires_human must be boolean")
+    if response["evaluation_source"] not in EVALUATION_SOURCES:
+        raise ValueError("Response evaluation source is unsafe")
     routing_action = response["routing_action"]
     if not isinstance(routing_action, str) or not SAFE_TOKEN_PATTERN.fullmatch(
         routing_action
     ):
         raise ValueError("Response routing action is unsafe")
+    evaluation_source = response["evaluation_source"]
+    review_routed = (
+        response["requires_human"]
+        or routing_action not in DIRECT_EVALUATION_ROUTING_ACTIONS
+    )
+    if request_error is not None and evaluation_source != "unavailable":
+        raise ValueError("Failed response evaluation source is inconsistent")
+    if request_error is None and not review_routed and evaluation_source != "delivered":
+        raise ValueError("Direct response evaluation source is inconsistent")
+    if (
+        request_error is None
+        and review_routed
+        and evaluation_source not in {"review_draft", "unavailable"}
+    ):
+        raise ValueError("Review response evaluation source is inconsistent")
     tools = response["mcp_tools"]
     if (
         not isinstance(tools, list)
@@ -259,6 +288,15 @@ def _validate_per_sample(value: Any) -> None:
     failures = _failure_list(
         gate["failures"], PER_SAMPLE_FAILURE_CODES, "Per-sample gate"
     )
+    if (request_error is not None) != ("request_failed" in failures):
+        raise ValueError("Response request error must match its gate failure")
+    if (
+        request_error is None
+        and review_routed
+        and evaluation_source == "unavailable"
+        and "review_draft_unavailable" not in failures
+    ):
+        raise ValueError("Unavailable review draft must fail explicitly")
     if gate["passed"] == bool(failures):
         raise ValueError("Per-sample gate result does not match its failures")
 

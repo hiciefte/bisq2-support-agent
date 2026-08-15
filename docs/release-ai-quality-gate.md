@@ -28,11 +28,23 @@ diagnostic, explicit-escalation, live-price, and live-offerbook cases.
 
 `api/app/scripts/release_ai_quality_gate.py` queries `/chat/query`, reuses the
 staff-alignment behavior scorer, and enforces both aggregate thresholds and
-per-case requirements. Per-case checks cover greeting avoidance, scam warning
-presence or absence, wiki-link recall, diagnostic-question behavior, answer
-length, remedy terms, review routing, and required MCP tools. Live-data cases
-also require reviewed terms from the deterministic stub result to appear in the
-answer, so merely naming a tool cannot pass the case.
+per-case requirements. Direct-delivery cases are scored as returned. When the
+full production-mode pipeline routes a case to review, the public response must
+match the exact localized escalation notice, with only the static safety prefix
+allowed when that prefix was present on the draft. The evaluator scores the
+correlated, PII-filtered localized draft already committed to the isolated
+escalation store. It deliberately uses the localized post-filter field instead
+of canonical metadata so the score reflects the user-facing language without
+trusting a broader metadata field. A missing draft or any other public answer
+fails the case; the evaluator never bypasses the escalation hook or exposes the
+draft through an HTTP endpoint.
+
+Per-case checks cover greeting avoidance, scam warning presence or absence,
+wiki-link recall, diagnostic-question behavior, answer length, remedy terms,
+review routing, draft availability, public-answer replacement, and required MCP
+tools. Live-data cases also require reviewed terms from the deterministic stub
+result to appear in the evaluated answer, so merely naming a tool cannot pass
+the case.
 
 The report binds its result to:
 
@@ -43,12 +55,14 @@ The report binds its result to:
 - a SHA-256 over the runtime prompt policy, soul, and prompt manager inputs.
 
 Only the sanitized report is archived. It contains case IDs, metrics, routing
-actions, and tool names. It excludes questions, answers, source text, tool
-results, user identifiers, events, credentials, and service addresses. The
-workflow clears any prior output before generation, the evaluator writes through
-an atomic replacement, and a separate standard-library validator enforces an
-exact allowlisted schema before upload. Missing or invalid output is replaced by
-a text-free failing report and keeps the workflow failed.
+actions, tool names, and whether each score used a delivered answer or a review
+draft. It excludes questions, answers, source text, tool results, message and
+user identifiers, events, credentials, and service addresses. The workflow
+clears any prior output before generation, the evaluator writes through an
+atomic replacement, and a separate standard-library validator enforces an exact
+allowlisted schema before upload. Missing or invalid output is replaced by a
+text-free failing report and keeps the workflow failed. The isolated escalation
+database and its sidecar files are removed after the stack stops.
 
 ## CI configuration
 

@@ -47,8 +47,12 @@ def _per_sample_failure_report() -> dict:
                 "requires_human": False,
                 "routing_action": "",
                 "mcp_tools": [],
+                "evaluation_source": "unavailable",
             },
-            "gate": {"passed": False, "failures": ["empty_answer"]},
+            "gate": {
+                "passed": False,
+                "failures": ["empty_answer", "review_draft_unavailable"],
+            },
         }
     ]
     report["gate"]["failures"] = ["per_sample_gate_failed"]
@@ -107,6 +111,65 @@ def test_report_validator_rejects_raw_model_id() -> None:
     report["generation"]["model_id"] = "openai:release-model"
 
     with pytest.raises(ValueError, match="unsupported schema"):
+        validate_release_ai_quality_report(report)
+
+
+def test_report_validator_rejects_unknown_evaluation_source() -> None:
+    report = _per_sample_failure_report()
+    report["per_sample"][0]["response_contract"]["evaluation_source"] = "raw_answer"
+
+    with pytest.raises(ValueError, match="evaluation source"):
+        validate_release_ai_quality_report(report)
+
+
+@pytest.mark.parametrize(
+    ("request_error", "requires_human", "routing_action", "evaluation_source"),
+    (
+        ("http_error", False, "auto_send", "delivered"),
+        (None, False, "auto_send", "review_draft"),
+        (None, True, "needs_human", "delivered"),
+        (None, False, "unknown", "delivered"),
+    ),
+)
+def test_report_validator_rejects_inconsistent_evaluation_source(
+    request_error: str | None,
+    requires_human: bool,
+    routing_action: str,
+    evaluation_source: str,
+) -> None:
+    report = _per_sample_failure_report()
+    response = report["per_sample"][0]["response_contract"]
+    response.update(
+        {
+            "request_error": request_error,
+            "requires_human": requires_human,
+            "routing_action": routing_action,
+            "evaluation_source": evaluation_source,
+        }
+    )
+
+    with pytest.raises(ValueError, match="evaluation source"):
+        validate_release_ai_quality_report(report)
+
+
+def test_report_validator_requires_explicit_unavailable_review_failure() -> None:
+    report = _per_sample_failure_report()
+    report["per_sample"][0]["gate"]["failures"] = ["empty_answer"]
+
+    with pytest.raises(ValueError, match="fail explicitly"):
+        validate_release_ai_quality_report(report)
+
+
+@pytest.mark.parametrize("request_error", (None, "http_error"))
+def test_report_validator_requires_request_error_failure_consistency(
+    request_error: str | None,
+) -> None:
+    report = _per_sample_failure_report()
+    report["per_sample"][0]["response_contract"]["request_error"] = request_error
+    if request_error is None:
+        report["per_sample"][0]["gate"]["failures"].append("request_failed")
+
+    with pytest.raises(ValueError, match="request error must match"):
         validate_release_ai_quality_report(report)
 
 

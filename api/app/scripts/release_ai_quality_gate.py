@@ -17,15 +17,21 @@ import math
 import os
 import re
 import subprocess
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
 
+import aiosqlite
 import httpx
-from app.channels.constants import REVIEW_QUEUE_ACTIONS
+from app.channels.constants import DIRECT_DELIVERY_ACTIONS, REVIEW_QUEUE_ACTIONS
+from app.channels.escalation_localization import render_escalation_notice
+from app.channels.response_dispatcher import preserve_static_safety_warning
+from app.core.config import get_settings
 from app.scripts.release_ai_quality_report import (
     MODEL_ID_PATTERN,
+    REPORT_SCHEMA_VERSION,
     model_sha256,
     validate_aggregate_thresholds,
     write_json_atomic,
@@ -35,7 +41,7 @@ from app.scripts.retrieval_benchmark_harness import (
     build_staff_alignment_behavior_summary,
 )
 
-FRESH_GATE_SCHEMA_VERSION = 1
+FRESH_GATE_SCHEMA_VERSION = REPORT_SCHEMA_VERSION
 SAMPLE_SET_SCHEMA_VERSION = 1
 DEFAULT_SAMPLES_PATH = "api/data/evaluation/release_ai_quality_samples_v1.json"
 DEFAULT_OUTPUT_PATH = "api/data/evaluation/release_ai_quality.summary.json"
@@ -48,6 +54,20 @@ _SAFE_TOOL_RE = re.compile(r"^[a-zA-Z0-9_.-]{1,80}$")
 _SAFE_ROUTING_RE = re.compile(r"^[a-zA-Z0-9_.-]{1,80}$")
 _SAFE_COMMIT_RE = re.compile(r"^[0-9a-f]{40,64}$")
 _SAFE_ANSWER_TERM_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ,.%-]{0,39}$")
+_SAFE_WEB_MESSAGE_ID_RE = re.compile(
+    r"^web_[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-" r"[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+)
+
+
+@dataclass(frozen=True)
+class ReviewDraft:
+    """Minimal private state required to evaluate one review-routed response."""
+
+    answer: str
+    expected_delivery: str
+
+
+ReviewDraftLoader = Callable[[str], Awaitable[ReviewDraft | None]]
 
 _PROMPT_INPUTS = (
     "prompts/runtime_policy.py",
@@ -419,14 +439,59 @@ def _mcp_tool_names(response: dict[str, Any]) -> list[str]:
     return sorted(set(names))
 
 
+async def load_review_draft(db_path: str, message_id: str) -> ReviewDraft | None:
+    """Load only the private fields needed to evaluate one web escalation."""
+    if not _SAFE_WEB_MESSAGE_ID_RE.fullmatch(message_id):
+        return None
+
+    database_uri = f"{Path(db_path).resolve().as_uri()}?mode=ro"
+    async with aiosqlite.connect(database_uri, uri=True) as db:
+        cursor = await db.execute(
+            """
+            SELECT id, ai_draft_answer_original, user_language
+            FROM escalations
+            WHERE message_id = ? AND channel = ?
+            LIMIT 1
+            """,
+            (message_id, "web"),
+        )
+        row = await cursor.fetchone()
+
+    if row is None:
+        return None
+
+    escalation_id, draft, language_code = row
+    if not isinstance(escalation_id, int) or escalation_id < 1:
+        return None
+    if not isinstance(draft, str):
+        return None
+    normalized = draft.strip()
+    if not normalized or len(normalized) > 10_000:
+        return None
+    if language_code is not None and not isinstance(language_code, str):
+        return None
+
+    notice = render_escalation_notice(
+        channel_id="web",
+        escalation_id=escalation_id,
+        support_handle="support",
+        language_code=language_code,
+    )
+    return ReviewDraft(
+        answer=normalized,
+        expected_delivery=preserve_static_safety_warning(normalized, notice).strip(),
+    )
+
+
 async def generate_fresh_rows(
     client: httpx.AsyncClient,
     *,
     api_url: str,
     samples: list[dict[str, Any]],
     timeout_seconds: float,
+    review_draft_loader: ReviewDraftLoader,
 ) -> list[dict[str, Any]]:
-    """Query the full chat pipeline and return transient scorer rows."""
+    """Query the full pipeline and score delivered answers or queued drafts."""
     readiness = await client.get(f"{api_url}/health/ready", timeout=10.0)
     readiness.raise_for_status()
     readiness_data = readiness.json()
@@ -457,9 +522,9 @@ async def generate_fresh_rows(
         except (httpx.HTTPError, json.JSONDecodeError, ValueError):
             request_error = "request_failed"
 
-        answer = response_data.get("answer")
-        if not isinstance(answer, str):
-            answer = ""
+        delivered_answer = response_data.get("answer")
+        if not isinstance(delivered_answer, str):
+            delivered_answer = ""
 
         routing_action = response_data.get("routing_action")
         if not isinstance(routing_action, str) or not _SAFE_ROUTING_RE.fullmatch(
@@ -467,19 +532,45 @@ async def generate_fresh_rows(
         ):
             routing_action = ""
 
+        requires_human = response_data.get("requires_human") is True
+        review_routed = requires_human or routing_action not in DIRECT_DELIVERY_ACTIONS
+        answer = delivered_answer
+        evaluation_source = "delivered" if request_error is None else "unavailable"
+        review_delivery_valid: bool | None = None
+        if request_error is None and review_routed:
+            answer = ""
+            evaluation_source = "unavailable"
+            message_id = response_data.get("message_id")
+            if isinstance(message_id, str) and _SAFE_WEB_MESSAGE_ID_RE.fullmatch(
+                message_id
+            ):
+                try:
+                    review_draft = await review_draft_loader(message_id)
+                except Exception:
+                    review_draft = None
+                if review_draft is not None:
+                    answer = review_draft.answer
+                    evaluation_source = "review_draft"
+                    review_delivery_valid = (
+                        delivered_answer.strip()
+                        == review_draft.expected_delivery.strip()
+                    )
+
         rows.append(
             {
                 "case_id": case_id,
                 "question": sample["question"],
                 "ground_truth": sample["ground_truth"],
                 "answer": answer,
+                "review_delivery_valid": review_delivery_valid,
                 "source_urls": _source_urls(response_data),
                 "metadata": sample["metadata"],
                 "release_response": {
                     "request_error": request_error,
-                    "requires_human": response_data.get("requires_human") is True,
+                    "requires_human": requires_human,
                     "routing_action": routing_action,
                     "mcp_tools": _mcp_tool_names(response_data),
+                    "evaluation_source": evaluation_source,
                 },
             }
         )
@@ -499,6 +590,17 @@ def _score_release_contract(
     if not str(row.get("answer", "")).strip():
         failures.append("empty_answer")
 
+    routing_action = response["routing_action"]
+    review_routed = (
+        response["requires_human"] or routing_action not in DIRECT_DELIVERY_ACTIONS
+    )
+    evaluation_source = response["evaluation_source"]
+    if review_routed and response["request_error"] is None:
+        if evaluation_source != "review_draft":
+            failures.append("review_draft_unavailable")
+        elif row.get("review_delivery_valid") is not True:
+            failures.append("review_answer_not_replaced")
+
     for metric_name, expected in sorted(floor["expected_metrics"].items()):
         actual = behavior_score[metric_name]
         if actual is not expected:
@@ -512,7 +614,6 @@ def _score_release_contract(
     if float(behavior_score["remedy_term_overlap"]) < min_overlap:
         failures.append("remedy_term_overlap_below_min")
 
-    routing_action = response["routing_action"]
     if floor.get("delivery") == "review" and not (
         response["requires_human"] or routing_action in REVIEW_QUEUE_ACTIONS
     ):
@@ -540,6 +641,7 @@ def _score_release_contract(
         "requires_human": response["requires_human"],
         "routing_action": routing_action,
         "mcp_tools": response["mcp_tools"],
+        "evaluation_source": evaluation_source,
     }
     return safe_contract, list(dict.fromkeys(failures))
 
@@ -578,8 +680,16 @@ def build_release_gate_summary(
     commit: str,
 ) -> dict[str, Any]:
     """Score fresh rows and return a report safe for build artifacts."""
+    scorer_rows = [
+        (
+            row
+            if str(row.get("answer", "")).strip()
+            else {**row, "answer": "Evaluation unavailable."}
+        )
+        for row in rows
+    ]
     behavior = build_staff_alignment_behavior_summary(
-        rows,
+        scorer_rows,
         thresholds={
             key: float(value)
             for key, value in sample_manifest["aggregate_thresholds"].items()
@@ -635,6 +745,10 @@ async def run_release_gate(args: argparse.Namespace) -> int:
     api_url = _validate_api_url(args.api_url)
     model_id = _validated_model_id()
     temperature = _require_zero_temperature()
+    settings = get_settings()
+
+    async def review_draft_loader(message_id: str) -> ReviewDraft | None:
+        return await load_review_draft(settings.ESCALATION_DB_PATH, message_id)
 
     async with httpx.AsyncClient() as client:
         rows = await generate_fresh_rows(
@@ -642,6 +756,7 @@ async def run_release_gate(args: argparse.Namespace) -> int:
             api_url=api_url,
             samples=samples,
             timeout_seconds=args.request_timeout,
+            review_draft_loader=review_draft_loader,
         )
 
     summary = build_release_gate_summary(
