@@ -75,6 +75,9 @@ logger = logging.getLogger(__name__)
 _GROUP_CHANNEL_MAX_ANSWER_LENGTH = 500
 _CONTEXT_LLM_FALLBACK_WORKERS = 4
 _READINESS_CACHE_TTL_SECONDS = 5.0
+_STATIC_SAFETY_WARNING_PATTERN = re.compile(
+    r"\s+".join(re.escape(part) for part in SAFETY_REFLEX_WARNING.split())
+)
 _DEFINITION_QUESTION_PATTERNS = (
     r"^\s*what\s+is\b",
     r"^\s*what'?s\b",
@@ -153,8 +156,8 @@ def apply_support_answer_style(
 
 
 def _without_static_safety_warning(answer_text: str) -> str:
-    """Remove the exact warning so it can be reinserted once at the front."""
-    return str(answer_text or "").replace(SAFETY_REFLEX_WARNING, "").strip()
+    """Remove whitespace-equivalent copies before applying warning policy."""
+    return _STATIC_SAFETY_WARNING_PATTERN.sub("", str(answer_text or "")).strip()
 
 
 def _with_static_safety_warning(answer_text: str) -> str:
@@ -163,6 +166,17 @@ def _with_static_safety_warning(answer_text: str) -> str:
     if not body:
         return SAFETY_REFLEX_WARNING
     return f"{SAFETY_REFLEX_WARNING}\n\n{body}"
+
+
+def _apply_static_safety_warning_policy(
+    answer_text: str,
+    *,
+    required: bool,
+) -> str:
+    """Make the classifier authoritative over the exact static warning."""
+    if required:
+        return _with_static_safety_warning(answer_text)
+    return _without_static_safety_warning(answer_text)
 
 
 def apply_group_channel_answer_style(
@@ -1040,6 +1054,10 @@ class SimplifiedRAGService:
                 if hasattr(response_text, "content")
                 else str(response_text)
             )
+            response_content = _apply_static_safety_warning_policy(
+                response_content,
+                required=False,
+            )
 
             # Track token usage and cost
             if hasattr(response_text, "usage") and response_text.usage:
@@ -1587,7 +1605,9 @@ class SimplifiedRAGService:
                         f"Attempting context-aware fallback with {len(chat_history)} messages in history"
                     )
                     return await self._answer_from_context(
-                        preprocessed_question, chat_history, detected_version
+                        preprocessed_question,
+                        chat_history,
+                        detected_version,
                     )
 
                 # No conversation history either - create feedback entry and return "no info" message
@@ -1756,8 +1776,10 @@ class SimplifiedRAGService:
                         docs=docs,
                     )
 
-            if needs_safety_reflex:
-                response_text = _with_static_safety_warning(response_text)
+            response_text = _apply_static_safety_warning_policy(
+                response_text,
+                required=needs_safety_reflex,
+            )
 
             # Calculate response time
             response_time = time.time() - start_time
@@ -1991,8 +2013,10 @@ class SimplifiedRAGService:
                 question_text=preprocessed_question,
                 detection_source=detection_source,
             )
-            if needs_safety_reflex:
-                final_response = _with_static_safety_warning(final_response)
+            final_response = _apply_static_safety_warning_policy(
+                final_response,
+                required=needs_safety_reflex,
+            )
 
             # Update error rate (success)
             update_error_rate(is_error=False)
