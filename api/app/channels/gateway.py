@@ -311,8 +311,17 @@ class ChannelGateway:
 
             outgoing.metadata.processing_time_ms = (time.time() - start_time) * 1000
             if ChannelResponseDispatcher.should_autosend_response(outgoing):
-                for event in pending_tokens:
-                    yield event
+                streamed_answer = "".join(
+                    str(event.get("data") or "") for event in pending_tokens
+                )
+                if streamed_answer == outgoing.answer:
+                    for event in pending_tokens:
+                        yield event
+                elif pending_tokens:
+                    logger.info(
+                        "Suppressing streamed draft tokens because final answer changed",
+                        extra={"message_id": message.message_id},
+                    )
             elif pending_tokens:
                 logger.info(
                     "Suppressing streamed draft tokens for review-routed response",

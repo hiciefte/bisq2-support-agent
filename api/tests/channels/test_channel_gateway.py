@@ -119,7 +119,7 @@ class TestChannelGatewayRouting:
             yield {
                 "event": "final",
                 "data": {
-                    "answer": "Final answer",
+                    "answer": "Test answer",
                     "sources": [],
                     "response_time": 0.5,
                     "routing_action": "auto_send",
@@ -127,7 +127,6 @@ class TestChannelGatewayRouting:
             }
 
         async def post_hook_execute(_incoming, outgoing):
-            outgoing.answer = "Post-hook final answer"
             return None
 
         mock_rag_service.stream_query = stream_query
@@ -145,9 +144,82 @@ class TestChannelGatewayRouting:
         assert events[1]["data"] == "answer"
         final = events[2]["data"]
         assert isinstance(final, OutgoingMessage)
-        assert final.answer == "Post-hook final answer"
+        assert final.answer == "Test answer"
         assert final.metadata.hooks_executed == ["test_post_hook"]
         mock_post_hook.execute.assert_awaited_once()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_stream_message_suppresses_tokens_after_post_hook_rewrite(
+        self, sample_incoming_message, mock_rag_service, mock_post_hook
+    ):
+        """Post-hook policy changes cannot leave stale tokens visible."""
+        from app.channels.gateway import ChannelGateway
+
+        async def stream_query(*args, **kwargs):
+            yield {"event": "token", "data": "Original answer"}
+            yield {
+                "event": "final",
+                "data": {
+                    "answer": "Original answer",
+                    "sources": [],
+                    "response_time": 0.5,
+                    "routing_action": "auto_send",
+                },
+            }
+
+        async def post_hook_execute(_incoming, outgoing):
+            outgoing.answer = "Rewritten answer"
+            return None
+
+        mock_rag_service.stream_query = stream_query
+        mock_post_hook.execute = AsyncMock(side_effect=post_hook_execute)
+
+        gateway = ChannelGateway(rag_service=mock_rag_service)
+        gateway.register_post_hook(mock_post_hook)
+
+        events = [
+            event async for event in gateway.stream_message(sample_incoming_message)
+        ]
+
+        assert [event["event"] for event in events] == ["final"]
+        final = events[0]["data"]
+        assert isinstance(final, OutgoingMessage)
+        assert final.answer == "Rewritten answer"
+        mock_post_hook.execute.assert_awaited_once()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_stream_message_suppresses_tokens_when_final_answer_changed(
+        self, sample_incoming_message, mock_rag_service
+    ):
+        """Raw generation tokens cannot bypass final answer policy."""
+        from app.channels.gateway import ChannelGateway
+
+        async def stream_query(*args, **kwargs):
+            yield {"event": "token", "data": "Static warning. "}
+            yield {"event": "token", "data": "Essential answer."}
+            yield {
+                "event": "final",
+                "data": {
+                    "answer": "Essential answer.",
+                    "sources": [],
+                    "response_time": 0.5,
+                    "routing_action": "auto_send",
+                },
+            }
+
+        mock_rag_service.stream_query = stream_query
+        gateway = ChannelGateway(rag_service=mock_rag_service)
+
+        events = [
+            event async for event in gateway.stream_message(sample_incoming_message)
+        ]
+
+        assert [event["event"] for event in events] == ["final"]
+        final = events[0]["data"]
+        assert isinstance(final, OutgoingMessage)
+        assert final.answer == "Essential answer."
 
     @pytest.mark.unit
     @pytest.mark.asyncio
