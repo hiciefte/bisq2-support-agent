@@ -12,7 +12,7 @@ from copy import deepcopy
 from enum import Enum
 from typing import Any
 
-from app.channels.constants import REVIEW_QUEUE_ACTIONS
+from app.channels.constants import DIRECT_DELIVERY_ACTIONS, REVIEW_QUEUE_ACTIONS
 from app.channels.delivery_planner import DeliveryMode, DeliveryPlanner
 from app.channels.escalation_localization import render_escalation_notice
 from app.channels.policy import (
@@ -27,8 +27,6 @@ from app.prompts.runtime_policy import SAFETY_REFLEX_WARNING
 from app.services.channel_launch_control_service import LAUNCH_CONTROLLED_CHANNELS
 
 logger = logging.getLogger(__name__)
-
-_DIRECT_DELIVERY_ACTIONS = frozenset({"auto_send", "needs_clarification"})
 
 
 class DispatchOutcome(str, Enum):
@@ -302,7 +300,7 @@ class ChannelResponseDispatcher:
         )
         if requires_human:
             return False
-        if routing_action in _DIRECT_DELIVERY_ACTIONS:
+        if routing_action in DIRECT_DELIVERY_ACTIONS:
             return True
         if not routing_action:
             logger.error(
@@ -325,7 +323,7 @@ class ChannelResponseDispatcher:
         requires_human = (
             requires_human_raw if isinstance(requires_human_raw, bool) else False
         )
-        return requires_human or routing_action not in _DIRECT_DELIVERY_ACTIONS
+        return requires_human or routing_action not in DIRECT_DELIVERY_ACTIONS
 
     def _resolve_escalation_service(self) -> Any | None:
         if self.escalation_service is not None:
