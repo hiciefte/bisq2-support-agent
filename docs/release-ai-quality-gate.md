@@ -56,13 +56,16 @@ The report binds its result to:
 
 Only the sanitized report is archived. It contains case IDs, metrics, routing
 actions, tool names, and whether each score used a delivered answer or a review
-draft. It excludes questions, answers, source text, tool results, message and
-user identifiers, events, credentials, and service addresses. The workflow
-clears any prior output before generation, the evaluator writes through an
-atomic replacement, and a separate standard-library validator enforces an exact
-allowlisted schema before upload. Missing or invalid output is replaced by a
-text-free failing report and keeps the workflow failed. The isolated escalation
-database and its sidecar files are removed after the stack stops.
+draft. The evaluation source is `unavailable` when a request fails or a
+review-routed response cannot be matched to its private draft; either condition
+fails the gate explicitly. The report excludes questions, answers, source text,
+tool results, message and user identifiers, events, credentials, and service
+addresses. The workflow clears any prior output before generation, the
+evaluator writes through an atomic replacement, and a separate standard-library
+validator enforces an exact allowlisted schema before upload. Missing or invalid
+output is replaced by a text-free failing report and keeps the workflow failed.
+The isolated escalation database and its sidecar files are removed after the
+stack stops.
 
 ## CI configuration
 

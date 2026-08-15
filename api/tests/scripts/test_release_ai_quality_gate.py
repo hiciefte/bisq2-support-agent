@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -603,7 +604,9 @@ async def test_generation_fails_closed_for_missing_identity_or_unknown_routing(
 
 
 @pytest.mark.asyncio
-async def test_generation_sanitizes_review_loader_exceptions() -> None:
+async def test_generation_sanitizes_review_loader_exceptions(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     manifest, samples = _loaded_samples()
     sample = next(
         row for row in samples if row["case_id"] == "explicit-human-escalation"
@@ -626,17 +629,24 @@ async def test_generation_sanitizes_review_loader_exceptions() -> None:
             },
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        rows = await generate_fresh_rows(
-            client,
-            api_url=DEFAULT_API_BASE_URL,
-            samples=[sample],
-            timeout_seconds=5,
-            review_draft_loader=review_draft_loader,
-        )
+    with caplog.at_level(
+        logging.WARNING,
+        logger="app.scripts.release_ai_quality_gate",
+    ):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            rows = await generate_fresh_rows(
+                client,
+                api_url=DEFAULT_API_BASE_URL,
+                samples=[sample],
+                timeout_seconds=5,
+                review_draft_loader=review_draft_loader,
+            )
 
     summary = _build_summary(manifest, rows)
     assert "review_draft_unavailable" in summary["per_sample"][0]["gate"]["failures"]
+    assert sample["case_id"] in caplog.text
+    assert "RuntimeError" in caplog.text
+    assert private_detail not in caplog.text
     assert private_detail not in json.dumps(rows)
     assert private_detail not in json.dumps(summary)
 

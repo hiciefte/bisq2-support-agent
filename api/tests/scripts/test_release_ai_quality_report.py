@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import pytest
+from app.channels.constants import DIRECT_DELIVERY_ACTIONS
 from app.scripts import release_ai_quality_report as report_module
 from app.scripts.release_ai_quality_report import (
     build_infrastructure_failure_report,
@@ -120,6 +121,10 @@ def test_report_validator_rejects_unknown_evaluation_source() -> None:
 
     with pytest.raises(ValueError, match="evaluation source"):
         validate_release_ai_quality_report(report)
+
+
+def test_report_evaluation_actions_match_delivery_actions() -> None:
+    assert report_module.DIRECT_EVALUATION_ROUTING_ACTIONS == DIRECT_DELIVERY_ACTIONS
 
 
 @pytest.mark.parametrize(

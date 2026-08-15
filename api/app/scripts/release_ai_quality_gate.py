@@ -13,6 +13,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import logging
 import math
 import os
 import re
@@ -47,6 +48,8 @@ DEFAULT_SAMPLES_PATH = "api/data/evaluation/release_ai_quality_samples_v1.json"
 DEFAULT_OUTPUT_PATH = "api/data/evaluation/release_ai_quality.summary.json"
 DEFAULT_API_BASE_URL = "http://localhost:8000"
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 90.0
+
+logger = logging.getLogger(__name__)
 
 _SAFE_VERSION_RE = re.compile(r"^[a-zA-Z0-9_.-]{1,80}$")
 _SAFE_MODEL_RE = MODEL_ID_PATTERN
@@ -546,7 +549,12 @@ async def generate_fresh_rows(
             ):
                 try:
                     review_draft = await review_draft_loader(message_id)
-                except Exception:
+                except Exception as exc:
+                    logger.warning(
+                        "Review draft unavailable for case %s (%s)",
+                        case_id,
+                        type(exc).__name__,
+                    )
                     review_draft = None
                 if review_draft is not None:
                     answer = review_draft.answer
