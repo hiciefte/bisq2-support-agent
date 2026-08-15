@@ -6,6 +6,8 @@ import pytest
 from app.channels.hooks.escalation_hook import EscalationPostHook
 from app.channels.models import (
     ChannelType,
+    ErrorCode,
+    GatewayError,
     IncomingMessage,
     OutgoingMessage,
     ResponseMetadata,
@@ -201,3 +203,93 @@ async def test_escalation_hook_creates_escalation_for_queue_medium(
     assert mock_escalation_service.create_escalation.call_count == 1
     create_arg = mock_escalation_service.create_escalation.call_args.args[0]
     assert create_arg.routing_action == "queue_medium"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_escalation_persistence_failure_blocks_gateway_draft(
+    sample_incoming_message,
+    mock_rag_service,
+):
+    """The gateway never returns a review draft that was not persisted."""
+    from app.channels.gateway import ChannelGateway
+
+    draft = "Unreviewed draft must not be delivered."
+    mock_rag_service.query = AsyncMock(
+        return_value={
+            "answer": draft,
+            "sources": [],
+            "response_time": 0.1,
+            "requires_human": True,
+            "routing_action": "needs_human",
+        }
+    )
+    mock_escalation_service = AsyncMock()
+    mock_escalation_service.create_escalation = AsyncMock(
+        side_effect=RuntimeError("database unavailable")
+    )
+    gateway = ChannelGateway(rag_service=mock_rag_service)
+    gateway.register_post_hook(
+        EscalationPostHook(
+            escalation_service=mock_escalation_service,
+            channel_registry=None,
+            settings=type("S", (), {"ESCALATION_ENABLED": True})(),
+        )
+    )
+
+    result = await gateway.process_message(sample_incoming_message)
+
+    assert isinstance(result, GatewayError)
+    assert result.error_code == ErrorCode.SERVICE_UNAVAILABLE
+    assert result.details == {"reason": "review_queue_unavailable"}
+    assert draft not in result.model_dump_json()
+    assert "database unavailable" not in result.model_dump_json()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_escalation_persistence_failure_suppresses_streamed_draft(
+    sample_incoming_message,
+    mock_rag_service,
+):
+    """Streaming emits only the static error after persistence fails."""
+    from app.channels.gateway import ChannelGateway
+
+    draft = "Unreviewed streamed draft"
+
+    async def stream_query(*_args, **_kwargs):
+        yield {"event": "token", "data": draft}
+        yield {
+            "event": "final",
+            "data": {
+                "answer": draft,
+                "sources": [],
+                "response_time": 0.1,
+                "requires_human": True,
+                "routing_action": "needs_human",
+            },
+        }
+
+    mock_rag_service.stream_query = stream_query
+    mock_escalation_service = AsyncMock()
+    mock_escalation_service.create_escalation = AsyncMock(
+        side_effect=RuntimeError("database unavailable")
+    )
+    gateway = ChannelGateway(rag_service=mock_rag_service)
+    gateway.register_post_hook(
+        EscalationPostHook(
+            escalation_service=mock_escalation_service,
+            channel_registry=None,
+            settings=type("S", (), {"ESCALATION_ENABLED": True})(),
+        )
+    )
+
+    events = [event async for event in gateway.stream_message(sample_incoming_message)]
+
+    assert [event["event"] for event in events] == ["error"]
+    error = events[0]["data"]
+    assert isinstance(error, GatewayError)
+    assert error.error_code == ErrorCode.SERVICE_UNAVAILABLE
+    assert error.details == {"reason": "review_queue_unavailable"}
+    assert draft not in error.model_dump_json()
+    assert "database unavailable" not in error.model_dump_json()
