@@ -8,6 +8,8 @@ from app.channels.hooks import HookPriority
 from app.channels.hooks.escalation_hook import EscalationPostHook
 from app.channels.models import (
     ChannelType,
+    ErrorCode,
+    GatewayError,
     IncomingMessage,
     OutgoingMessage,
     ResponseMetadata,
@@ -302,14 +304,19 @@ class TestEscalationPostHookPriority:
 
 
 class TestEscalationPostHookErrorHandling:
-    """Test error resilience."""
+    """Test fail-closed error handling."""
 
     @pytest.mark.asyncio
-    async def test_service_failure_does_not_block_response(
-        self, mock_escalation_service, mock_channel_registry
+    async def test_service_failure_blocks_unpersisted_draft(
+        self, mock_escalation_service, mock_channel_registry, monkeypatch
     ):
-        """If create_escalation fails, original answer still sent."""
+        """A persistence failure returns only a static recoverable error."""
         mock_escalation_service.create_escalation.side_effect = Exception("DB down")
+        error_counter = MagicMock()
+        monkeypatch.setattr(
+            "app.channels.hooks.escalation_hook.ESCALATION_HOOK_ERRORS",
+            error_counter,
+        )
         hook = EscalationPostHook(
             escalation_service=mock_escalation_service,
             channel_registry=mock_channel_registry,
@@ -320,10 +327,43 @@ class TestEscalationPostHookErrorHandling:
 
         result = await hook.execute(incoming, outgoing)
 
-        # Should not block the pipeline
-        assert result is None
-        # Answer should be unchanged (escalation failed)
+        assert isinstance(result, GatewayError)
+        assert result.error_code == ErrorCode.SERVICE_UNAVAILABLE
+        assert result.error_message == (
+            "The review queue is temporarily unavailable. Please try again."
+        )
+        assert result.details == {"reason": "review_queue_unavailable"}
+        assert result.recoverable is True
+        assert original_answer not in result.model_dump_json()
+        assert "DB down" not in result.model_dump_json()
         assert outgoing.answer == original_answer
+        error_counter.labels.assert_called_once_with(channel="web")
+        error_counter.labels.return_value.inc.assert_called_once_with()
+
+    @pytest.mark.asyncio
+    async def test_unexpected_hook_failure_blocks_unpersisted_draft(
+        self, hook, monkeypatch
+    ):
+        """Unexpected hook failures use the same static fail-closed response."""
+
+        async def raise_unexpected(*_args, **_kwargs):
+            raise RuntimeError("internal persistence detail")
+
+        monkeypatch.setattr(
+            "app.channels.hooks.escalation_hook."
+            "ChannelResponseDispatcher.create_escalation_for_review",
+            raise_unexpected,
+        )
+        incoming = _make_incoming()
+        outgoing = _make_outgoing(requires_human=True)
+
+        result = await hook.execute(incoming, outgoing)
+
+        assert isinstance(result, GatewayError)
+        assert result.error_code == ErrorCode.SERVICE_UNAVAILABLE
+        assert result.details == {"reason": "review_queue_unavailable"}
+        assert outgoing.answer not in result.model_dump_json()
+        assert "internal persistence detail" not in result.model_dump_json()
 
     @pytest.mark.asyncio
     async def test_adapter_not_found_falls_back_to_generic_message(

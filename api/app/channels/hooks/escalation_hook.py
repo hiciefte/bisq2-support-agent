@@ -9,7 +9,12 @@ import logging
 from typing import Optional
 
 from app.channels.hooks import BasePostProcessingHook, HookPriority
-from app.channels.models import GatewayError, IncomingMessage, OutgoingMessage
+from app.channels.models import (
+    ErrorCode,
+    GatewayError,
+    IncomingMessage,
+    OutgoingMessage,
+)
 from app.channels.response_dispatcher import (
     ChannelResponseDispatcher,
     format_escalation_notice,
@@ -29,6 +34,19 @@ ESCALATION_HOOK_ERRORS = Counter(
     "Errors during escalation hook execution",
     ["channel"],
 )
+
+
+def _review_queue_unavailable(channel: str) -> GatewayError:
+    """Return a static error when a review-routed answer was not persisted."""
+    ESCALATION_HOOK_ERRORS.labels(channel=channel).inc()
+    return GatewayError(
+        error_code=ErrorCode.SERVICE_UNAVAILABLE,
+        error_message=(
+            "The review queue is temporarily unavailable. Please try again."
+        ),
+        details={"reason": "review_queue_unavailable"},
+        recoverable=True,
+    )
 
 
 class EscalationPostHook(BasePostProcessingHook):
@@ -75,7 +93,14 @@ class EscalationPostHook(BasePostProcessingHook):
                 incoming, outgoing
             )
             if escalation is None:
-                return None
+                logger.error(
+                    "Escalation was not persisted",
+                    extra={
+                        "channel": channel,
+                        "message_id": incoming.message_id,
+                    },
+                )
+                return _review_queue_unavailable(channel)
             # Web chat and escalation polling expect this flag for pending-review states.
             outgoing.requires_human = True
             self._replace_answer(incoming, outgoing, escalation.id)
@@ -89,11 +114,10 @@ class EscalationPostHook(BasePostProcessingHook):
                 },
             )
         except Exception:
-            ESCALATION_HOOK_ERRORS.labels(channel=channel).inc()
             logger.exception(
                 "Failed to create escalation for message %s", incoming.message_id
             )
-            # Don't block the pipeline — original answer survives
+            return _review_queue_unavailable(channel)
 
         return None
 

@@ -166,6 +166,63 @@ class TestQueryRouteWithGateway:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
+    async def test_query_route_blocks_unpersisted_review_draft(self):
+        """A failed review write becomes a static 503 without draft leakage."""
+        from app.channels.gateway import ChannelGateway
+        from app.channels.hooks.escalation_hook import EscalationPostHook
+        from app.routes.chat import query
+
+        draft = "Private review draft must not be delivered."
+        rag_service = MagicMock()
+        rag_service.query = AsyncMock(
+            return_value={
+                "answer": draft,
+                "sources": [],
+                "response_time": 0.1,
+                "requires_human": True,
+                "routing_action": "needs_human",
+            }
+        )
+        escalation_service = AsyncMock()
+        escalation_service.create_escalation = AsyncMock(
+            side_effect=RuntimeError("database unavailable")
+        )
+        gateway = ChannelGateway(rag_service=rag_service)
+        gateway.register_post_hook(
+            EscalationPostHook(
+                escalation_service=escalation_service,
+                channel_registry=None,
+                settings=type("S", (), {"ESCALATION_ENABLED": True})(),
+            )
+        )
+
+        request = MagicMock()
+        request.app.state.channel_gateway = gateway
+        request.method = "POST"
+        request.headers = {"content-type": "application/json", "user-agent": "pytest"}
+        request.cookies = {}
+        request.client = None
+        request.json = AsyncMock(return_value={"question": "Test question"})
+
+        response = await query(
+            request=request,
+            settings=SimpleNamespace(ENVIRONMENT="testing"),
+        )
+
+        assert response.status_code == 503
+        payload = json.loads(response.body)
+        assert payload == {
+            "detail": (
+                "The review queue is temporarily unavailable. Please try again."
+            ),
+            "error_code": ErrorCode.SERVICE_UNAVAILABLE.value,
+            "details": {"reason": "review_queue_unavailable"},
+        }
+        assert draft not in response.body.decode()
+        assert "database unavailable" not in response.body.decode()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
     async def test_query_route_returns_503_when_gateway_not_initialized(self):
         """Query route raises a clear 503 when gateway is missing from app state."""
         from app.routes.chat import query
