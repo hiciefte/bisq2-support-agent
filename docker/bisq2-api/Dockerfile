@@ -2,7 +2,7 @@
 FROM eclipse-temurin:21-jdk@sha256:1eeacc8c295ed4805f6ffead2417b1936aad296b02ea9e56b457230befc9e98d AS builder
 
 # Define build arguments with defaults
-ARG BISQ2_COMMIT=e1b45babafa45b5f4dbaabdf4dedec4b6de4d6ac
+ARG BISQ2_COMMIT=cfb61c1a8e18bc23b125cb26e3644deb73a6a637
 ARG BISQ2_REPO_URL=https://github.com/hiciefte/bisq2.git
 
 WORKDIR /opt/bisq2
