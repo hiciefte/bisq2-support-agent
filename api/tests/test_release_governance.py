@@ -114,8 +114,8 @@ def test_web_image_contains_only_pinned_fixed_runtime_dependencies() -> None:
         "RUN npm prune --omit=dev"
     )
 
-    assert "libcrypto3=3.5.7-r0" in runtime
-    assert "libssl3=3.5.7-r0" in runtime
+    assert "libcrypto3=3.5.8-r0" in runtime
+    assert "libssl3=3.5.8-r0" in runtime
     assert "rm -rf /usr/local/lib/node_modules/npm" in runtime
     assert "rm -f /usr/local/bin/npm /usr/local/bin/npx" in runtime
     assert "npm install --global" not in runtime

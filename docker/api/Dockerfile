@@ -84,8 +84,10 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload
 # --- Final Stage ---
 FROM python:3.11-slim@sha256:baf89808ec37adeaab83cec287adb4a2afa4a11c1d51e961c7ec737877e61af6 AS final
 
-# Install curl for health checks and gosu for privilege dropping
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Refresh inherited OS packages from the pinned base before installing runtime tools.
+# hadolint ignore=DL3005
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends \
     curl \
     gosu \
     libolm3 \

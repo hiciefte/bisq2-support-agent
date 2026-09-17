@@ -47,8 +47,8 @@ WORKDIR /app
 
 # Upgrade vulnerable packages from the pinned Alpine release to exact fixed versions.
 RUN apk add --no-cache \
-  libcrypto3=3.5.7-r0 \
-  libssl3=3.5.7-r0 && \
+  libcrypto3=3.5.8-r0 \
+  libssl3=3.5.8-r0 && \
   rm -rf /usr/local/lib/node_modules/npm && \
   rm -f /usr/local/bin/npm /usr/local/bin/npx
 

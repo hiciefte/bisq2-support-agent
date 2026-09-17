@@ -682,6 +682,7 @@ services:
       - BISQ_READINESS_CURRENCY=${BISQ_READINESS_CURRENCY:-EUR}
       - BISQ_READINESS_DIRECTION=${BISQ_READINESS_DIRECTION:-SELL}
       - DATA_RETENTION_DAYS=${DATA_RETENTION_DAYS:-30}
+      - PRIVACY_RETENTION_DRY_RUN=${PRIVACY_RETENTION_DRY_RUN:-false}
     volumes:
       - ./scripts/lib/runtime-secret.sh:/scripts/lib/runtime-secret.sh:ro
       - ./scripts/lib/scheduler-api.sh:/scripts/lib/scheduler-api.sh:ro
