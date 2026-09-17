@@ -96,6 +96,7 @@ acquire_production_lifecycle_lock() {
     local lock_file=""
     local failure_marker=""
     local lock_state=""
+    local caller_umask=""
 
     if ! command -v flock >/dev/null 2>&1; then
         log_error "flock is required for production lifecycle coordination" >&2
@@ -137,12 +138,16 @@ acquire_production_lifecycle_lock() {
         log_error "Production lifecycle lock path is unsafe" >&2
         return 1
     fi
+    caller_umask=$(umask)
     umask 077
     BISQ_SUPPORT_LIFECYCLE_LOCK_FD=202
     if ! exec 202<>"$lock_file"; then
+        umask "$caller_umask"
+        unset BISQ_SUPPORT_LIFECYCLE_LOCK_FD
         log_error "Could not open the production lifecycle lock" >&2
         return 1
     fi
+    umask "$caller_umask"
     export BISQ_SUPPORT_LIFECYCLE_LOCK_FD
     chmod 600 "$lock_file" || return 1
     if ! flock -n "$BISQ_SUPPORT_LIFECYCLE_LOCK_FD"; then

@@ -291,8 +291,11 @@ def test_production_lifecycle_lock_is_reentrant_in_one_process(
         export PATH="{fakebin}:$PATH"
         source "{COMMON_SH}"
         setup_colors
+        umask 022
         acquire_production_lifecycle_lock "{install_dir}"
         acquire_production_lifecycle_lock "{install_dir}"
+        test "$(umask)" = 0022 || exit 1
+        printf 'configuration\\n' > "{install_dir}/configuration.yml"
         """,
         cwd=REPO_ROOT,
     )
@@ -302,6 +305,40 @@ def test_production_lifecycle_lock_is_reentrant_in_one_process(
     lock_file = install_dir / "failed_updates" / "disaster-recovery" / "recovery.lock"
     assert lock_file.is_file()
     assert lock_file.stat().st_mode & 0o777 == 0o600
+    assert (install_dir / "configuration.yml").stat().st_mode & 0o777 == 0o644
+
+
+def test_production_lifecycle_lock_open_failure_preserves_umask(tmp_path: Path) -> None:
+    install_dir = tmp_path / "bisq-support-test"
+    install_dir.mkdir()
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    flock = fakebin / "flock"
+    flock.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+    flock.chmod(0o755)
+
+    result = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        unset BISQ_SUPPORT_LIFECYCLE_LOCK_FD
+        source "{COMMON_SH}"
+        setup_colors
+        umask 027
+        # Force opening descriptor 202 to fail without depending on ownership.
+        ulimit -n 128
+        if acquire_production_lifecycle_lock "{install_dir}"; then
+            exit 1
+        fi
+        test "$(umask)" = 0027 || exit 1
+        test -z "${{BISQ_SUPPORT_LIFECYCLE_LOCK_FD:-}}" || exit 1
+        printf 'configuration\\n' > "{install_dir}/configuration.yml"
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "Could not open the production lifecycle lock" in result.stderr
+    assert (install_dir / "configuration.yml").stat().st_mode & 0o777 == 0o640
 
 
 def test_update_migration_guard_never_overwrites_nonempty_faq_store(
