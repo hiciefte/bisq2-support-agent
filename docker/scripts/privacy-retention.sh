@@ -4,7 +4,14 @@ set -euo pipefail
 # shellcheck source=lib/scheduler-api.sh
 source /scripts/lib/scheduler-api.sh
 
-dry_run=false
+dry_run=${PRIVACY_RETENTION_DRY_RUN:-false}
+case "$dry_run" in
+    true|false) ;;
+    *)
+        echo "PRIVACY_RETENTION_DRY_RUN must be true or false" >&2
+        exit 2
+        ;;
+esac
 if [ "${1:-}" = "--dry-run" ]; then
     dry_run=true
 elif [ "$#" -gt 0 ]; then

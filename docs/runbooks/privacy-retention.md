@@ -62,9 +62,23 @@ docker compose -f docker/docker-compose.yml exec -T scheduler \
   /scripts/rotate-retention-logs.sh --dry-run
 ```
 
+For a bounded development evaluation that must preserve historical feedback
+and training candidates, set `PRIVACY_RETENTION_DRY_RUN=true` in protected
+`docker/.env` before deploying or recreating the scheduler. Its startup, daily,
+and manually invoked application-retention jobs then preview changes only.
+The default is `false`; only the literal values `true` and `false` are accepted.
+Remove the setting or set it to `false` and recreate the scheduler to resume
+normal retention. An explicit `--dry-run` always requests a preview.
+
+This setting does not freeze all stores: API startup trust-monitor retention,
+Matrix alert-relay session rotation, and separate log-retention jobs still run.
+Other scheduler jobs also continue normally. Preview mode is not evidence of
+retention compliance; retention alerts may remain active. Record its intended
+evaluation period and review the preview before resuming deletion.
+
 The compatibility entry point `scripts/cleanup_old_data.sh` invokes the same
-containerized job. It intentionally has no retention override; change the
-validated deployment setting so public copy and enforcement stay aligned.
+containerized job and honors this scheduler setting. Direct scheduler API calls
+still use their own `dry_run` parameter.
 
 Check Docker runtime-log coverage without changing the host:
 
