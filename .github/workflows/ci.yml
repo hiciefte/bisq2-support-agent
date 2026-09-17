@@ -41,6 +41,9 @@ jobs:
           python -m pip install pip==25.0 pip-tools==7.5.1
 
       - name: Check if requirements.txt is up to date
+        env:
+          # Keep runner-specific pip defaults out of the generated header.
+          CUSTOM_COMPILE_COMMAND: pip-compile --no-strip-extras --output-file=api/requirements.txt api/requirements.in
         run: |
           pip-compile api/requirements.in -o api/requirements.txt --no-strip-extras
           echo "git diff of requirements.txt:"
