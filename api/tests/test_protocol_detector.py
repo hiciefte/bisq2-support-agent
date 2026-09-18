@@ -9,6 +9,8 @@ Legacy version strings: "Bisq 1", "Bisq 2", "Unknown"
 TDD Step 1: RED - These tests should FAIL until ProtocolDetector is created.
 """
 
+from unittest.mock import Mock
+
 import pytest
 
 
@@ -360,6 +362,62 @@ class TestHistorySignals:
         )
         assert version == "Unknown"
         assert confidence == 0.30
+        assert clarifying is not None
+
+
+class TestComparisonQuestions:
+    """A comparison needs evidence about both products, not the user's version."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "question",
+        [
+            "What is the difference between Bisq 1 and Bisq Easy?",
+            "What are the main differences between Bisq 1 and Bisq 2?",
+            "What are the differences between Bisq 1 and Bisq Easy?",
+            "Compare Bisq Easy with Bisq1.",
+            "I am comparing Bisq Easy and Bisq 1. How do their fees differ?",
+            "Bisq1 vs. Bisq2: which should I choose?",
+            "Bisq 2 versus Bisq 1",
+        ],
+    )
+    async def test_comparison_proceeds_without_single_version_filter(
+        self, detector, question
+    ):
+        # Previous single-product context must not narrow an explicit comparison.
+        history = [{"role": "user", "content": "I am using Bisq Easy."}]
+        version, _, clarifying = await detector.detect_version(question, history)
+        protocol, _, protocol_clarifying = await detector.detect_protocol(
+            question, history
+        )
+        assert version == "Unknown"
+        assert protocol is None
+        assert clarifying is None
+        assert protocol_clarifying is None
+
+        from app.services.rag.document_retriever import DocumentRetriever
+
+        backend = Mock()
+        backend.retrieve.return_value = []
+        DocumentRetriever(backend).retrieve_with_version_priority(question, version)
+        assert {
+            call.kwargs["filter_dict"]["protocol"]
+            for call in backend.retrieve.call_args_list
+        } == {"bisq_easy", "multisig_v1", "all"}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "question",
+        [
+            "I have Bisq 1 and Bisq Easy. My trade is stuck.",
+            "Bisq1 and Bisq2 show different errors. What should I do?",
+            "What is the difference between the errors in my trade?",
+            "Can I import my Bisq2 account to Bisq1?",
+        ],
+    )
+    async def test_ambiguous_support_still_requests_version(self, detector, question):
+        version, _, clarifying = await detector.detect_version(question, [])
+        assert version == "Unknown"
         assert clarifying is not None
 
 

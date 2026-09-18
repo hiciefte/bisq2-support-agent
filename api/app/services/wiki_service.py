@@ -11,6 +11,7 @@ import os
 import re
 from typing import TYPE_CHECKING, Dict, List
 
+from app.services.wiki_metadata import reviewed_wiki_category
 from langchain_core.documents import Document
 
 if TYPE_CHECKING:
@@ -95,17 +96,20 @@ class WikiService:
                     # - bisq2 → bisq_easy (Bisq Easy protocol)
                     # - bisq1 → multisig_v1 (Bisq 1 multisig protocol)
                     # - general/other → all (applies to all protocols)
+                    category = (
+                        reviewed_wiki_category(entry["title"]) or entry["category"]
+                    )
                     protocol = (
                         "bisq_easy"
-                        if entry["category"] == "bisq2"
-                        else ("multisig_v1" if entry["category"] == "bisq1" else "all")
+                        if category == "bisq2"
+                        else ("multisig_v1" if category == "bisq1" else "all")
                     )
                     doc = Document(
                         page_content=content,
                         metadata={
                             "source": jsonl_path,
                             "title": entry["title"],
-                            "category": entry["category"],
+                            "category": category,
                             "type": "wiki",
                             "section": section,
                             "source_weight": self.source_weights.get("wiki", 1.0),

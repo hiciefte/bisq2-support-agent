@@ -15,6 +15,7 @@ import re
 import xml.etree.ElementTree as ET
 from typing import Any, Dict, List, Optional
 
+from app.services.wiki_metadata import reviewed_wiki_category
 from bs4 import BeautifulSoup
 
 # Configure logging
@@ -96,6 +97,9 @@ class WikiDumpProcessor:
 
     def categorize_content(self, title: str, content: str) -> str:
         """Categorize content as bisq1, bisq2, or general based on title and content analysis."""
+        reviewed_category = reviewed_wiki_category(title)
+        if reviewed_category is not None:
+            return reviewed_category
         title_lower = title.lower()
         content_lower = content.lower()
 

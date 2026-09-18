@@ -33,7 +33,7 @@ DocumentWithScore = Tuple[Document, float]
 _BISQ1_VERSION_RE = re.compile(r"\bbisq\s*1\b|\bbisq1\b")
 _BISQ2_VERSION_RE = re.compile(r"\bbisq\s*2\b|\bbisq2\b")
 _COMPARISON_TOKEN_RE = re.compile(
-    r"\b(compare|comparison|different|difference|diff|versus|vs|both\s+versions)\b"
+    r"\b(compar(?:e|ing|ison)|different|differences?|diff|versus|vs|both\s+versions)\b"
 )
 # Explicit version/protocol tokens required for a comparison token to count
 # as a Bisq 1 vs Bisq 2 comparison (instead of e.g. comparing payment methods

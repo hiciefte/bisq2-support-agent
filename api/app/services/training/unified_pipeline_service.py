@@ -94,6 +94,7 @@ class ComparisonResult:
     hallucination_risk: float
     final_score: float
     llm_reasoning: str
+    requires_full_review: bool = True
 
 
 @dataclass
@@ -429,7 +430,9 @@ class UnifiedPipelineService:
 
         # Determine routing
         routing, is_calibration = self._determine_routing(
-            comparison.final_score, comparison_score=comparison.embedding_similarity
+            comparison.final_score,
+            comparison_score=comparison.embedding_similarity,
+            requires_full_review=comparison.requires_full_review,
         )
 
         # Create candidate
@@ -594,7 +597,9 @@ class UnifiedPipelineService:
 
         # Determine new routing
         routing, _ = self._determine_routing(
-            comparison.final_score, comparison_score=comparison.embedding_similarity
+            comparison.final_score,
+            comparison_score=comparison.embedding_similarity,
+            requires_full_review=comparison.requires_full_review,
         )
 
         # Update the candidate with corrected answer and new scores
@@ -815,7 +820,9 @@ class UnifiedPipelineService:
 
         # Determine routing
         routing, is_calibration = self._determine_routing(
-            comparison.final_score, comparison_score=comparison.embedding_similarity
+            comparison.final_score,
+            comparison_score=comparison.embedding_similarity,
+            requires_full_review=comparison.requires_full_review,
         )
 
         # Create candidate
@@ -925,6 +932,7 @@ class UnifiedPipelineService:
                     hallucination_risk=result.hallucination_risk,
                     final_score=result.final_score,
                     llm_reasoning=result.llm_reasoning,
+                    requires_full_review=getattr(result, "requires_full_review", True),
                 )
 
             # Default mock comparison for testing (no comparison engine provided)
@@ -949,6 +957,7 @@ class UnifiedPipelineService:
         self,
         final_score: float,
         comparison_score: float | None = None,
+        requires_full_review: bool = False,
     ) -> tuple[str, bool]:
         """
         Determine routing based on scores and calibration state.
@@ -969,6 +978,9 @@ class UnifiedPipelineService:
 
         if is_calibration:
             return "FULL_REVIEW", True
+
+        if requires_full_review:
+            return "FULL_REVIEW", False
 
         if (
             comparison_score is not None
@@ -1651,7 +1663,9 @@ class UnifiedPipelineService:
 
             # Determine new routing based on updated score
             routing, _ = self._determine_routing(
-                comparison.final_score, comparison_score=comparison.embedding_similarity
+                comparison.final_score,
+                comparison_score=comparison.embedding_similarity,
+                requires_full_review=comparison.requires_full_review,
             )
 
             update_kwargs: Dict[str, Any] = {
@@ -1733,7 +1747,9 @@ class UnifiedPipelineService:
 
         # Determine new routing based on updated score
         routing, _ = self._determine_routing(
-            comparison.final_score, comparison_score=comparison.embedding_similarity
+            comparison.final_score,
+            comparison_score=comparison.embedding_similarity,
+            requires_full_review=comparison.requires_full_review,
         )
 
         # Update the candidate with all new values
@@ -1956,7 +1972,9 @@ class UnifiedPipelineService:
 
         # Determine routing
         routing, is_calibration = self._determine_routing(
-            comparison.final_score, comparison_score=comparison.embedding_similarity
+            comparison.final_score,
+            comparison_score=comparison.embedding_similarity,
+            requires_full_review=comparison.requires_full_review,
         )
 
         # Create candidate with detected protocol

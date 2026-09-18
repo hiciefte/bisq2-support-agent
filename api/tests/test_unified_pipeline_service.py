@@ -352,6 +352,7 @@ class TestRoutingLogic:
                     completeness=0.95,
                     hallucination_risk=0.03,
                     llm_reasoning="Excellent alignment.",
+                    requires_full_review=False,
                     is_calibration=False,
                 )
             )
@@ -395,6 +396,7 @@ class TestRoutingLogic:
                     completeness=0.80,
                     hallucination_risk=0.12,
                     llm_reasoning="Good alignment.",
+                    requires_full_review=False,
                     is_calibration=False,
                 )
             )
@@ -498,6 +500,7 @@ class TestCalibrationBehavior:
                     completeness=0.95,
                     hallucination_risk=0.03,
                     llm_reasoning="Excellent alignment.",
+                    requires_full_review=False,
                     is_calibration=True,  # Marked as calibration sample
                 )
             )
@@ -538,6 +541,7 @@ class TestCalibrationBehavior:
                     completeness=0.95,
                     hallucination_risk=0.03,
                     llm_reasoning="Excellent alignment.",
+                    requires_full_review=False,
                     is_calibration=False,  # NOT a calibration sample
                 )
             )
