@@ -1,77 +1,63 @@
 ---
 id: bisq2-reputation-basics
-title: Bisq Easy reputation basics
+title: Bisq Easy reputation, profile identity and Bisq 1 proofs
 type: llm_wiki
 page_type: support_playbook
 status: reviewed
 protocol: bisq_easy
-reviewed_by: suddenwhipvapor
-reviewed_at: '2026-06-27'
+reviewed_by: ai-review:codex:knowledge-resolution-20260918
+reviewed_at: '2026-09-18T09:25:43.205138+00:00'
 risk_level: medium
 source_refs:
-- wiki:Reputation
-- wiki:Reputation2
-- wiki:Bisq Easy
-- faq:9
-- faq:17
-- faq:20
-- faq:28
-- faq:40
-- faq:65
-- faq:71
-- faq:86
-- faq:703
-- faq:1177
-- faq:1045
-- faq:1056
-- faq:1066
+- https://github.com/bisq-network/bisq2/blob/ae3176e4431eeaef309aada264ff8a75616f21d7/bisq-easy/src/main/java/bisq/bisq_easy/BisqEasyTradeAmountLimits.java
+- https://bisq.wiki/Reputation
+- https://bisq.wiki/Bisq_Easy
+- https://bisq.wiki/Backup
+- https://bisq.wiki/Reputation#Method_3:_Importing_Bisq_1_Account_Age
+- https://bisq.wiki/Reputation#Method_4:_Importing_Bisq_1_Signed_Account_Age
 ---
 ## Canonical Support Answer
 
-Bisq Easy uses seller reputation as its main safety mechanism. Buyers do not need reputation to buy BTC; buyers evaluate the seller's reputation because the buyer sends fiat before receiving bitcoin. Sellers need reputation to be able to offer BTC for sale, and a higher reputation unlocks larger trade amounts, up to the maximum set by the protocol.
+Buyers do not need reputation to buy BTC on Bisq Easy. They assess the seller because they pay before receiving BTC. Seller reputation influences permitted offer amounts and buyer trust, but is not proof that a trade will succeed.
 
-A completed Bisq Easy trade does not create reputation. Reputation can be built through the supported reputation mechanisms such as burning BSQ, bonding BSQ, importing a signed account witness from Bisq 1, or importing account age from Bisq 1. Support should not invent additional reputation sources.
+Completing trades does not earn this reputation. Supported sources include BSQ burns, BSQ bonds, Bisq 1 account age and Bisq 1 signed-account-age evidence. Account age and signed account age are separate sources; use eligible existing proofs through the current Reputation workflow. Do not invent points for trading, community activity or a public completed-trade count.
 
-Reputation is tied to the Bisq 2 profile identity and cannot be restored or transferred to a different profile. If reputation appears missing, first confirm the user is using the correct profile, let network data finish syncing, and check local backups/profile data before assuming reputation is lost.
+The workflow binds evidence to the chosen Bisq 2 profile identity. Follow the in-app instructions, including the intended profile ID, before a burn or bond; these actions have financial consequences. Reputation from an old profile is not inherited by a newly created one. Recovering the original local identity is different from transferring reputation to another identity.
 
-Seller trade limits and buyer visibility depend on current reputation rules and client settings. If a user asks how much they can sell, explain the principle first: higher verified reputation allows larger Bisq Easy selling capacity and makes offers more attractive to buyers. Quote exact minimum scores, star mapping, or trade-size formulas only after checking current Bisq 2 documentation/version.
+If reputation seems missing after an update or inactivity, confirm the selected profile and data directory, allow network data to synchronize and inspect preserved backups before assuming loss. A changing star rating is not necessarily lost points: the documented stars compare active profiles. Current rules, eligible amounts and score formulas must be checked against the installed supported release, not an old default threshold.
 
-Bisq 1 can still matter for reputation because account age or signed-account information can be imported, and is required in order to complete the procedure to obtain reputation, but Bisq 1 is not required to act as a buyer on Bisq Easy. Do not present Bisq 1 payment-account import as a wallet/account migration into Bisq 2; it is reputation-related information, not transfer of the Bisq 1 wallet or open trades.
+Bisq 1 account-age and signing imports convey reputation evidence, not its payment-account files, wallet, seed or open trades. Do not import a Bisq 1 backup into Bisq 2 or copy its keys there. Start from the Bisq 2 Reputation instructions and the eligible Bisq 1 account. A buyer does not need to install Bisq 1 merely to use Easy.
 
-## Applies When
+## Current-source seller capacity
 
-- The user asks why reputation is needed in Bisq Easy.
-- The user asks whether buyers need reputation.
-- The user asks whether completing trades earns reputation.
-- The user asks whether they need reputation when they cannot run Bisq 1 yet.
-- The user asks whether Bisq Easy can be used before setting up Bisq 1.
-- The user asks how to build, import, or check reputation.
-- The user reports missing reputation after inactivity, update, restore, or profile switch.
-- The user asks about seller reputation thresholds, stars, or maximum trade amount.
+In the current upstream Bisq Easy source reviewed on 2026-09-18 (commit ae3176e4431eeaef309aada264ff8a75616f21d7), creating a sell offer requires at least 1,200 reputation points. The score-based USD capacity is the reputation score divided by 200, rounded to whole USD and capped at 600 USD; the minimum trade amount is the equivalent of 6 USD. Thus 800 points corresponds to 4 USD and is below the minimum needed to create a sell offer. Offer validation also applies conversion, rounding and a 5% reputation tolerance in specified checks; that tolerance does not replace the 1,200-point create-sell-offer gate. Check the installed release and displayed limits, since current source does not prove identical behavior in every historical client. These are reputation points, not a BSQ amount or a recommendation to burn more. Reputation may come from eligible account-age proofs as well as burns or bonds. Use the current in-app reputation simulation and fee display before deciding whether to spend funds; a BSQ purchase amount, transaction fee and reputation score are different quantities.
 
 ## Do Not Say
 
-- Do not say reputation is earned by completing trades.
-- Do not say reputation can be transferred to another profile.
-- Do not treat Bisq 1 account age/signing as a Bisq 2 payment-account migration; it is only considered as a source of reputation.
-- Do not imply Bisq 1 is required before a buyer can make a basic Bisq Easy BTC purchase.
-- Do not quote exact reputation thresholds or trade-limit formulas without checking current client/version docs.
-- Do not treat profile/data-directory recovery problems as reputation-policy problems.
+- Do not claim burning is the only reputation mechanism or that all sellers must burn BSQ.
+- Do not promise that reputation, age or signing guarantees honesty.
+- Do not apply a Bisq 1 payment-account export as a full Bisq 2 migration.
+- Do not spend funds based on an unverified fixed score-to-trade-amount formula.
+
+## Import completion and authorization
+
+There is no guaranteed import latency in the official account-age instructions. Use the proof for the intended Bisq 2 profile, paste the complete JSON into the matching import screen and request authorization. Check authorization feedback, profile selection and network synchronization; filling the fields alone does not complete the import. If unchanged, supply versions and redacted status/errors to support. The UI copy controls can help select the right content, but correct keyboard paste is not documented as causing delays. Trades do not earn these reputation points.
 
 ## Evidence / Sources
 
-- `wiki:Reputation` explains reputation as the Bisq Easy security model and lists build methods.
-- `wiki:Reputation2` documents reputation thresholds, stars, and trade-limit concepts.
-- `wiki:Bisq Easy` states reputation is seller-side security and buyers do not need reputation.
-- `faq:9`, `faq:65`, `faq:71`, `faq:1056`, and `faq:1066` cover valid reputation methods and reputation display.
-- `faq:17`, `faq:86`, `faq:1045`, and `faq:1177` cover profile-bound reputation and recovery checks.
-- `faq:20`, `faq:28`, and `faq:40` explain why seller reputation matters economically and for buyer safety.
+- https://github.com/bisq-network/bisq2/blob/ae3176e4431eeaef309aada264ff8a75616f21d7/bisq-easy/src/main/java/bisq/bisq_easy/BisqEasyTradeAmountLimits.java
+
+- https://bisq.wiki/Reputation
+- https://bisq.wiki/Bisq_Easy
+- https://bisq.wiki/Backup
+
+- https://bisq.wiki/Reputation#Method_3:_Importing_Bisq_1_Account_Age
+- https://bisq.wiki/Reputation#Method_4:_Importing_Bisq_1_Signed_Account_Age
 
 ## Review Notes
 
-- Confirm whether mobile/remote reputation UX has changed before giving version-specific mobile instructions.
-- Production candidates about network bootstrapping, PGP signatures, Revolut, mobile pairing, and general Bisq 2 installation were intentionally excluded from this reputation page.
+Independently checked against original conversations and primary references by the parent AI reviewer. This amendment resolves candidate IDs 1372. Earlier review evidence remains in the private batch audit. Preserve version and protocol qualifications and do not infer missing case outcomes.
 
 ## Last Change Summary
 
-Corrected and circumstantiated information about obtaining and using reputation.
+Resolved the remaining reviewed candidates using verified technical behavior and conditional diagnostic guidance. Reviewer: `ai-review:codex:knowledge-resolution-20260918`. New pages are explicitly identified in the private publication manifest.

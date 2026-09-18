@@ -1,75 +1,91 @@
 ---
 id: bisq1-trade-funding-security-deposits
-title: Bisq 1 trade funding, security deposits, and cancellation boundaries
+title: Bisq 1 funding, reservations and security deposits
 type: llm_wiki
 page_type: support_playbook
 status: reviewed
 protocol: multisig_v1
-reviewed_by: suddenwhipvapor
-reviewed_at: '2026-06-27'
+reviewed_by: ai-review:codex:knowledge-resolution-20260918
+reviewed_at: '2026-09-18T09:25:43.205138+00:00'
 risk_level: high
 source_refs:
-- wiki:Security deposit
-- wiki:Trading rules
-- wiki:Deposit transaction
-- wiki:Dispute Resolution in Bisq 1
-- wiki:Mediation
-- wiki:Arbitration
-- wiki:Account limits
-- wiki:Payment account age witness
-- wiki:Support Agent Knowledge Base
-- faq:1117
-- faq:1155
-- faq:1156
-- faq:1174
+- https://bisq.wiki/Security_deposit
+- https://bisq.wiki/Deposit_transaction
+- https://bisq.wiki/Funding_your_wallet
+- https://bisq.wiki/Account_limits
+- https://bisq.wiki/Trading_rules
+- https://bisq.wiki/Cloning_an_offer
+- https://bisq.wiki/Trading_costs
+- https://bisq.wiki/Resyncing_SPV_file
+- https://bisq.wiki/Dispute_Resolution_in_Bisq_1
+- https://bisq.wiki/Support_Agent_Knowledge_Base
+- https://bisq.network/blog/bisq-v1-2-released/
+- https://github.com/bisq-network/bisq/blob/b3f44d2b4cda28dd04cd0218cb6e99cbe7c48e63/core/src/main/java/bisq/core/offer/bisq_v1/CreateOfferService.java#L154
+- https://github.com/bisq-network/bisq/blob/b3f44d2b4cda28dd04cd0218cb6e99cbe7c48e63/core/src/main/java/bisq/core/offer/bisq_v1/TakeOfferModel.java#L123
+- https://bisq.wiki/Trading_fees
+- https://github.com/bisq-network/bisq/blob/b3f44d2b4cda28dd04cd0218cb6e99cbe7c48e63/core/src/main/java/bisq/core/trade/protocol/bisq_v1/tasks/seller_as_maker/SellerAsMakerCreatesUnsignedDepositTx.java
 ---
 ## Canonical Support Answer
 
-In Bisq 1 multisig trades, the trade amount and both security deposits are locked in the security deposit transaction after an offer is taken and the transaction confirms. The security deposit is the main economic incentive for both traders to follow the protocol rules; it is not held by Bisq as a custodial escrow account.
+Bisq 1 multisig trades lock the full BTC sale amount plus the seller's security deposit and the buyer's security deposit in a shared 2-of-2 deposit. Bisq is not a custodian and support does not hold a third spending key. Funding protects the trade but does not guarantee a dispute outcome. Wait for the application's valid payment stage before sending fiat or altcoins.
 
-Before making or taking an offer, the wallet must have enough spendable BTC for the trade amount if applicable, security deposit, trading fee, and miner fees. A displayed wallet balance may still be hard to use if it is split across many small UTXOs or if wallet state is stale. If funding looks sufficient but Bisq says it is not, check spendable UTXOs and wallet sync before assuming a bug. Multiple smaller UTXOs may need to be consolidated into one, before the offer can be successfully taken.
+### Funding an offer or trade
 
-An open offer deactivating before a trade starts is different from a funded trade with a confirmed deposit transaction. A maker fee might be lost if an offer publication fails, but the security deposit is not locked until the deposit transaction exists. If the deposit transaction is missing, use the failed-trade workflow; if it is confirmed, use mediation/dispute guidance for cancellation or payout problems.
+Use the exact funding requirement displayed for that offer: deposit, applicable trading/mining fees and, for a BTC seller, the BTC being sold. No historical starter balance is universally sufficient. The maker chooses permitted deposit settings subject to current app minimums; check the actual offer rather than an old numerical example. You cannot generally sell the entire wallet balance while also needing deposits and fees. A larger deposit does not guarantee prompt payment.
 
-After a trade is funded, a user usually cannot cancel it unilaterally without consequences. If a buyer cannot pay, payment details are invalid, a bank blocks the transfer, or the peer is unresponsive, the safe path is trader chat and mediation. Penalties depend on the trade rules, evidence, mediator/arbitrator review, and security-deposit size. Do not promise a no-penalty cancellation unless the protocol/support evidence clearly supports it.
+External funding is a Bitcoin transfer to the displayed funding address; it does not require connecting or exposing the external wallet's keys. If Open external wallet invokes an unconfigured Bitcoin URI handler or app-store prompt, manually copy the intended address and amount into your own wallet instead. Verify address and amount before sending. A confirmed external funding transaction is not itself confirmation of the shared deposit. If Waiting for funds persists, inspect address, amount, spendable outputs and local sync with support.
 
-Account limits and signing affect who can take offers and at what size. Sellers do not need account signing in the same way fiat buyers do; signing and limits are primarily about reducing chargeback risk for fiat payment methods. For very large trade-size questions, explain that users can participate in multiple trades of smaller amounts.
+Displayed total, available, reserved and locked balances are different. Fragmented inputs, fees or stale local state can affect spendability. Do not consolidate blindly or assume consolidation reduces the required deposit; preserve active-trade state and assess actual outputs first. Both peers need connectivity for taking an offer and the initial protocol exchange; later absence must be handled according to the actual trade stage, not assumed harmless.
+
+### Untaken offers and normal payout
+
+Untaken offers reserve funds locally; removing one does not create a refund transaction. Confirm all clones using the same reservation are removed and none was taken. Already spent maker fees, including BSQ fees, are not automatically returned. A taken, funded trade is different and needs mediation for cancellation.
+
+In a normal completed payout the BTC buyer receives the trade amount plus their own deposit, and the BTC seller receives their own deposit, subject to transaction fees. The sale amount is not paid out of the penalty deposit. Verify the payout if balances or completion status disagree. A withdrawal has a Bitcoin transaction ID but no trade ID because it is not a trade. Similar input/output amounts in a multi-input transaction do not prove a one-to-one ownership mapping.
+
+### Limits, signing and payment problems
+
+Account and offer limits apply per trade rather than as a daily allowance; current amounts depend on payment method, account age and signing. Chargeback-risk signing restrictions primarily constrain BTC buying. An unsigned seller can be legitimate, but signed status is not a safety guarantee. Offer size is not a universal new-user filter; making an offer does not remove applicable method limits. Multiple legitimate trades remain separate commitments with their own fees and constraints.
+
+For invalid Pix/Wise/Zelle/Revolut/Interac details, bank limits, payment rejection or requested replacement links/accounts, select the trade and open mediation before changing the contract payment details. An alternative discussed in trader chat is not automatic authorization. Explain the exact error without inferring a blacklist or scam. If already paid, preserve proof and do not pay again. See the dispute page for deadline, cancellation and penalty handling.
 
 ## Applies When
 
-- The user asks whether BTC is frozen/locked when an offer is taken.
-- The user asks how Bisq 1 multisig escrow/security deposits work.
-- The user cannot place an offer despite apparently sufficient balance.
-- The user asks whether an offer maker can lose a security deposit when an offer deactivates.
-- The user asks how to cancel a funded trade without losing funds.
-- The user asks what happens if payment cannot be made or confirmed.
-- The user asks about account-signing limits, unsigned buyers, or who can take an offer.
-- The user asks whether a seller can receive protection if the buyer is unresponsive.
+Funding requirements, deposit protection, unsigned accounts, available/reserved/locked balance, cancelling an untaken offer, or normal payout allocation.
 
-## Do Not Say
+## Ranged offers, funding errors and duplicate transfers
 
-- Do not describe Bisq as a custodial escrow service.
-- Do not say a security deposit is locked before a valid deposit transaction exists.
-- Do not promise cancellation without penalty after the trade is funded.
-- Do not tell users to send funds to changed or invalid payment details outside mediation.
-- Do not conflate Bisq 1 multisig security deposits with Bisq Easy reputation.
+For a conventional offer with a 0.1–0.2 BTC range, the maker’s trading fee is calculated when the offer is created from its maximum amount, 0.2 BTC. The taker’s trading fee uses the amount actually chosen within the range. Applicable minimum fees still apply. Security-deposit amounts are stored in the offer and taken from that offer, so choosing the lower trade amount does not simply recalculate them as the displayed percentage of 0.1 BTC. Verify the exact deposit and fee totals in the confirmation screen. These rules concern conventional Bisq 1 offers, not Bisq Easy or atomic BSQ swaps.
+
+Identify the receiving address and both transaction IDs before doing anything else. A transfer to a Bisq wallet funding address is different from an extra output sent to the trade’s shared multisig address. Inspect both transfers in Funds > Transactions and the trade details. If the second transfer is not available to spend, preserve the data and ask verified support to identify its output and spending conditions. Do not assume trade completion will release an extra multisig payment or send another transaction to recover it.
+
+An InsufficientMoneyException at deposit construction means the wallet could not assemble required inputs for that attempt; it does not prove funds disappeared or that resync will supply funds. Compare the complete funding requirement, usable outputs and reservations before another attempt.
+
+Both traders contribute through their funding chains. An unfamiliar input address does not by itself identify the peer; inspect the transaction graph rather than infer ownership from amounts.
 
 ## Evidence / Sources
 
-- `wiki:Security deposit` explains the Bisq 1 security-deposit model and why deposits protect honest traders.
-- `wiki:Trading rules` documents behavior that can lead to penalties or mediation.
-- `wiki:Deposit transaction` explains when trade/security-deposit funds are actually locked.
-- `wiki:Dispute Resolution in Bisq 1`, `wiki:Mediation`, and `wiki:Arbitration` document cancellation/dispute resolution boundaries.
-- `wiki:Account limits` and `wiki:Payment account age witness` document signing and fiat limit mechanics.
-- `wiki:Support Agent Knowledge Base` documents transaction structure and trade transaction checks.
-- `faq:1117` covers seller signing limits.
-- `faq:1155`, `faq:1156`, and `faq:1174` cover invalid payment details, stuck confirmation, and delayed incoming payment cases.
+- [Security deposit](https://bisq.wiki/Security_deposit)
+- [Deposit transaction](https://bisq.wiki/Deposit_transaction)
+- [Funding your wallet](https://bisq.wiki/Funding_your_wallet)
+- [Account limits](https://bisq.wiki/Account_limits)
+- [Trading rules](https://bisq.wiki/Trading_rules)
+- [Cloning an offer](https://bisq.wiki/Cloning_an_offer)
+- [Trading costs](https://bisq.wiki/Trading_costs)
+
+- https://bisq.wiki/Resyncing_SPV_file
+- https://bisq.wiki/Dispute_Resolution_in_Bisq_1
+- https://bisq.wiki/Support_Agent_Knowledge_Base
+- https://bisq.network/blog/bisq-v1-2-released/
+- https://github.com/bisq-network/bisq/blob/b3f44d2b4cda28dd04cd0218cb6e99cbe7c48e63/core/src/main/java/bisq/core/offer/bisq_v1/CreateOfferService.java#L154
+- https://github.com/bisq-network/bisq/blob/b3f44d2b4cda28dd04cd0218cb6e99cbe7c48e63/core/src/main/java/bisq/core/offer/bisq_v1/TakeOfferModel.java#L123
+- https://bisq.wiki/Trading_fees
+- https://github.com/bisq-network/bisq/blob/b3f44d2b4cda28dd04cd0218cb6e99cbe7c48e63/core/src/main/java/bisq/core/trade/protocol/bisq_v1/tasks/seller_as_maker/SellerAsMakerCreatesUnsignedDepositTx.java
 
 ## Review Notes
 
-- Exact penalty percentages and account limits can change; verify current Bisq 1 docs/UI before quoting numbers.
-- Technical deep-dives into transaction anatomy should point to source documentation or reviewed forum material rather than being invented from support-chat snippets.
+Independently checked against original conversations and primary references by the parent AI reviewer. This amendment resolves candidate IDs 486, 616, 861, 1134, 1336, 1527. Earlier review evidence remains in the private batch audit. Preserve version and protocol qualifications and do not infer missing case outcomes.
 
 ## Last Change Summary
 
-Added a consolidated Bisq 1 trade-funding page to absorb recurring candidates about security deposits, spendable balance, account limits, failed offer funding, and cancellation/dispute boundaries.
+Resolved the remaining reviewed candidates using verified technical behavior and conditional diagnostic guidance. Reviewer: `ai-review:codex:knowledge-resolution-20260918`. New pages are explicitly identified in the private publication manifest.

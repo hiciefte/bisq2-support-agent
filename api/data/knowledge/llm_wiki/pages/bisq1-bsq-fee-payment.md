@@ -1,68 +1,62 @@
 ---
 id: bisq1-bsq-fee-payment
-title: Bisq 1 BSQ balances, swaps, and trading-fee payment
+title: Bisq 1 BSQ balances and ordinary trading-fee payment
 type: llm_wiki
 page_type: support_playbook
 status: reviewed
 protocol: multisig_v1
-reviewed_by: suddenwhipvapor
-reviewed_at: '2026-06-27'
+reviewed_by: ai-review:codex:knowledge-resolution-20260918
+reviewed_at: '2026-09-18T09:25:43.205138+00:00'
 risk_level: medium
 source_refs:
 - wiki:BSQ
 - wiki:Trading BSQ
-- wiki:How to sell BSQ on Bisq
 - wiki:Paying trading fees with BSQ
 - wiki:Trading fees
 - wiki:DAO technical overview
-- wiki:Emergency wallet
-- faq:1162
-- faq:1166
+- https://github.com/bisq-network/bisq/blob/e8ad421428bd1557d3a0484f704f9d5515ae6b2e/core/src/main/java/bisq/core/btc/wallet/BsqCoinSelector.java#L77-L80
+- https://bisq.wiki/DAO_technical_overview
 ---
-## Canonical Support Answer
+## BSQ and BTC are different balances
 
-BSQ is Bisq's DAO token implemented as colored bitcoin, and BSQ transactions appear as normal transactions on the Bitcoin blockchain. It is recognized as BSQ by Bisq software and should be handled through Bisq's DAO/BSQ wallet exclusively. It is not the same balance as plain BTC and should not be sent to and from external BTC wallets.
+BSQ is colored bitcoin interpreted by Bisq's DAO rules. It uses Bitcoin transactions but is not interchangeable with plain BTC. Receive it at `DAO > BSQ Wallet > Receive` and send through the BSQ-aware Bisq wallet. A generic Bitcoin wallet can spend the underlying sats without preserving BSQ coloring. Do not use an external BTC wallet as a shortcut to move BSQ.
 
-Bisq 1 traders can pay trading fees in BTC or BSQ. The user chooses the fee-payment mode on the make-offer or take-offer confirmation screen. Paying fees with BSQ can provide a discount, but the BSQ must be available in the Bisq BSQ wallet and the transaction must also satisfy current Bitcoin/BSQ dust and change-output constraints.
+For ordinary BSQ transfers, retain BTC for mining fees before withdrawing remaining BTC. When moving between Bisq installations, preserve both directories and verify the recipient BSQ address. This ordinary transfer rule must not be confused with the different input/output structure of an atomic BSQ swap.
 
-If a user believes they have enough BSQ but fee payment fails, first verify that the BSQ is actually visible under DAO/BSQ wallet, that the user selected BSQ as the fee-payment option, and that the amount can be spent without violating dust/change constraints. Do not assume the balance shown in a generic wallet-info screen is the spendable BSQ amount.
+## Paying ordinary trade fees
 
-To buy or sell BSQ for BTC, use the BSQ/BTC swap flow in Bisq 1. BSQ swaps are atomic; they are distinct from ordinary fiat trades and from using BSQ as a trading-fee payment token. If the user asks whether BSQ can buy anything on Bisq, answer narrowly: BSQ is used for DAO/governance functions, BSQ/BTC swaps, and optionally paying Bisq trading fees; normal BTC/fiat trades do not treat BSQ as a currency.
+For Bisq 1 conventional trades, select BTC or BSQ for the trading fee in the make/take-offer flow. BSQ payment can provide a discount; consult the current displayed amounts and official fee documentation rather than promising a permanent percentage. Maker and taker trading fees differ; making an offer can cost less than taking one. Waiting longer for confirmation is not a trading-fee discount.
 
-If BSQ or BTC wallet state appears wrong, use wallet verification and SPV/DAO-state troubleshooting as appropriate. Keep fee-payment support conservative: ask for exact error text/screenshots/logs when a balance appears sufficient but the transaction fails.
+If a sufficient-looking balance cannot pay the fee, check the actual BSQ wallet, selected fee mode, transaction confirmations and exact validation message. Total displayed BSQ may not all be spendable: inputs, change and output constraints matter. Do not confuse a minimum trading fee with a dust threshold or require a universal fixed residual BSQ balance. Ask support for the exact version/error when constraints are unclear.
 
-## Applies When
+The BSQ amount burned for trading fees is distinct from constraints on the transaction’s inputs and remaining colored outputs. The inspected selector references 546 satoshis (5.46 BSQ), not the historical 516-satoshi example. This is not a universal instruction to buy that amount or retain a fixed residual balance: the actual error and output/change construction determine the remedy.
 
-- The user asks what BSQ is or which blockchain it exists on.
-- The user asks how to buy, sell, swap, receive, or transfer BSQ in Bisq 1.
-- The user asks how to pay Bisq 1 trading fees with BSQ.
-- The user sees a sufficient-looking BSQ balance but cannot start a trade or pay the fee.
-- The user sees an insufficient-BSQ, BSQ dust, or BSQ wallet-balance problem.
-- The user asks whether BSQ can be used to buy arbitrary assets on Bisq.
+## Negative, unavailable or unconfirmed BSQ
 
-## Do Not Say
+Check local DAO consensus under `DAO > Network Monitor` and the relevant transactions/progress under `DAO > BSQ Wallet > Transactions`. Verify their Bitcoin network status independently. DAO recognition and SPV wallet tracking are distinct. If local DAO state is inconsistent, follow the documented DAO rebuild; if it is consistent but a balance remains wrong, provide the particular transaction evidence instead of repeating resets blindly.
 
-- Do not treat BSQ as the same wallet balance as BTC.
-- Do not guarantee the displayed balance is spendable without checking exact context.
-- Do not recommend sending BSQ to a normal external BTC wallet.
-- Do not conflate BSQ/BTC swaps with ordinary fiat trades.
-- Do not use this page for missing deposit transactions, stuck trades, security deposits, or mediation questions unless the question is specifically about BSQ fee payment.
+An unconfirmed transaction can tie up inputs or change. Another confirmed output may allow other activity, but adding BSQ does not repair an invalid or never-broadcast transaction. Do not delete wallet/DAO files or consolidate blindly. Preserve backups, especially after restoring an older directory.
 
-## Evidence / Sources
+## Uses and market price
 
-- `wiki:BSQ` explains BSQ as colored bitcoin recognized by Bisq and stored/handled in Bisq software.
-- `wiki:Trading BSQ` and `wiki:How to sell BSQ on Bisq` document BSQ/BTC swap behavior.
-- `wiki:Paying trading fees with BSQ` explains the separate BSQ wallet, fee selection, and BSQ fee-payment constraints.
-- `wiki:Trading fees` explains BTC vs BSQ fee rates and fee mode; exact fee, discount, and dust/change values should be checked against current Bisq/DAO parameters before quoting them.
-- `wiki:DAO technical overview` provides DAO/BSQ context.
-- `wiki:Emergency wallet` documents last-resort BSQ wallet recovery shortcuts.
-- `faq:1162` and `faq:1166` cover receiving/checking BSQ in Bisq support answers.
+BSQ supports DAO functions and ordinary trading-fee payment, and can be exchanged for BTC in Bisq 1 atomic BSQ swaps. It is not a general balance for every fiat market. The price is negotiated by buyers and sellers; `Market` with BSQ selected shows market activity, not a guaranteed fixed redemption value. Acquisition by swap is one way to obtain BSQ, not the only way to receive it.
+
+For swap account setup, input sufficiency, fees or timeouts, use `bisq1-bsq-swaps`. BSQ swaps are not conventional multisig fiat trades or Bisq Easy. Missing deposits and dispute release questions belong to their actual trade protocol.
 
 ## Review Notes
 
-- Exact current fee rates, discount, and dust thresholds are DAO/protocol parameters and should be checked live when needed.
-- Production candidates about failed trades, escrow, security deposits, mediation, and Windows external-wallet popups were intentionally not absorbed into this BSQ fee page.
+Independently checked against original conversations and primary references by the parent AI reviewer. This amendment resolves candidate IDs 696, 1174, 1899, 2360. Earlier review evidence remains in the private batch audit. Preserve version and protocol qualifications and do not infer missing case outcomes.
+
+## Evidence / Sources
+
+- [BSQ](https://bisq.wiki/BSQ): official procedure or scope referenced above.
+- [Trading BSQ](https://bisq.wiki/Trading_BSQ): official procedure or scope referenced above.
+- [Paying trading fees with BSQ](https://bisq.wiki/Paying_trading_fees_with_BSQ): official procedure or scope referenced above.
+- [Trading fees](https://bisq.wiki/Trading_fees): official procedure or scope referenced above.
+- [DAO technical overview](https://bisq.wiki/DAO_technical_overview): official procedure or scope referenced above.
+
+- https://github.com/bisq-network/bisq/blob/e8ad421428bd1557d3a0484f704f9d5515ae6b2e/core/src/main/java/bisq/core/btc/wallet/BsqCoinSelector.java#L77-L80
 
 ## Last Change Summary
 
-Clarified BSQ fee-payment spendability and dust/change-threshold handling without hard-coding an unverified evergreen value.
+Resolved the remaining reviewed candidates using verified technical behavior and conditional diagnostic guidance. Reviewer: `ai-review:codex:knowledge-resolution-20260918`. New pages are explicitly identified in the private publication manifest.

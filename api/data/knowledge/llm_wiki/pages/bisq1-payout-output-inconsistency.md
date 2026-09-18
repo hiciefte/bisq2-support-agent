@@ -1,51 +1,45 @@
 ---
 id: bisq1-payout-output-inconsistency
-title: Bisq 1 payout output and address-reuse inconsistency after payment confirmation
+title: Bisq 1 missing payout and inconsistent completion state
 type: llm_wiki
 page_type: support_playbook
 status: reviewed
 protocol: multisig_v1
-reviewed_by: suddenwhipvapor
-reviewed_at: '2026-06-27'
+reviewed_by: ai-review:codex:knowledge-batch-20260918
+reviewed_at: '2026-09-18T08:30:52.377693+00:00'
 risk_level: high
 source_refs:
-- wiki:Trade payout address reuse issue
-- wiki:Support Agent Knowledge Base
-- wiki:Mediation
+- https://bisq.wiki/Trade_payout_address_reuse_issue
+- https://bisq.wiki/Support_Agent_Knowledge_Base
+- https://bisq.wiki/Mediation
+- https://bisq.wiki/Resyncing_SPV_file
 ---
 ## Canonical Support Answer
 
-If a Bisq 1 trade status shows completed right after payment was marked as sent, separate UI state from on-chain payout state. First check whether the payout transaction actually exists and whether the buyer received the expected trade amount plus security deposit in the Bisq wallet transaction history or on a block explorer.
+A Completed or History label does not prove this trade paid out. Check the actual payout transaction, expected amount/address, Funds > Transactions and the deposit's spent/unspent state on-chain. A fee transaction or old incoming payment is not evidence of the current payout. For disappearing balances, inspect outgoing transactions as well as the expected incoming payout before concluding funds remain locked or were stolen.
 
-For the question "After confirming payment received, a trade shows cancelled/output errors. What should be checked?", answer with the checks, not a conclusion: payout transaction existence, buyer wallet history, block explorer status, deposit transaction ID, and any payout transaction details.
+Normally the BTC seller signs and broadcasts the payout after verifying payment receipt; this role is independent of maker/taker. The buyer receives trade BTC plus their deposit and the seller receives their deposit, subject to fees. A documented address-reuse/output-state issue can cause premature local completion, including a buyer's trade moving to History while the seller still sees it open. Do not assume that bug without evidence or infer the seller can no longer complete normally.
 
-If the payout is not visible or the app state is inconsistent, keep the trade data intact and open mediation or contact support with the trade ID, onion address, deposit transaction ID, and any payout transaction details. A mediator/support agent may need those transaction IDs to determine whether funds are still locked, already paid out, or affected by an address-reuse/output-state bug.
+If payment was received but SellerBroadcastPayoutTx or another confirmation error occurs, notify the peer and open the trade's support ticket. Give verified support the trade ID, deposit ID, payout ID if present, exact error and acceptance/payment state. If the trade no longer has chat, support can coordinate the peers through verified private contact. Preserve data; a coordinated manual recovery may be needed but is not promised.
+
+A present unconfirmed payout is a network-confirmation problem; an absent payout requires determining whether it was constructed/broadcast and whether escrow remains unspent. A payout disappearing from one mempool is not cancellation or proof of failure. Do not apply an absent-deposit refund recipe, spend escrow outputs or delete trade files. SPV resync can repair a confirmed-on-chain/local-wallet mismatch but is not a substitute for diagnosing payout/signature problems.
 
 ## Applies When
 
-- A Bisq 1 trade shows cancelled/output errors after confirming payment received.
-- The user asks what should be checked after confirming payment received but seeing cancelled/output errors.
-- The buyer sees a completed trade but no incoming payout transaction.
-- The seller pressed payment received but the peer reports no BTC payout.
-- Support needs to distinguish wallet display state from the actual multisig payout.
+Premature completed status, missing buyer payout, inconsistent peer trade states, output/address-reuse errors or failed seller payout broadcast.
 
-## Do Not Say
-
-- Do not tell the user to delete trade data before transaction state is understood.
-- Do not assume an SPV resync is sufficient when the issue may require mediator visibility.
-- Do not say the payout happened unless the payout transaction or wallet history confirms it.
-- Do not claim funds are lost before checking the payout transaction and deposit transaction state.
 
 ## Evidence / Sources
 
-- `wiki:Trade payout address reuse issue` documents cases where one side can see a completed trade while the actual payout path still needs verification or mediation.
-- `wiki:Support Agent Knowledge Base` lists maker fee, taker fee, deposit, delayed payout, and payout transactions as support-agent evidence points.
-- `wiki:Mediation` says mediators check maker fee, taker fee, and deposit transaction IDs and can request more details when funds may be stuck.
+- [Trade payout address reuse issue](https://bisq.wiki/Trade_payout_address_reuse_issue)
+- [Support Agent Knowledge Base](https://bisq.wiki/Support_Agent_Knowledge_Base)
+- [Mediation](https://bisq.wiki/Mediation)
+- [Resyncing SPV file](https://bisq.wiki/Resyncing_SPV_file)
 
 ## Review Notes
 
-- Exact current UI wording for the affected output errors should be verified from logs/screenshots.
+Independently reviewed by the parent AI reviewer. Preserve private case evidence outside this reusable page.
 
 ## Last Change Summary
 
-Converted from generated support playbook into internal LLM Wiki page after RAGAS exposed payout/output weakness; ready for local support-admin review.
+Retained transaction-first payout diagnosis and added seller broadcasting role and premature-History coordination.

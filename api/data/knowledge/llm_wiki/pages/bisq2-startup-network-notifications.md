@@ -1,78 +1,65 @@
 ---
 id: bisq2-startup-network-notifications
-title: Bisq 2 startup, network, and notification troubleshooting
+title: Bisq 2 startup, network, messaging and notifications
 type: llm_wiki
 page_type: support_playbook
 status: reviewed
 protocol: bisq_easy
-reviewed_by: suddenwhipvapor
-reviewed_at: '2026-06-27'
-risk_level: low
+reviewed_by: ai-review:codex:knowledge-resolution-20260918
+reviewed_at: '2026-09-18T09:25:43.205138+00:00'
+risk_level: medium
 source_refs:
-- wiki:Bisq 2
-- wiki:Downloading and installing
-- wiki:Running Bisq in China
-- wiki:Dispute Resolution in Bisq 2
-- faq:3
-- faq:18
-- faq:38
-- faq:77
-- faq:99
-- faq:109
-- faq:694
-- faq:695
-- faq:708
-- faq:712
-- faq:1052
-- faq:1067
+- https://bisq.wiki/Bisq_2
+- https://bisq.wiki/Downloading_and_installing
+- https://bisq.wiki/Dispute_Resolution_in_Bisq_2
+- https://github.com/bisq-network/bisq2/issues
+- https://github.com/bisq-network/bisq2/blob/ae3176e4431eeaef309aada264ff8a75616f21d7/network/tor/tor-common/src/main/java/bisq/network/tor/common/torrc/ClientTorrcGenerator.java
+- https://github.com/bisq-network/bisq2/blob/ae3176e4431eeaef309aada264ff8a75616f21d7/network/tor/tor-common/src/main/java/bisq/network/tor/common/torrc/Torrc.java
+- https://github.com/bisq-network/bisq2/issues/2826#issuecomment-2353496480
+- https://github.com/bisq-network/bisq2/issues/2587#issuecomment-2276260039
+- https://bisq.wiki/Bisq_2#Installation
 ---
 ## Canonical Support Answer
 
-For Bisq 2 startup, network-data, Tor, offerbook, notification, or mediation-button issues, first collect the exact symptom and version. Check that the user is on the latest supported Bisq 2 version, the operating-system clock is synchronized, and the network is not blocking Tor or Bisq traffic.
+First identify the Bisq 2 version, operating system and exact symptom: an application crash is different from a process still waiting for initial network data. Record the error and try one normal restart. Check a supported release, operating-system time synchronization and Tor/network reachability. A working Tor Browser is useful diagnostic evidence, but does not prove that Bisq's own Tor connection works. A working Bisq 1 installation likewise does not prove Bisq 2 connectivity.
 
-If Bisq 2 is stuck on requesting network data, has no offers, or cannot connect, do not apply Bisq 1 SPV wallet advice. Bisq 2/Bisq Easy does not use the Bisq 1 built-in wallet/SPV workflow. Start with version, clock, network/Tor reachability (verify Tor Browser functionality), and any current Bisq 2 issue-specific workaround. If a workaround involves replacing a protobuf or data file, require a full data-directory backup first and verify that the workaround applies to the user's version.
+For missing offers or a network-data stall, inspect the client's connection status and whether it makes progress. Do not prescribe a fixed peer-count threshold or guess the meaning of a version-specific status label. Bisq Easy does not use the Bisq 1 internal wallet/SPV-resync workflow.
 
-If notifications or open-trade badges look stale, ask whether the underlying trade is still visible and unresolved. For Bisq Easy trades already resolved outside the app, users may be able to reject/cancel the stale trade entry when both parties received what they expected. For a ghost notification with no open trade, clearing notifications from settings can be appropriate. If a real trade is still unresolved, use the trade or mediation flow instead of clearing the symptom.
+For a local Tor control-port error, retain the exact startup message and note whether it recurs after restart. That error alone does not justify changing router ports, adding an arbitrary proxy, rotating an onion identity or restoring a profile. If one profile can send messages and another cannot, report the affected profile, chat type and error; preserve both profiles rather than creating more test identities or overwriting the failing one.
 
-If the mediation button is disabled, unavailable, or says no mediator is available, keep the user in the trade context and route them to support/open chats for mediator assistance. Do not tell them to repeatedly click failed mediation actions or to leave the trade unresolved after fiat has been sent.
+For delayed notifications, missing sound or failed mobile pairing, provide the desktop/mobile versions, operating system and relevant redacted logs through established support or the Bisq 2 issue tracker. Do not claim a historical release fixed every notification issue, or infer Bluetooth or macOS quarantine trouble from a running application's notification problem.
 
-Installation errors such as macOS `damaged` app warnings or Linux package signature questions should be answered from the current installation guide and release-signing instructions. Avoid giving stale version-specific terminal commands unless they match the current release files.
+Before clearing a ghost notification, check the correct profile, open trades and actual payment state. Clearing notifications is appropriate only for a stale badge with no unresolved trade. If payment or BTC delivery is unresolved, use the trade chat and mediation. For a fully settled trade whose UI remains stuck, ask support which cleanup action fits the installed version; do not cancel merely to hide the symptom.
 
-## Applies When
+If requesting mediation fails or the control is unavailable, keep the trade evidence and contact established support for mediator assistance. Repeated failed clicks, file deletion and Bisq 1 keyboard instructions are not fixes for an unidentified Bisq 2 error.
 
-- Bisq 2 is stuck on `Requesting network data`.
-- Bisq 2 has no offers or cannot connect to peers/Tor.
-- The user reports system-time/network-reference warnings.
-- The user asks about stale notifications, ghost open-trade badges, or no visual notification.
-- The user cannot request mediation or the mediation button is disabled.
-- The user sees macOS damaged-app warnings or asks about current installation/signature verification.
-- A support answer incorrectly suggests Bisq 1 SPV resync for a Bisq 2-only issue.
+## Recovery boundaries
 
-## Do Not Say
+Preserve a complete data-directory copy before repairs. A protobuf, database or Tor-file workaround must match the exact current issue and client version. Installer and signature problems belong to `bisq-installation-update-signatures`; do not reuse terminal commands for another application bundle or release.
 
-- Do not recommend Bisq 1 SPV resync for Bisq 2 startup, offerbook, or notification problems.
-- Do not tell users to delete the Bisq 2 data directory before a backup exists.
-- Do not promote file/protobuf replacement as generic advice without checking the current issue and version.
-- Do not clear or reject a trade merely to hide a notification when fiat/BTC delivery is unresolved.
-- Do not quote stale installer/signing commands for a different Bisq 2 release.
+## Embedded Tor ports and historical peer-store recovery
+
+Bisq 2 can run its own embedded Tor; the reviewed configuration assigns its SOCKS listener automatically. A separate Tor daemon on port 9050 does not mean Bisq uses it. A different port alone is not a fault, and port 8090 cannot be identified as a SOCKS listener without the process, configuration and connection role.
+
+The peer-store workaround in issue 2826 was a conditional response to Bisq 2.1.0 Tor authentication and peer-connection failures. It named db/settings/tor_peer_group_store.protobuf under the actual Bisq2 data directory. It is not a universal reset for later releases. Close the application and preserve a full backup before any support-guided file change; do not delete the whole data directory or import an old attachment merely because initial network data is slow.
 
 ## Evidence / Sources
 
-- `wiki:Bisq 2` documents Bisq 2 as a separate application and networked desktop client.
-- `wiki:Downloading and installing` documents installation and platform-specific setup.
-- `wiki:Running Bisq in China` provides network-restriction context.
-- `wiki:Dispute Resolution in Bisq 2` documents mediation availability in Bisq 2.
-- `faq:3` and `faq:712` cover macOS damaged/broken app installation issues.
-- `faq:18`, `faq:38`, `faq:77`, and `faq:708` cover notifications, stale market data, and completed trade cleanup.
-- `faq:99` and `faq:1052` cover requesting mediation and unavailable mediator handling.
-- `faq:109`, `faq:694`, and `faq:695` cover network connection/Tor troubleshooting.
-- `faq:1067` covers checking/updating to the latest version.
+- https://bisq.wiki/Bisq_2
+- https://bisq.wiki/Downloading_and_installing
+- https://bisq.wiki/Dispute_Resolution_in_Bisq_2
+- https://github.com/bisq-network/bisq2/issues
+
+- https://github.com/bisq-network/bisq2/blob/ae3176e4431eeaef309aada264ff8a75616f21d7/network/tor/tor-common/src/main/java/bisq/network/tor/common/torrc/ClientTorrcGenerator.java
+- https://github.com/bisq-network/bisq2/blob/ae3176e4431eeaef309aada264ff8a75616f21d7/network/tor/tor-common/src/main/java/bisq/network/tor/common/torrc/Torrc.java
+- https://github.com/bisq-network/bisq2/issues/2826#issuecomment-2353496480
+- https://github.com/bisq-network/bisq2/issues/2587#issuecomment-2276260039
+- https://bisq.wiki/Bisq_2#Installation
 
 ## Review Notes
 
-- This page intentionally excludes API/developer-only offer-state questions and named incident workarounds unless they become durable support guidance.
-- Page appears correct overall
+Independently checked against original conversations and primary references by the parent AI reviewer. This amendment resolves candidate IDs 340, 833, 975. Earlier review evidence remains in the private batch audit. Preserve version and protocol qualifications and do not infer missing case outcomes.
 
 ## Last Change Summary
 
-Barely any change was needed
+Resolved the remaining reviewed candidates using verified technical behavior and conditional diagnostic guidance. Reviewer: `ai-review:codex:knowledge-resolution-20260918`. New pages are explicitly identified in the private publication manifest.

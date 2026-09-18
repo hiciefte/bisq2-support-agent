@@ -1,12 +1,12 @@
 ---
 id: bisq1-data-directory-wallet-recovery
-title: Bisq 1 data directory, wallet recovery, and moving installations
+title: Bisq 1 data migration, backups and wallet recovery
 type: llm_wiki
 page_type: support_playbook
 status: reviewed
 protocol: multisig_v1
-reviewed_by: suddenwhipvapor
-reviewed_at: '2026-06-27'
+reviewed_by: ai-review:codex:knowledge-resolution-20260918
+reviewed_at: '2026-09-18T09:25:43.205138+00:00'
 risk_level: high
 source_refs:
 - wiki:Data directory
@@ -17,66 +17,111 @@ source_refs:
 - wiki:Restoring your wallet from seed
 - wiki:Last resort restore
 - wiki:Emergency wallet
-- wiki:Troubleshooting wallet issues
-- wiki:Resyncing SPV file
 - wiki:Command line options
-- wiki:Bisq 2 Wallet
+- wiki:Changing your onion address
+- wiki:Updating Bisq
+- wiki:Reputation
 - wiki:BSQ
+- https://community.start9.com/t/restoring-history-from-account-on-laptop-to-bisq-on-start9/2138
+- https://github.com/Start9-Community/bisq-startos/blob/4dcb82757d69aa7bf50d17ba9f3e3bfd2affb2c8/startos/manifest/index.ts
+- https://bisq.wiki/Restoring_application_data
+- https://github.com/bisq-network/bitcoinj/blob/6c32c0629d4ac7ecc95889eb1a46fa0d77a4e15a/core/src/main/java/org/bitcoinj/wallet/DeterministicUpgradeRequiredException.java#L19-L23
+- https://github.com/bisq-network/bitcoinj/blob/6c32c0629d4ac7ecc95889eb1a46fa0d77a4e15a/core/src/main/java/org/bitcoinj/wallet/WalletProtobufSerializer.java#L706-L711
+- https://github.com/bisq-network/bitcoinj/blob/6c32c0629d4ac7ecc95889eb1a46fa0d77a4e15a/core/src/main/java/org/bitcoinj/wallet/Wallet.java#L5223-L5249
+- https://github.com/bisq-network/bisq/blob/e8ad421428bd1557d3a0484f704f9d5515ae6b2e/core/src/main/java/bisq/core/btc/setup/WalletConfig.java#L417-L431
+- https://bisq.wiki/Resyncing_SPV_file
+- https://github.com/bisq-network/bisq/blob/e8ad421428bd1557d3a0484f704f9d5515ae6b2e/core/src/main/java/bisq/core/dao/state/storage/DaoStateStorageService.java#L271-L290
+- https://github.com/bisq-network/bisq/blob/e8ad421428bd1557d3a0484f704f9d5515ae6b2e/common/src/main/java/bisq/common/file/FileUtil.java#L312-L325
 ---
-## Canonical Support Answer
+## Locate and preserve the actual data
 
-Bisq 1 account, wallet, trade, payment-account, dispute, age-witness, onion-address, and notification state is local application data. For a complete move to another computer, copy the full Bisq data directory while Bisq is closed, paste it in the correct location on the new computer, start the new instance so it uses the copied directory, and stop using the old installation for that same wallet/onion address. Do not run or alternate the same data directory on two active installations because it can corrupt state in hard-to-debug ways.
+Bisq 1 keeps wallet keys, trade contracts/history, payment accounts, dispute records, signing information, onion identity and local synchronization data in its data directory. It contains SPV chain state, not a Bitcoin Core full blockchain. Use the application's backup screen to open the directory or consult the official Data directory guide. Defaults include `~/Library/Application Support/Bisq` on macOS and `~/.local/share/Bisq` on Linux; custom launch options can change them. Finder's Go to Folder can open the macOS location. A missing visible default folder is not proof of lost funds.
 
-A wallet seed can recover spendable on-chain BTC, but it does not restore the full Bisq application state. It does not restore open trades, support tickets, trade history, payment accounts, account-age metadata, onion identity, or BSQ/DAO state. If the user needs the Bisq account/trade state, prioritize the newest full data-directory backup. If the user only needs BTC funds and normal Bisq recovery is blocked, show how to restore the wallet seed from Account/Wallet Seed, but explain clearly that this is only for wallet-funds recovery, not full Bisq-state recovery.
+Before restores, updates, identity changes or file operations, close Bisq and preserve a complete copy of the current directory and existing backups. Keep the original recovery evidence. An old backup contains only the application state present when it was taken; it cannot contain later trades. Restoring it can also replace newer SPV chain state and require synchronization again. Do not overwrite newer trade state merely to fix a balance display.
 
-Use SPV resync for wallet-chain display problems such as incorrect balances, missing transactions, ghost UTXOs, or a transaction that is confirmed on-chain but not recognized by Bisq. SPV resync rebuilds local blockchain state from the Bitcoin network; it does not change the user's wallet keys or trade records, but the user should still make a backup first and should not interrupt the resync. If an old wallet has hundreds of transactions and SPV resync repeatedly becomes impractical, consider the documented new-wallet workflow only after confirming there are no open offers, open trades, mediations, arbitrations, or pending BSQ/DAO actions.
+## Full migration and independent instances
 
-If Bisq cannot start or a restored data directory fails, do not delete files blindly. First make a copy of the current data directory, then try a clean restore from the newest full backup. If that fails, use the last-resort restore guide to copy only the documented files into a fresh data directory. Emergency-wallet tools should be treated as last-resort fund recovery and should be used only after support has confirmed that normal recovery is not suitable.
+For a move between computers or operating systems, close both applications and copy the complete current directory to the new installation's actual data location. Preserve the destination before replacing it and check directory depth: the expected `btc_mainnet` must not be nested inside an extra backup directory. Verify balances, payment accounts and active trade/dispute state after startup. Stop using the old live copy. Never alternate between old and migrated copies, even if they are not running simultaneously.
 
-Running separate Bisq instances is possible only when they use different wallets and onion addresses. Use documented command-line options such as `--appData` or `--appDataDir` when deliberately creating separate instances. Do not use this as a shortcut for sharing one wallet or one active set of offers across machines.
+For a node appliance such as Start9, obtain the platform's actual data path and restore procedure; desktop paths and broad disk searches are not proof of the correct destination. If a migrated instance appears empty, first check the path, copied contents and startup logs.
 
-Bisq 1 and Bisq 2 are separate applications and trade protocols. Bisq 2 does not import the Bisq 1 built-in wallet or open Bisq 1 trades. Bisq 2 uses external wallets for Bisq Easy, while Bisq 1 remains the relevant application for trade volume and liquidity, featuring a built-in wallet, DAO, BSQ, and multisig-trade protocol.
+A genuinely separate instance needs its own directory, wallet and onion identity. The documented `--appData` option chooses a different named directory, while `--appDataDir` specifies a directory path. This can provide an isolated test without deleting the original. Keep the original available to manage its existing obligations. Creating an independent instance does not itself destroy the original wallet, but an empty instance must not overwrite it.
 
-BSQ is colored bitcoin recognized by the Bisq wallet. BSQ transfers and balances belong in the Bisq DAO/BSQ wallet flow, not in the normal BTC wallet balance, and need existing BTC balance to pay for the miner fee. When moving BSQ between instances, preserve backups and use the documented Bisq wallet/DAO screens; do not send BSQ to arbitrary external BTC wallets or assume every displayed BSQ amount is spendable after dust/change constraints.
+To access the same installation from multiple computers, securely authenticated remote access to one controlled machine avoids divergent copies. Treat remote desktop access as access to the wallet; do not expose an unauthenticated desktop service.
 
-## Applies When
+A new empty wallet synchronizing quickly does not make an old wallet’s history synchronized. Restoring the old full directory also restores its local tracking state and may still require catch-up; do not overwrite the original to try to inherit the new wallet’s startup speed.
 
-- The user asks how to move Bisq 1 from one computer, OS, or server to another.
-- The user asks whether importing a seed or wallet backup restores trades, payment accounts, age, or history.
-- The user has reinstalled Bisq and lost trade history, payment accounts, support tickets, or open-trade visibility.
-- The user sees incorrect wallet balance, ghost UTXOs, missing transactions, or has an SPV resync question.
-- The user has an old wallet with many transactions and repeated SPV resync problems.
-- The user wants to run multiple Bisq instances or separate data directories.
-- The user asks whether Bisq 1 wallet/trade state can be used directly in Bisq 2.
-- The user asks how to move or inspect BSQ balances between Bisq 1 instances.
+## Updates, missing records and seed limits
 
-## Do Not Say
+A normal compatible application update uses the existing data directory; it does not ordinarily require deleting offers, creating a wallet or transferring funds. Back up first, use official releases and follow any release-specific instructions, then verify active state after startup.
 
-- Do not say a wallet seed restores the complete Bisq application state.
-- Do not tell users to run the same data directory on more than one active installation.
-- Do not recommend deleting the data directory before a verified backup exists.
-- Do not promise recovery of open trade state, payment accounts, or history when no current backup exists.
-- Do not conflate Bisq 1 application data recovery with importing a Bisq 2 profile.
-- Do not present emergency-wallet use as a routine troubleshooting step.
-- Do not advise switching to a new wallet/data directory while open trades, offers, mediations, or arbitrations are active.
-- Do not tell users to send BSQ to any external BTC wallet.
+A seed can recover ordinary wallet BTC with the correct wallet type, derivation and creation information. It does not reconstruct the trade contracts, messages, payment accounts, signing identity, onion address or complete DAO/application state. It does not guarantee access to funds bound to active multisig trades. Prefer the newest intact full backup. If records vanished, inspect Funds > Transactions and the actual deposit before inferring lost funds, preserve the old disk/backups, and seek verified support for coordinated recovery.
 
-## Evidence / Sources
+If the displayed seed differs from the securely recorded original, stop replacing files. Preserve both states and confirm which data directory is in use. This discrepancy alone does not prove corruption or theft. Inspect public transaction evidence without sharing recovery secrets. External seed recovery is advanced; use documented compatible derivation and get support for open trades or BSQ. A normal BTC wallet can destroy BSQ coloring. For inspection alone, use watch-only tools.
 
-- `wiki:Data directory` documents where Bisq stores local application data.
-- `wiki:Backing up application data` and `wiki:Restoring application data` cover full data-directory backup and restore.
-- `wiki:Switching to a new data directory`, `wiki:Create a new wallet for your data directory`, and `wiki:Command line options` cover controlled migration, `--appData`/`--appDataDir`, and separate-instance workflows.
-- `wiki:Restoring your wallet from seed`, `wiki:Last resort restore`, and `wiki:Emergency wallet` distinguish wallet-funds recovery from full application-state recovery.
-- `wiki:Troubleshooting wallet issues` and `wiki:Resyncing SPV file` document SPV resync and wallet backup recovery.
-- `wiki:Bisq 2 Wallet` documents that Bisq 2 initially uses external wallets rather than the Bisq 1 built-in wallet.
-- `wiki:BSQ` documents BSQ as colored bitcoin recognized by Bisq software.
+## Payment-account export and identity
+
+Payment-account export/import transfers account metadata, not a complete instance. Use the account's `EXPORT ACCOUNT` action and import via `Account > National Currency Accounts`; remove unwanted imported accounts only in the intended destination. `Export Account Age` and `Export Signed Witness` are instead proofs used for Bisq 2 reputation, not payment-account migration.
+
+Restoring aging/signing separately requires the precise original account metadata, salt and matching signing key. Follow the official restore guide: replacing that key is not safe with active offers, trades or disputes, and Bisq must be closed with backups retained. Do not copy the whole UserPayload as an improvised shortcut. A local account nickname is not the account-holder identity.
+
+A stable onion address links interactions with the same Bisq instance, not necessarily a real-world identity. Changing it can reduce linkability but makes an instance unreachable to existing trade/dispute peers. Do not rotate it during open trades or disputes. Use the official procedure and preserve identity backups; Tor-cache refresh is not onion-identity rotation. Do not apply Bisq 1 file procedures to Bisq 2 profiles.
+
+## Replacing a wallet or directory
+
+A local SPV resync is distinct from a fresh wallet or directory. For planned wallet replacement, first settle open offers, trades, mediations, arbitrations and pending BSQ/DAO actions and verify actual funds. The official new-wallet procedure can preserve other application state; a fresh directory changes more than the wallet. An old wallet's size alone does not justify abandoning active obligations.
+
+When moving funds to a separate Bisq wallet, send BSQ through the BSQ wallet before moving the remaining BTC needed for its mining fee. Verify destination addresses and resulting BTC/BSQ balances; preserve the original until recovery is confirmed. No external ordinary Bitcoin wallet is a safe shortcut for BSQ.
+
+If full restoration fails, preserve logs and diagnose the failure before selective recovery. Last resort restore is an exceptional documented procedure, not a synonym for SPV resync or permission to delete PendingTrades, DAO databases or arbitrary wallet files. Emergency tools require the same caution. Bisq 2 does not import a Bisq 1 wallet or its open trades; its reputation-proof imports are separate.
+
+## Historical StartOS migration path
+
+A December 2024 Start9 support reply named /embassy-data/package-data/volumes/bisq/data/bisq/btc_mainnet for its then-current Bisq package, required stopping the service before copying, and explicitly limited support for manual migration. That path is historical: current package layouts can differ. Confirm the installed package’s volume mapping and ownership, preserve both source and destination backups and stop both instances before a reviewed full-data transfer. Do not use payment-account import or copy only a signing key and UserPayload to stand in for a complete instance; StartOS-native backups have their own restore workflow.
+
+## Wallet loading errors: preserve the failing state
+
+DeterministicUpgradeRequiredException concerns an older non-HD wallet being used with HD functionality before the required upgrade. Preserve the original wallet and key material; a modern seed must not be assumed to cover every old random key. Record the application version and loading stack trace for version-specific recovery. This exception is not a DAO or Tor diagnosis.
+
+UnreadableWalletException with Wallet contained duplicate transaction is raised while deserializing duplicate wallet transactions. In the inspected implementation, loading must succeed before replay can reset transaction state, so deleting the SPV chain does not bypass this loading failure. Preserve the directory and rolling backups; deleting an unrelated BSQ tracking store is not a repair.
+
+Expected PENDING or IN_CONFLICT, was BUILDING means a transaction in bitcoinj’s pending collection has a conflicting confirmed confidence state. It does not establish DAO corruption. If wallet backups have already been swapped, stop mixing files and preserve every source backup and the change history. Identify the affected wallet and a coherent recoverable state with verified support before replacement; arbitrarily recent BTC and BSQ backups are not automatically a safe pair. Preserve active trade identity and contracts.
+
+## Archived DAO recovery data
+
+In the inspected Bisq 1 implementation, btc_mainnet/db/out_of_sync_dao_data is a destination for timestamped copies of DAO files moved aside during recovery. It is not the active DAO store. Once recovery is complete and those diagnostic copies are no longer needed, close Bisq, archive that exact directory outside the live directory and verify the archive before removing only those old local copies. Keep them while support investigates. Do not extend this cleanup to live DaoStateStore, SignedWitnessStore, wallets or trade databases; the removed historical copies are not reconstructed on startup.
 
 ## Review Notes
 
-- Verify exact OS-specific directory paths and menu labels against the user's version before giving path-level commands.
-- Treat open trades and disputes as high risk: preserve backups first and route uncertain cases to support/mediation rather than improvising file deletion.
-- Some production candidates about Start9, mobile pairing, XMR subaddresses, or general network failures were intentionally not added here because they need separate source-backed pages or are too environment-specific.
+Independently checked against original conversations and primary references by the parent AI reviewer. This amendment resolves candidate IDs 545, 798, 851, 1138, 1374, 1539, 1735, 2157. Earlier review evidence remains in the private batch audit. Preserve version and protocol qualifications and do not infer missing case outcomes.
+
+## Evidence / Sources
+
+- [Data directory](https://bisq.wiki/Data_directory): official procedure or scope referenced above.
+- [Backing up application data](https://bisq.wiki/Backing_up_application_data): official procedure or scope referenced above.
+- [Restoring application data](https://bisq.wiki/Restoring_application_data): official procedure or scope referenced above.
+- [Switching to a new data directory](https://bisq.wiki/Switching_to_a_new_data_directory): official procedure or scope referenced above.
+- [Create a new wallet for your data directory](https://bisq.wiki/Create_a_new_wallet_for_your_data_directory): official procedure or scope referenced above.
+- [Restoring your wallet from seed](https://bisq.wiki/Restoring_your_wallet_from_seed): official procedure or scope referenced above.
+- [Last resort restore](https://bisq.wiki/Last_resort_restore): official procedure or scope referenced above.
+- [Emergency wallet](https://bisq.wiki/Emergency_wallet): official procedure or scope referenced above.
+- [Command line options](https://bisq.wiki/Command_line_options): official procedure or scope referenced above.
+- [Changing your onion address](https://bisq.wiki/Changing_your_onion_address): official procedure or scope referenced above.
+- [Updating Bisq](https://bisq.wiki/Updating_Bisq): official procedure or scope referenced above.
+- [Reputation](https://bisq.wiki/Reputation): official procedure or scope referenced above.
+- [BSQ](https://bisq.wiki/BSQ): official procedure or scope referenced above.
+
+- https://community.start9.com/t/restoring-history-from-account-on-laptop-to-bisq-on-start9/2138
+- https://github.com/Start9-Community/bisq-startos/blob/4dcb82757d69aa7bf50d17ba9f3e3bfd2affb2c8/startos/manifest/index.ts
+- https://bisq.wiki/Bisq_2_Wallet
+- https://github.com/bisq-network/bitcoinj/blob/6c32c0629d4ac7ecc95889eb1a46fa0d77a4e15a/core/src/main/java/org/bitcoinj/wallet/DeterministicUpgradeRequiredException.java#L19-L23
+- https://github.com/bisq-network/bitcoinj/blob/6c32c0629d4ac7ecc95889eb1a46fa0d77a4e15a/core/src/main/java/org/bitcoinj/wallet/WalletProtobufSerializer.java#L706-L711
+- https://github.com/bisq-network/bitcoinj/blob/6c32c0629d4ac7ecc95889eb1a46fa0d77a4e15a/core/src/main/java/org/bitcoinj/wallet/Wallet.java#L5223-L5249
+- https://github.com/bisq-network/bisq/blob/e8ad421428bd1557d3a0484f704f9d5515ae6b2e/core/src/main/java/bisq/core/btc/setup/WalletConfig.java#L417-L431
+- https://bisq.wiki/Resyncing_SPV_file
+- https://github.com/bisq-network/bisq/blob/e8ad421428bd1557d3a0484f704f9d5515ae6b2e/core/src/main/java/bisq/core/dao/state/storage/DaoStateStorageService.java#L271-L290
+- https://github.com/bisq-network/bisq/blob/e8ad421428bd1557d3a0484f704f9d5515ae6b2e/common/src/main/java/bisq/common/file/FileUtil.java#L312-L325
 
 ## Last Change Summary
 
-Curated the production candidate cluster into one high-signal page for Bisq 1 data-directory moves, seed-restore limits, SPV resync, old-wallet migration, separate instances, Bisq 1/Bisq 2 boundaries, and BSQ wallet handling.
+Resolved the remaining reviewed candidates using verified technical behavior and conditional diagnostic guidance. Reviewer: `ai-review:codex:knowledge-resolution-20260918`. New pages are explicitly identified in the private publication manifest.
