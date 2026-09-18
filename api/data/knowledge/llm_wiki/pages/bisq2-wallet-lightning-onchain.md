@@ -1,57 +1,44 @@
 ---
 id: bisq2-wallet-lightning-onchain
-title: Bisq 2 wallet, Lightning, and on-chain receiving
+title: Bisq Easy external wallets, Lightning and on-chain receiving
 type: llm_wiki
 page_type: support_playbook
 status: reviewed
 protocol: bisq_easy
-reviewed_by: suddenwhipvapor
-reviewed_at: '2026-06-27'
-risk_level: low
+reviewed_by: ai-review:codex:knowledge-batch-20260918
+reviewed_at: '2026-09-18T08:30:52.377693+00:00'
+risk_level: medium
 source_refs:
-- wiki:Bisq 2 Wallet
-- wiki:Bisq Easy
-- wiki:Trade Protocols
-- faq:23
-- faq:55
-- faq:56
-- faq:75
-- faq:81
-- faq:691
+- https://bisq.wiki/Bisq_2_Wallet
+- https://bisq.wiki/Bisq_Easy
 ---
 ## Canonical Support Answer
 
-Bisq 2 does not include a built-in Bitcoin wallet like in Bisq 1. In Bisq Easy, users provide an external Bitcoin wallet address or lightning invoice for receiving BTC. Bisq 2 also does not provide an integrated Lightning wallet.
+Bisq Easy uses your external Bitcoin wallet; it does not provide the Bisq 1 internal BTC/BSQ wallet or an integrated Lightning wallet. There is no Bisq Easy Funds > Receive Funds balance to deposit into or withdraw from. An exchange withdrawal goes to a receiving address in your own wallet. Using a Bisq 1 wallet is one possibility, not a requirement.
 
-For most Bisq Easy users who want normal bitcoin self-custody, broad wallet compatibility, and a first on-chain UTXO, receiving to an on-chain address is the default recommendation. Lightning can be used only when the buyer and seller intentionally agree on that payment route, and both have access to a functional lightning wallet.
+During a purchase, the buyer provides the receiving address or agreed Lightning invoice in the trade flow and pays the seller using the agreed payment method. The seller sends BTC after verifying actual payment receipt. The buyer does not need to send BTC to Bisq to buy their first BTC; Bisq Easy has no BTC security deposit.
 
-If the user accidentally selected Lightning but wanted on-chain Bitcoin, they should immediately tell the counterparty in trade chat and provide the correct on-chain address before the seller sends BTC. They should also be informed that changing the settlement method might incur additional costs due to different fees across the two networks.
+Choose a receiving method that meets the purpose of the trade. If you need an on-chain UTXO, for example to fund a Bisq 1 trade, receive on-chain BTC. A Lightning balance or invoice is not an on-chain address. Use Lightning only when both peers agree and have compatible functioning wallets; do not assume a named wallet currently offers every Lightning feature.
 
-## Applies When
+If the address is missing, ask the buyer to confirm it in the affected trade chat and verify the chosen network and settlement method. Before sending, check actual fiat receipt and whether BTC has already been sent. Do not infer an address from a Bisq 1 deposit transaction. If the interface or payment details disagree, involve support or mediation rather than send twice.
 
-- The user asks whether Bisq 2 has a built-in BTC or Lightning wallet.
-- The user asks whether to choose on-chain or Lightning.
-- The user selected the wrong receive method in a Bisq Easy trade.
-- The user compares Bisq 1 wallet behavior to Bisq 2.
+If Lightning was selected accidentally, contact the peer before any BTC is sent and agree the correct receiving method and any fee implications. Do not silently replace payment details or infer that a different network requires an automatic reduction in the agreed BTC amount.
 
 ## Do Not Say
 
-- Do not say Bisq 2 currently manages an internal BTC wallet like Bisq 1.
-- Do not say Bisq 2 can create or custody a Lightning wallet.
-- Do not advise changing payment details silently; tell the user to coordinate in trade chat.
+- Do not invent an internal Bisq Easy receive, send or seed-recovery screen.
+- Do not say buying requires a pre-existing BTC deposit.
+- Do not treat an invoice as an on-chain address or promise recovery by changing a destination after sending.
 
 ## Evidence / Sources
 
-- `wiki:Bisq 2 Wallet` says Bisq 2 initially has no integrated BTC or BSQ wallet and users use their own wallet.
-- `wiki:Bisq Easy` describes seller-paid on-chain mining fees or Lightning routing fees after fiat receipt.
-- `wiki:Trade Protocols` distinguishes current Bisq Easy from future Lightning-related protocols.
-- `faq:23`, `faq:55`, and `faq:56` confirm there is no built-in Lightning/Bisq 1-style wallet in Bisq 2.
-- `faq:75` and `faq:81` cover wrong receive-method selection and on-chain default guidance.
+- https://bisq.wiki/Bisq_2_Wallet
+- https://bisq.wiki/Bisq_Easy
 
 ## Review Notes
 
-- Re-check this playbook before future wallet or Lightning protocol releases.
+Independently reviewed by the parent AI reviewer after individual candidate review. Reviewer: `ai-review:codex:knowledge-batch-20260918`. Sources checked on 2026-09-18; verify release-sensitive behavior against the user's installed version.
 
 ## Last Change Summary
 
-Improved wording and added guidance about different fees when changing the settlement network.
+Consolidated external-wallet questions and missing-address cases. Preserved on-chain/Lightning choice and coordination while removing internal-wallet and mandatory Bisq 1 receiving claims.

@@ -1,52 +1,43 @@
 ---
 id: bisq1-fiat-stablecoin-routing
-title: Bisq 1 fiat, BTC, and stablecoin routing
+title: Bisq 1 BTC, fiat and altcoin trade routes
 type: llm_wiki
 page_type: support_playbook
 status: reviewed
 protocol: multisig_v1
-reviewed_by: suddenwhipvapor
-reviewed_at: '2026-06-27'
-risk_level: low
+reviewed_by: ai-review:codex:knowledge-batch-20260918
+reviewed_at: '2026-09-18T08:30:52.377693+00:00'
+risk_level: high
 source_refs:
-- wiki:Payment methods
-- wiki:Trading Monero
-- wiki:Trade Protocols
-- faq:1041
+- https://bisq.wiki/Payment_methods
+- https://bisq.wiki/Trading_Monero
+- https://bisq.wiki/Security_deposit
+- https://bisq.wiki/Frequently_asked_questions
 ---
 ## Canonical Support Answer
 
-Users do not send fiat currency to Bisq itself. Bisq coordinates peer-to-peer trades between users. To trade fiat-to-altcoin, or fiat-to-stablecoin, in Bisq 1, the supported method is buying BTC with fiat from a peer and then selling it for supported altcoins, or vice versa.
+Bisq 1 coordinates peer-to-peer markets against BTC; users do not deposit fiat with Bisq as a broker. For fiat-to-altcoin or fiat-to-stablecoin exchange, the route is fiat to BTC with a peer, then BTC to the supported altcoin with another peer, or the reverse. Check current markets, supported payment methods and actual available offers rather than promising liquidity.
 
-If the user asks about buying stablecoins directly with fiat through Bisq, answer that Bisq does not receive fiat and does not act as a stablecoin broker. If a supported market exists, it is still a peer-to-peer trade with the available protocol, market, liquidity, and payment-method constraints.
+BTC/XMR trading uses Bisq 1's multisig protocol and its funding, security-deposit and fee requirements. It does not require acquiring Bisq Easy seller reputation. The person selling BTC receives XMR; the person buying BTC sends XMR. Verify actual payment in the relevant wallet before confirming receipt, and use the trade's mediation process for problems. Bisq Easy's reputation-based workflow and Bisq 1's security-deposit workflow must not be mixed.
 
-Users can check the relevant Bisq market tabs for current offers and completed trade activity. Do not promise stablecoin liquidity or imply that a specific non-BTC market is currently active without checking the current offerbook/market data.
+Direct credit-card payment is not a supported Bisq 1 peer payment method. Check the current supported-method list; buying an eligible gift card elsewhere is a different payment path, not direct card processing by Bisq. Do not instruct users to send fiat to Bisq or guarantee risk-free trading.
 
 ## Applies When
 
-- The user asks whether to send fiat to Bisq.
-- The user asks how to buy stablecoins with fiat through Bisq.
-- The user asks how to move from fiat to altcoins using Bisq 1.
-- The user confuses Bisq with a custodial exchange or broker.
+Fiat-to-altcoin/stablecoin routing, BTC/XMR trade prerequisites, or confusion between Bisq Easy reputation and Bisq 1 multisig deposits.
 
-## Do Not Say
-
-- Do not provide deposit instructions to send fiat to Bisq.
-- Do not imply Bisq custodies or converts fiat on behalf of users.
-- Do not promise stablecoin or altcoin market liquidity.
-- Do not describe future Bisq 2 protocols as currently available production routes.
 
 ## Evidence / Sources
 
-- `faq:1041` says users cannot send fiat to Bisq to buy stablecoins; they can buy BTC with fiat and then trade BTC for altcoins on Bisq 1.
-- `wiki:Payment methods` documents peer-to-peer payment methods.
-- `wiki:Trading Monero` establishes BTC-based altcoin trading patterns in Bisq 1.
-- `wiki:Trade Protocols` distinguishes future protocol ideas from current production behavior.
+- [Payment methods](https://bisq.wiki/Payment_methods)
+- [Trading Monero](https://bisq.wiki/Trading_Monero)
+- [Security deposit](https://bisq.wiki/Security_deposit)
+- [Frequently asked questions](https://bisq.wiki/Frequently_asked_questions)
 
 ## Review Notes
 
-- Verify whether a specific altcoin/stablecoin market is currently available before giving market-specific guidance.
+Independently reviewed by the parent AI reviewer. Preserve private case evidence outside this reusable page.
 
 ## Last Change Summary
 
-Cleaned the production-approved page and returned it to proposed status for bootstrap review.
+Preserved noncustodial BTC routing and clarified Bisq 1 BTC/XMR prerequisites without Easy reputation.

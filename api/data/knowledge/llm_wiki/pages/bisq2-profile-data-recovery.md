@@ -1,73 +1,50 @@
 ---
 id: bisq2-profile-data-recovery
-title: Bisq 2 profile and data recovery
+title: Bisq 2 local profile recovery and moving devices
 type: llm_wiki
 page_type: support_playbook
 status: reviewed
 protocol: bisq_easy
-reviewed_by: suddenwhipvapor
-reviewed_at: '2026-06-27'
+reviewed_by: ai-review:codex:knowledge-batch-20260918
+reviewed_at: '2026-09-18T08:30:52.377693+00:00'
 risk_level: high
 source_refs:
-- wiki:Data directory
-- wiki:Automatic backup script
-- faq:13
-- faq:713
-- faq:877
-- faq:1044
-- faq:1114
+- https://bisq.wiki/Data_directory
+- https://bisq.wiki/Backup
+- https://bisq.wiki/Automatic_backup
+- https://github.com/bisq-network/bisq2/blob/main/common/src/main/java/bisq/common/platform/PlatformUtils.java
 ---
 ## Canonical Support Answer
 
-Bisq 2 profile recovery depends on local data exclusively. There is no central login server that can restore a lost profile. The important target is the Bisq 2 data directory, especially the `db` data for the profile. If the user has a backup, or an old device still has the original data directory, restore from that source instead of creating a new profile.
+A Bisq 2 profile depends on local application data. There is no central account login that restores the profile on a new computer. A new empty profile is a different identity, not recovery of the old reputation or trades.
 
-For a planned move to another device, close Bisq on both machines, copy the Bisq 2 data directory from the location on the old device to the correct OS-dependent location on the new one, then start Bisq on the new device. If the new device already created an empty profile, close Bisq 2, back up that new data directory if user wants to keep it, or, most likely, delete it if that is a brand new profile with no history/reputation, then replace it with the copied old data. After a successful move, avoid using the old instance and only use the new device with the current copy.
+Before experimenting, preserve complete copies of the current data directory, the old device's data and existing backups. Locate the actual directory using the installed application's directory-opening control. Depending on version this is exposed in Support/Resources or Settings/Utilities; do not substitute Bisq 1's Account > Backup menu automatically.
 
-If the user created a new profile after losing the old one, check whether the backups folder or old data directory still contains a viable copy of the previous profile data. If there is no backup, and the old local data is gone, the profile is not recoverable, and any associated reputation is ultimately lost.
+Usual desktop defaults are `%APPDATA%\Bisq2` on Windows, `~/.local/share/Bisq2` on Linux and `~/Library/Application Support/Bisq2` on macOS. A custom app name, launch option or packaged environment can change them. The `db` area contains profile state, but copying only `db/private` or one protobuf file is not a complete migration guarantee.
 
-If a support workaround mentions a specific protobuf file, treat it as version/incident-specific. Do not tell users to delete or replace arbitrary protobuf/database files unless there is a current, source-backed procedure and the user has first made a full copy of the data directory.
+For a planned move, close Bisq 2 on both machines, back up any destination state, and copy the full source data directory into the correct destination without adding an extra nesting level. Start the destination and verify profile, reputation and trades. Use only one active copy of that identity afterward. Two computers running copied state do not synchronize changes and may interfere with each other's trades. A cross-platform copy does not itself solve Tails networking or persistence requirements.
 
-When giving recovery advice, first prevent further damage: ask the user not to delete or overwrite existing Bisq data directories, and to make a copy before experimenting with restores.
+If the profile disappears after an update, power failure or accidental new-profile creation, check the actual directory and preserved local backups before declaring it lost. Bisq 2 supports manual full-directory backups and automatic versioned storage-file backups. These are different recovery sources: automatic per-file versions are not necessarily a single consistent whole-profile snapshot. Preserve current state before selecting a documented, version-appropriate restore procedure with support.
 
-Default data directory locations are as follows:
-- Windows: `%USERPROFILE%\AppData\Roaming\Bisq2\`
-- Linux: `/home/<username>/.local/share/Bisq2/`
-- macOS: `/Users/<username>/Library/Application Support/Bisq2/`
-
-The data directory contains a `backups` folder, to which versioned copies of the profile are automatically saved, and can be selectively restored to try and solve issues, after the current profile folder has been backed up.
-
-## Applies When
-
-- The user formatted, reinstalled, updated, or restored the app and lost a Bisq 2 profile.
-- The app starts with a new/empty profile unexpectedly.
-- The user asks which files matter for restoring profile state.
-- The user wants to move a Bisq 2 account/profile to another device.
-- The user created a new profile but wants the previous profile back.
-- The user asks about a file-level recovery workaround for a corrupted profile or network-state file.
+Without surviving identity data or a usable backup, do not promise restoration of the old profile or its reputation. A Bisq 1 wallet seed or backup is not a Bisq 2 identity restore.
 
 ## Do Not Say
 
-- Do not promise recovery without a backup or preserved data directory.
-- Do not ask for seed words, private keys, or sensitive secrets in chat.
-- Do not tell users to manually edit database/protobuf files as a routine first step.
-- Do not confuse Bisq 2 profile recovery with Bisq 1 wallet seed recovery.
-- Do not imply a central login or server-side account can restore the local profile.
+- Do not delete an apparently empty destination until its contents have been checked and preserved.
+- Do not replace arbitrary database/protobuf files or overwrite newer trades with old data as a routine repair.
+- Do not request seed words, private keys or an unredacted data directory in public support.
 
 ## Evidence / Sources
 
-- `wiki:Data directory` identifies Bisq's local application data location, OS-specific path patterns, and warnings against manually editing `db` files.
-- `wiki:Automatic backup script` documents backup-oriented recovery context.
-- `faq:13` states profile restore needs a copy of the Bisq 2 `db` folder from the data directory.
-- `faq:713` says a missing profile without backup may be lost.
-- `faq:877` says the backups folder may contain viable previous profile data.
-- `faq:1044` says updates preserve the data directory, with backups as a precaution.
-- `faq:1114` covers transferring Bisq accounts to a new device by moving the data directory.
+- https://bisq.wiki/Data_directory
+- https://bisq.wiki/Backup
+- https://bisq.wiki/Automatic_backup
+- https://github.com/bisq-network/bisq2/blob/main/common/src/main/java/bisq/common/platform/PlatformUtils.java
 
 ## Review Notes
 
-- The exact OS-specific Bisq 2 path should be confirmed from the user's environment before giving path-level commands.
-- File-specific protobuf fixes should be reviewed against the current Bisq 2 issue/release before being promoted to durable support guidance.
+Independently reviewed by the parent AI reviewer after individual candidate review. Reviewer: `ai-review:codex:knowledge-batch-20260918`. Sources checked on 2026-09-18; verify release-sensitive behavior against the user's installed version.
 
 ## Last Change Summary
 
-Added default data-directory locations, backups-folder guidance, and safer restore wording.
+Preserved default paths and backup discovery, replaced deletion-first migration with preservation, and distinguished automatic per-file backups from complete consistent profile backups.

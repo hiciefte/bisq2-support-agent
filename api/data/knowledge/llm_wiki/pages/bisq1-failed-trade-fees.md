@@ -1,71 +1,61 @@
 ---
 id: bisq1-failed-trade-fees
-title: Bisq 1 failed trades and fee reimbursement
+title: Bisq 1 failed trade diagnosis and verified fee losses
 type: llm_wiki
 page_type: support_playbook
 status: reviewed
 protocol: multisig_v1
-reviewed_by: suddenwhipvapor
-reviewed_at: '2026-06-27'
+reviewed_by: ai-review:codex:knowledge-batch-20260918
+reviewed_at: '2026-09-18T08:30:52.377693+00:00'
 risk_level: high
 source_refs:
-- wiki:Failed Trades - Reimbursement of Trade Fees and Miner Fees
-- wiki:Deposit transaction
-- wiki:Mediation
-- wiki:Resyncing SPV file
-- wiki:Troubleshooting wallet issues
-- wiki:Fee Reimbursement Agent
-- wiki:BuyerVerifiesPreparedDelayedPayoutTx Exception error
+- https://bisq.wiki/Failed_Trades_-_Reimbursement_of_Trade_Fees_and_Miner_Fees
+- https://bisq.wiki/Deposit_transaction
+- https://bisq.wiki/Resyncing_SPV_file
+- https://bisq.wiki/BuyerVerifiesPreparedDelayedPayoutTx_Exception_error
+- https://bisq.wiki/Making_a_reimbursement_request
 ---
 ## Canonical Support Answer
 
-A Bisq 1 failed trade happens when the deposit transaction was never published on the blockchain, and this could be caused by:
-- failed maker fee transaction, because the offer maker wallet was in an inconsistent state
-- failed taker fee transaction, because the offer taker wallet was in an inconsistent state
-- failure in building of the delayed payout transaction, because of DAO state mismatch between trade peers
+A genuinely failed setup with no valid deposit is different from a pending deposit, confirmed escrow, or a missing payout. Read the exact error and identify maker fee, taker fee and deposit transaction IDs separately. Check each actual ID and its inputs/confirmation state; an absent ID cannot be searched. N/A, empty details, zero peers, a price-tolerance timeout or a local Failed label warrants investigation, not an automatic conclusion from one explorer miss.
 
-The practical support path is to inspect the trade details, copy the maker fee txid, taker fee txid, and deposit txid if present, and verify each on a Bitcoin block explorer. If the deposit txid is missing, `N/A`, invalid, or not found on-chain, treat it as a failed trade. Perform an SPV resync if Bisq's wallet state appears stale, then move the trade to failed when the UI offers that path (this might require an application restart). If the deposit transaction is confirmed on-chain but Bisq is not recognizing it, the trade was started successfully, so use the confirmed-deposit-stuck page instead.
+### Establish what happened
 
-A failed trade does not refund the trade amount or security deposit because those funds were never locked by a valid deposit transaction. If the UI balance does not reflect that, the likely issue is stale wallet state; use SPV resync and verify wallet UTXOs before concluding funds are missing.
+A maker/taker fee failure or delayed-payout construction disagreement can prevent a valid deposit. Valid fee transactions with no deposit can suggest a later setup problem, including DAO disagreement, but do not establish blame. A replaced maker fee may invalidate dependent transactions while a taker fee has already confirmed. Preserve exact errors such as BuyerVerifiesPreparedDelayedPayoutTx and lock-time mismatch, installed version and relevant logs for support; check DAO consensus only where indicated. Rebuilding your state does not fix the peer's state automatically.
 
-Reimbursement is considered only for significant lost trade fees or miner fees, not for funds that never left the wallet. If the amount is meaningful, use the documented fee-reimbursement path and include screenshots plus maker/taker/deposit transaction details. Do not promise reimbursement before the loss and policy are verified.
+If the actual deposit is confirmed, use the confirmed-deposit or dispute workflow even when the UI says Failed. If genuinely pending, use the pending-deposit workflow. Mempool eviction is not invalidation, and elapsed time does not prove a permanently failed trade. Do not create a replacement deposit, manually broadcast a bundle of guessed transactions, or retry paid trades to gather examples.
 
-Errors such as `BuyerVerifiesPreparedDelayedPayoutTx` can be related to peers constructing different delayed payout transactions, often because of DAO-state inconsistency. First verify whether a deposit transaction exists. If no valid deposit transaction exists, keep it in the failed-trade workflow; if DAO state is also involved, check DAO consensus and use the DAO/DPT page for that part of the diagnosis.
+### Reserved balance versus spent fees
+
+If the intended outputs were never spent into a valid deposit, there is no on-chain deposit refund to wait for. They may remain reserved locally or by a still-active offer. Inspect Funds > Available funds, Funds > Transactions and Open Offers, including clones sharing the reservation. Actual confirmed maker/taker and mining fees may still be spent. A failed setup does not imply zero fees, a lost trade amount, or automatic reimbursement.
+
+Back up the data before the documented SPV resync when local tracking is stale. Once failure is established, use the application's Move to Failed action when offered and restart if prompted. This changes local handling; it does not cancel network transactions or unlock an existing multisig. If the action is absent, details are empty or balances remain wrong after completed resync, contact verified support with evidence. Do not delete PendingTrades or other databases to force the balance to change.
+
+### Payment already sent or old incomplete trades
+
+If fiat/altcoins were already paid before a deposit failure was understood, tell support immediately and preserve payment proof. No valid escrow means the normal BTC payout path may not exist; no bank refund is guaranteed. An expired timer, old ticket or missing local trade does not settle ownership. Inspect history, balances and the deposit before choosing recovery.
+
+### Fee reimbursement
+
+Request only verified eligible fee losses under the official failed-trade reimbursement policy. Follow its current support-repository issue/template route, providing the requested maker/taker/deposit evidence and screenshots while removing sensitive payment details. Publication/cancellation of an untaken offer and user-caused fee loss are not automatically reimbursable. Do not promise a fixed threshold or approval. A DAO reimbursement for an unresolved arbitrated trade is a separate process described on the dispute page.
 
 ## Applies When
 
-- The user reports maker/taker/deposit transaction failures.
-- The user says maker fee or taker fee is confirmed but the deposit transaction fails or is missing.
-- The deposit txid is missing, `N/A`, invalid, or not found on a block explorer.
-- The user sees a market-price tolerance, timeout, DAO-state, or delayed-payout setup error and no valid deposit transaction exists.
-- The user asks what happened to the trade amount or security deposit after a failed trade.
-- The user asks whether failed-trade fees can be reimbursed.
-- The user asks what to check when a failed trade appears in one or both peers' clients.
+Missing/invalid deposit, failed setup, fee loss, stale reserved balance or missing Move to Failed. A confirmed deposit needs the funded-trade branch instead.
 
-## Do Not Say
-
-- Do not say all failed trades imply lost trade amount or security deposit.
-- Do not promise reimbursement for small or unverified fee losses.
-- Do not skip transaction-id verification.
-- Do not recommend CPFP unless there is a real unconfirmed on-chain transaction to accelerate.
-- Do not route this as a Bisq Easy mediation/reject flow when the question contains Bisq 1-only fee/deposit transaction language.
-- Do not tell users to manually delete local trade database files as the first recovery step.
-- Do not say a deposit-confirmed trade has failed until the txid has actually been checked.
 
 ## Evidence / Sources
 
-- `wiki:Failed Trades - Reimbursement of Trade Fees and Miner Fees` explains common failure modes, SPV resync, and reimbursement criteria.
-- `wiki:Deposit transaction` explains how to locate and verify the deposit transaction.
-- `wiki:Mediation` states mediators check maker fee, taker fee, and deposit transaction IDs.
-- `wiki:Resyncing SPV file` and `wiki:Troubleshooting wallet issues` document stale wallet-state recovery.
-- `wiki:Fee Reimbursement Agent` documents the fee reimbursement role and issue-template evidence.
-- `wiki:BuyerVerifiesPreparedDelayedPayoutTx Exception error` documents DPT mismatch and DAO-state context.
+- [Failed Trades - Reimbursement of Trade Fees and Miner Fees](https://bisq.wiki/Failed_Trades_-_Reimbursement_of_Trade_Fees_and_Miner_Fees)
+- [Deposit transaction](https://bisq.wiki/Deposit_transaction)
+- [Resyncing SPV file](https://bisq.wiki/Resyncing_SPV_file)
+- [BuyerVerifiesPreparedDelayedPayoutTx Exception error](https://bisq.wiki/BuyerVerifiesPreparedDelayedPayoutTx_Exception_error)
+- [Making a reimbursement request](https://bisq.wiki/Making_a_reimbursement_request)
 
 ## Review Notes
 
-- Fee-loss thresholds and DAO reimbursement policy should be rechecked if policy changes.
-- Production candidates about payment-method disputes, privacy risk, Wise/Zelle scam risk, and general security-deposit behavior were not absorbed here unless they affected failed-trade diagnosis.
+Independently reviewed by the parent AI reviewer. Preserve private case evidence outside this reusable page.
 
 ## Last Change Summary
 
-Curated failed-trade production candidates into one clear decision tree: verify txids, separate missing deposit from confirmed deposit, explain why trade/security-deposit funds are normally not lost, and limit reimbursement guidance to verified fee losses.
+Preserved diagnostic and reimbursement guidance while removing guaranteed failure/refund from explorer absence and destructive recovery.

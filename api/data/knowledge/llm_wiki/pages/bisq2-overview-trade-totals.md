@@ -1,57 +1,42 @@
 ---
 id: bisq2-overview-trade-totals
-title: Bisq 2 overview totals, trade history, and stale notifications
+title: Bisq 2 offer totals, local trade history and reporting
 type: llm_wiki
-page_type: known_issue
+page_type: support_playbook
 status: reviewed
 protocol: bisq_easy
-reviewed_by: suddenwhipvapor
-reviewed_at: '2026-06-27'
+reviewed_by: ai-review:codex:knowledge-batch-20260918
+reviewed_at: '2026-09-18T08:30:52.377693+00:00'
 risk_level: low
 source_refs:
-- wiki:Bisq 2
-- wiki:Bisq Easy
-- faq:77
-- faq:708
-- faq:869
+- https://github.com/bisq-network/bisq2/blob/ae3176e4431eeaef309aada264ff8a75616f21d7/apps/desktop/desktop/src/main/java/bisq/desktop/main/content/user/profile_card/overview/ProfileCardOverviewController.java
+- https://github.com/bisq-network/bisq2/blob/ae3176e4431eeaef309aada264ff8a75616f21d7/apps/desktop/desktop/src/main/java/bisq/desktop/main/content/bisq_easy/history/BisqEasyHistoryController.java
+- https://github.com/bisq-network/bisq2/blob/ae3176e4431eeaef309aada264ff8a75616f21d7/apps/desktop/desktop/src/main/java/bisq/desktop/main/content/bisq_easy/history/BisqEasyHistoryView.java
+- https://bisq.wiki/Bisq_2
 ---
 ## Canonical Support Answer
 
-If the user asks about the value presented by Bisq 2 overview totals in their profile, explain that those statistics only refer to the total amounts currently being offered in the offer book, and do not represent the total value bought or sold in past trades.
+First identify the exact screen. Profile-card overview buying/selling totals are computed from the profile's offers in the offer book; they are not lifetime completed-trade volume or a wallet balance. Zero overview totals alone do not indicate lost BTC or deleted trades.
 
-If the completed-trade history under Bisq Easy > Trade History tab looks incomplete, explain that Bisq Easy is centered around data privacy, so unless the trade flow was completed correctly, the trade will not show in the history.
+Trade history is separate local application state. Current desktop source reads closed trades and supports filtering, trade details and exports. If history appears incomplete, check the selected profile, active versus closed trade state, filters, restored data and client version. Do not explain missing entries merely by saying privacy hides them, and do not create a new profile as a recovery step.
 
-If the issue is a stale open-trade badge or ghost notification after a trade was completed outside the app and both parties received what they expected, clearing notifications or rejecting/canceling the completed stale trade entry can be appropriate. If fiat or BTC delivery is still unresolved, do not clear the UI state as a fix; use trade chat and mediation/support.
+Current desktop source includes CSV export of history fields, including amounts, payment method and transaction information. Do not repeat the old categorical claim that Easy has no CSV by design. Check export availability in the installed release; source availability is not proof that every historical or mobile client has the same control. Keep your own records where needed and verify completeness. A local export is not a guaranteed complete global history or a tax assessment.
 
-For tax/accounting requests, explain that Bisq Easy may not provide a complete CSV/reporting export by design. Users should keep their own records for completed trades when they need external accounting.
+For ghost badges, verify there is no unresolved trade before clearing notifications. If either payment remains unresolved, retain the state and request mediation/support. If both sides settled but the UI did not, obtain version-appropriate cleanup guidance rather than canceling to conceal missing delivery.
 
-## Applies When
-
-- The user says the Bisq 2 overview shows zero buying/selling totals after completed trades.
-- The user asks why historical Bisq Easy volume or totals are not aggregated.
-- The user is concerned that completed Bisq Easy trades vanished from the overview.
-- The user has trade notifications or badges but no visible unresolved trade.
-- The user asks for a CSV/export of past Bisq Easy trades.
-
-## Do Not Say
-
-- Do not say the user lost funds based only on zero overview totals.
-- Do not claim that Bisq 2 keeps a complete global long-term trading history.
-- Do not tell the user to create a new profile as a fix before checking the current profile and trade list.
-- Do not clear stale notifications if the underlying trade is still unresolved.
-- Do not mix this with Bisq 1 wallet balance or DAO-state troubleshooting.
+A mediation count alone cannot establish a failure rate. That requires total trades for the same period, consistent definitions and resolved outcomes. Do not derive either near-perfect reliability or widespread failure from anecdotes or substitute Bisq 1 wallet-error counts for Easy disputes.
 
 ## Evidence / Sources
 
-- `wiki:Bisq 2` documents Bisq 2 privacy, multiple identities, and self-custodial local application context.
-- `wiki:Bisq Easy` documents Bisq Easy profile/identity usage and trade flow.
-- `faq:77` and `faq:708` cover completed/stale Bisq Easy trade cleanup.
-- `faq:869` states that Bisq Easy does not provide a reporting CSV and users may need to keep their own records.
+- https://github.com/bisq-network/bisq2/blob/ae3176e4431eeaef309aada264ff8a75616f21d7/apps/desktop/desktop/src/main/java/bisq/desktop/main/content/user/profile_card/overview/ProfileCardOverviewController.java
+- https://github.com/bisq-network/bisq2/blob/ae3176e4431eeaef309aada264ff8a75616f21d7/apps/desktop/desktop/src/main/java/bisq/desktop/main/content/bisq_easy/history/BisqEasyHistoryController.java
+- https://github.com/bisq-network/bisq2/blob/ae3176e4431eeaef309aada264ff8a75616f21d7/apps/desktop/desktop/src/main/java/bisq/desktop/main/content/bisq_easy/history/BisqEasyHistoryView.java
+- https://bisq.wiki/Bisq_2
 
 ## Review Notes
 
-- representation of "overview totals" was very wrong in the original guide
+Independently reviewed by the parent AI reviewer after individual candidate review. Reviewer: `ai-review:codex:knowledge-batch-20260918`. Sources checked on 2026-09-18; verify release-sensitive behavior against the user's installed version.
 
 ## Last Change Summary
 
-Fixed the description of the scope for trade overview totals and removed redundant paragraphs.
+Preserved offer-total semantics confirmed in source. Replaced obsolete no-CSV and privacy-causes-missing-history claims with version-qualified closed-trade/export guidance and added the denominator requirement for failure rates.

@@ -1,85 +1,75 @@
 ---
 id: bisq2-easy-mediation-and-risk
-title: Bisq Easy mediation and risk boundaries
+title: Bisq Easy trade stages, mediation and payment risk
 type: llm_wiki
 page_type: support_playbook
 status: reviewed
 protocol: bisq_easy
-reviewed_by: suddenwhipvapor
-reviewed_at: '2026-06-27'
+reviewed_by: ai-review:codex:knowledge-resolution-20260918
+reviewed_at: '2026-09-18T09:25:43.205138+00:00'
 risk_level: high
 source_refs:
-- wiki:Bisq Easy
-- wiki:Dispute Resolution in Bisq 2
-- wiki:Reputation
-- wiki:Reputation2
-- wiki:Trade Protocols
-- faq:19
-- faq:20
-- faq:27
-- faq:31
-- faq:40
-- faq:43
-- faq:46
-- faq:53
-- faq:85
-- faq:88
-- faq:873
-- faq:1068
-- faq:1069
-- faq:1070
+- https://bisq.wiki/Bisq_Easy
+- https://bisq.wiki/Dispute_Resolution_in_Bisq_2
+- https://bisq.wiki/Reputation
+- https://bisq.wiki/ACH
+- https://bisq.wiki/Cash_by_Mail
+- https://bisq.wiki/Dispute_resolution
+- https://github.com/bisq-network/bisq2/blob/ae3176e4431eeaef309aada264ff8a75616f21d7/trade/src/main/java/bisq/trade/bisq_easy/protocol/messages/BisqEasyTakeOfferRequestHandler.java
+- https://bisq.wiki/Bisq_Easy#Trade_rules
 ---
 ## Canonical Support Answer
 
-Bisq Easy is a Bisq 2 trade protocol for buying or selling BTC in small, reputation-based trades. It does not use the Bisq 1 multisig escrow/security-deposit model. The buyer sends fiat first, and the seller's reputation is the main trust signal. Because the security model is lighter than Bisq 1 multisig, support guidance should keep amounts small, encourage moving to the security-deposit protocol on Bisq 1 once enough btc has been acquired, and avoid implying DAO-backed reimbursement.
+Bisq Easy uses seller reputation rather than Bisq 1 multisig escrow or security deposits. The buyer pays first, irrespective of who created the offer. The seller verifies actual receipt before sending BTC. Reputation and an amount ceiling do not guarantee fulfillment, a refund or DAO compensation.
 
-If no fiat has been sent and/or the peer had been inactive for at least 24hrs, the user can usually reject/cancel the Bisq Easy trade without consequences. If fiat has already been sent or the parties disagree about payment/BTC release, the user should not treat cancellation as resolution; they should use trade chat and request mediation.
+## Trade chat and cancellation boundary
 
-If a seller has received fiat but the UI state is stuck, the trade can be completed by sharing the receive BTC address in chat, and broadcast the BTC transactions regardless of the issue, because the chat history is visible during mediation. The seller should send BTC only after they are satisfied payment was actually received.
+Select the relevant trade under open trades and open its associated chat to exchange and check payment details. Exact controls vary by release. Keep the conversation and evidence in the trade context rather than moving negotiation to an unrelated private channel.
 
-For ACH and similar payment methods, keep guidance conservative. ACH may take several days, is not available for every bank account, and bank micro-deposit verification must not be accepted by sellers. If the payment path cannot be completed safely, use another seller or payment method and involve mediation if funds were already sent.
+Before payment details are exchanged, either party can cancel without justification under the official Easy trade rules. After that exchange, failure to fulfill the agreement can breach the rules. Neither an unpaid status nor 24 hours or two days of silence creates an automatic consequence-free cancellation right. A buyer may still send a pending payment. Do not assume that an unresolved trade will close itself or that rejecting it refunds money.
 
-Bisq Easy trade limits and seller eligibility depend on reputation and current client rules. Do not quote hard limits unless they are current for the user's version; when needed, explain that Bisq Easy is intended for relatively small BTC trades and that seller reputation controls buyer trust and available trade size.
+## When the trade is delayed or the interface disagrees
 
-Named traders, bots, and temporary incidents should not become reusable support policy. If the user names a specific seller/bot, keep the answer case-specific: ask them to use trade chat, wait for the payment method's normal processing time, and open mediation if BTC is not released or communication fails.
+Check the actual payment stage, agreed method and normal processing time. Ask the peer for an update. If the seller has already acknowledged receipt but BTC is absent, preserve that acknowledgment and request mediation. A named bot or historical operator incident does not create a guaranteed release deadline or excuse an indefinite delay.
 
-## Applies When
+Mediation is available from the Easy trade screen without a universal extra waiting period. If the control is missing, disabled or fails, contact established support with the version and error. Do not substitute the Bisq 1 Ctrl+O shortcut: that shortcut is documented for selecting a Bisq 1 open trade, not established here as an Easy command.
 
-- The user asks what happens if the seller does not release BTC in Bisq Easy.
-- The user asks how long to wait after sending fiat in Bisq Easy.
-- The user's peer is inactive before fiat was sent.
-- The user's peer is inactive after fiat was sent.
-- The user asks whether Bisq Easy has escrow or security deposits.
-- The user asks when to request mediation or reject/cancel a Bisq Easy trade.
-- The user reports a missing BTC address, stuck state, or UI deadlock in a Bisq Easy trade.
-- The user asks about ACH, micro-deposits, or payment-method timing in Bisq Easy.
-- The user asks about Bisq Easy trade-size limits or reputation-related risk.
+If peers see different payment stages, verify receipt in the bank/payment service and check any BTC transaction before sending again. A status mismatch is not a reason for Bisq 1 SPV resync. Confirm the receiving address or invoice in the trade chat; missing or inconsistent details need support before transfer. A completely settled trade with stale UI can be cleaned up only after confirming both deliveries and the appropriate action for that version.
 
-## Do Not Say
+## Payment details and evidence
 
-- Do not describe Bisq Easy as having Bisq 1 multisig escrow.
-- Do not promise reimbursement for Bisq Easy buyer or seller losses.
-- Do not state a fixed BTC release deadline unless the specific payment method and source support it.
-- Do not tell a seller to accept ACH micro-deposit verification as a normal peer-to-peer payment flow.
-- Do not tell users to move negotiation outside Bisq when the built-in trade chat can preserve evidence.
-- Do not encode named-bot or named-trader incidents as general policy.
-- Do not say a trade can simply be rejected after fiat was sent without mediation/support review.
+A public nickname is not necessarily the legal account-holder name. If a bank cannot verify a name/IBAN, PIX recipient details conflict, or payment instructions change, pause and clarify the actual registered details privately in the trade chat. Do not bypass a warning because names look similar or pay an unrelated account. Escalate unresolved mismatches to mediation.
+
+If payment is reversed or a fraud allegation arrives after BTC was sent, preserve payment records, trade chat and the BTC transaction ID. Verify the recipient of support evidence, agree an appropriate private channel and redact unrelated personal data. Never share wallet seeds or private keys. Mediation cannot guarantee a bank reversal, reimbursement or legal outcome.
+
+ACH availability, limits and processing times depend on the bank. Do not confirm micro-deposit amounts for a peer or help them link your account; a small verification transfer is not trade payment. Resolve an unusable payment method before paying, and involve mediation if details or funds have already changed hands.
+
+For cash by mail, agree recipient and delivery terms first, check the carrier's cash and insurance rules, use appropriate secure packaging and retain dispatch evidence. The general cash-by-mail guide has useful preparation advice, but its escrow and arbitration sections describe Bisq 1. Evidence can be difficult to establish; Easy mediation does not recreate that escrow protection.
+
+## Amount limits
+
+The official reputation documentation checked on 2026-09-18 describes an overall 600 USD-equivalent maximum, with seller reputation potentially limiting an offer below it. Verify the actual supported client and offer before quoting a numeric limit. The maximum is not a safety guarantee or a recommendation to trade that amount.
+
+## Mediator mismatch at trade initiation
+
+“Mediators do not match” means that the take-offer handler found a difference between the mediator in the taker’s contract and the mediator selected by the other peer. It does not call for manually selecting a named mediator. For a failed initial attempt before payment details or funds were exchanged, use the available failed-trade action and retry with a supported client. If details or money have already changed hands, preserve the trade and involve support/mediation rather than assuming cancellation returns funds.
 
 ## Evidence / Sources
 
-- `wiki:Bisq Easy` documents the reputation-based, no-security-deposit model and the seller-paid BTC transfer flow.
-- `wiki:Dispute Resolution in Bisq 2` documents trade chat and Bisq Easy mediation.
-- `wiki:Reputation` and `wiki:Reputation2` document reputation as the Bisq Easy security mechanism and its relationship to trade limits.
-- `wiki:Trade Protocols` says Bisq Easy is the currently implemented Bisq 2 protocol and future protocols are separate.
-- `faq:19`, `faq:20`, `faq:27`, `faq:31`, `faq:40`, `faq:43`, `faq:46`, `faq:53`, `faq:85`, and `faq:88` cover stuck trades, non-escrow risk, address sharing, mediation, and Bisq 1/Bisq Easy distinction.
-- `faq:873`, `faq:1068`, `faq:1069`, and `faq:1070` cover ACH timing and micro-deposit boundaries.
+- https://bisq.wiki/Bisq_Easy
+- https://bisq.wiki/Dispute_Resolution_in_Bisq_2
+- https://bisq.wiki/Reputation
+- https://bisq.wiki/ACH
+- https://bisq.wiki/Cash_by_Mail
+- https://bisq.wiki/Dispute_resolution
+
+- https://github.com/bisq-network/bisq2/blob/ae3176e4431eeaef309aada264ff8a75616f21d7/trade/src/main/java/bisq/trade/bisq_easy/protocol/messages/BisqEasyTakeOfferRequestHandler.java
+- https://bisq.wiki/Bisq_Easy#Trade_rules
 
 ## Review Notes
 
-- Confirm current UI labels for requesting mediation or rejecting a trade before giving step-by-step instructions.
-- Check bisq.wiki before quoting exact trade-limit numbers.
-- Several production candidates about specific sellers/bots, temporary offer expiry, or protobuf/network repair were intentionally not promoted into this durable risk page.
+Independently checked against original conversations and primary references by the parent AI reviewer. This amendment resolves candidate IDs 913, 922, 1095. Earlier review evidence remains in the private batch audit. Preserve version and protocol qualifications and do not infer missing case outcomes.
 
 ## Last Change Summary
 
-Clearly defined scope of Bisq Easy vs Bisq1.
+Resolved the remaining reviewed candidates using verified technical behavior and conditional diagnostic guidance. Reviewer: `ai-review:codex:knowledge-resolution-20260918`. New pages are explicitly identified in the private publication manifest.

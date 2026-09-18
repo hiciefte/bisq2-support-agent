@@ -1,71 +1,63 @@
 ---
 id: bisq1-deposit-confirmed-stuck
-title: Bisq 1 deposit confirmed but trade appears stuck
+title: Bisq 1 deposit confirmation and pending transaction diagnosis
 type: llm_wiki
 page_type: support_playbook
 status: reviewed
 protocol: multisig_v1
-reviewed_by: suddenwhipvapor
-reviewed_at: '2026-06-27'
+reviewed_by: ai-review:codex:knowledge-batch-20260918
+reviewed_at: '2026-09-18T08:30:52.377693+00:00'
 risk_level: high
 source_refs:
-- wiki:Deposit transaction
-- wiki:Resyncing SPV file
-- wiki:Troubleshooting wallet issues
-- wiki:Dispute Resolution in Bisq 1
-- wiki:Mediation
-- wiki:Failed Trades - Reimbursement of Trade Fees and Miner Fees
-- faq:855
-- faq:1116
-- faq:1137
-- faq:1175
+- https://bisq.wiki/Deposit_transaction
+- https://bisq.wiki/Resyncing_SPV_file
+- https://bisq.wiki/Backing_up_application_data
+- https://bisq.wiki/Deposit_transaction_pending_in_mempool_and_CPFP
+- https://bisq.wiki/Dispute_Resolution_in_Bisq_1
 ---
 ## Canonical Support Answer
 
-When a Bisq 1 trade is stuck at `Wait for blockchain confirmation`, first separate the blockchain state from Bisq's local wallet/protocol state. Open the trade details, copy the deposit transaction ID, and check it on a Bitcoin block explorer.
+Identify the actual deposit transaction before choosing a remedy. Open the trade's information icon in Open Trades or History and locate the deposit transaction ID; Funds > Transactions may help if trade details are incomplete. A trade ID, funding address, maker fee and taker fee are not the deposit ID. Check the same transaction on a Bitcoin explorer; confirmation of a fee transaction does not prove deposit confirmation.
 
-If the deposit transaction is confirmed on-chain but Bisq still shows zero confirmations or does not advance, perform an SPV resync from Settings/Network Info and restart as prompted. After the resync, re-check the trade state, wallet balance, and trade details. In some cases the resync may need to complete fully, and or be repeated, before the UI reflects the confirmed deposit.
+### Confirmed on-chain but stale in Bisq
 
-If the user is the buyer and the deposit transaction is confirmed but the UI has not advanced, do not blindly send fiat. Only proceed if the trade contract/details clearly show the seller's payment details and the user understands the trade is valid; otherwise ask for mediator/support review. If payment details are absent or inconsistent, keep the trade data intact and use trader chat or mediation.
+Preserve a full data backup, then use Settings > Network Info > RESYNC SPV WALLET and complete the official guide's prompted restarts and synchronization. A normal restart is not a resync. Recheck the same deposit, trade state and wallet balance afterward. If completed resync attempts do not help, collect the exact error, version, transaction evidence and attempted steps for support rather than repeatedly resetting. A trade marked Failed can still contain a confirmed deposit and locked funds.
 
-If the deposit transaction is missing, `N/A`, invalid, or not found on-chain, use the failed-trade workflow instead. An SPV resync may still be useful to make the UI recognize the failed state, but a missing deposit transaction is not the same as a confirmed deposit stuck in the UI.
+If payment details or buttons remain absent, or errors mention null deposit, unexpected input count or maker/taker inputs not matching the contract, preserve state and open the requested support ticket. Do not send fiat or altcoins while the contract or deposit is unresolved. If payment already occurred, say so explicitly; never pay again to fix the UI. If the app is unavailable during resync, notify the peer and verified support, preserve timing/screenshot evidence, and do not restore a seed into a new profile to finish the trade.
 
-If the transaction is real but still unconfirmed in the mempool, the next step is usually waiting or advanced fee/CPFP analysis, not repeated SPV resync. If the symptom is generic wallet balance mismatch, many ghost UTXOs, or SPV resync repeatedly failing, use the wallet/data-directory recovery page.
+### Actually pending on the network
 
-DAO-state resync is only relevant when the error is explicitly DAO/DPT related. Do not recommend DAO resync for ordinary wallet-chain display problems.
+A valid unconfirmed deposit can remain pending for hours or days. Inspect its effective fee rate and unconfirmed ancestors, not just its absolute fee or individual fee rate. Low-fee external funding or a taker fee can hold up the deposit. ETA means estimated confirmation time; changing explorer estimates do not guarantee a deadline or prove a scam. The payment-period clock does not start until deposit confirmation. Waiting is an option, not an automatic penalty, cancellation or refund trigger.
+
+SPV resync updates local tracking; it does not accelerate miners, clear the network mempool or cancel a transaction. A mediator cannot cancel an unconfirmed Bitcoin deposit. Even mutual cancellation needs support coordination and a verified transaction state; do not invalidate funding or send a replacement deposit yourself.
+
+### Advanced CPFP boundaries
+
+CPFP may help only when the relevant trader controls an eligible unconfirmed change output in the funding chain. It does not mean spending the locked 2-of-2 multisig deposit. Follow the official deposit-CPFP guide and calculate the combined package fee and cost; approximate multipliers are not universal instructions. External-funding CPFP may confirm its parent while an independently low-fee deposit still waits. Internally funded trades may have no suitable output. Do not send the full amount to a deposit address, repeat paid accelerations blindly or reveal wallet secrets. Waiting remains valid if the cost or procedure is unsuitable.
+
+CPFP spends an output without rewriting its parent; it cannot redirect the original deposit. Replacement/RBF instead conflicts with original inputs and can invalidate trade dependencies. Bisq's trade wallet does not provide a routine RBF trade-cancellation flow. Do not turn speculative external-wallet replacement advice into a recovery recipe.
+
+### Missing, conflicting or inconsistent evidence
+
+One explorer not finding a transaction, or a node evicting it, does not prove it was never broadcast or cannot confirm later. If explorers disagree or report spent/invalid inputs, have support inspect the deposit and funding chain. Use the failed-trade page only after no valid deposit is established. DAO rebuild is for demonstrated DAO/DPT state problems, not ordinary SPV display mismatch. Never delete trade databases to force progress.
 
 ## Applies When
 
-- The user says the deposit transaction is confirmed but Bisq still shows the trade stuck.
-- The trade remains at `Wait for blockchain confirmation` even though a block explorer shows confirmations.
-- Payment details or peer actions do not appear after deposit confirmation.
-- The user needs to distinguish SPV wallet resync from DAO-state resync.
-- The user asks whether they should delete or cancel a stuck confirmed-deposit trade.
-- The user sees the deposit transaction as unconfirmed in Bisq but confirmed in the mempool/block explorer.
+Deposit is pending, confirmed but unrecognized, or unclear after resync; CPFP/RBF questions concern an active Bisq 1 trade. A payout or delayed payout is a different transaction and needs its matching workflow.
 
-## Do Not Say
-
-- Do not tell the user to delete local trade data.
-- Do not treat a missing deposit txid and confirmed deposit txid as the same problem.
-- Do not suggest DAO-state rebuild for a normal wallet-chain display issue unless the error is DAO specific.
-- Do not bypass mediation when funds may be locked in multisig.
-- Do not tell a buyer to send fiat if payment details are missing or the trade contract is unclear.
-- Do not say funds are lost before checking the deposit transaction and wallet state.
 
 ## Evidence / Sources
 
-- `wiki:Deposit transaction` explains locating and verifying the deposit txid.
-- `wiki:Resyncing SPV file` and `wiki:Troubleshooting wallet issues` document SPV resync for missing transactions, incorrect balances, and stale wallet-chain state.
-- `wiki:Dispute Resolution in Bisq 1` describes trader chat and mediation paths.
-- `wiki:Mediation` documents mediator transaction checks and proof requests.
-- `wiki:Failed Trades - Reimbursement of Trade Fees and Miner Fees` distinguishes failed/missing deposit transactions from valid deposits.
-- `faq:855`, `faq:1116`, `faq:1137`, and `faq:1175` cover confirmed-on-chain but unrecognized deposits, missing/invalid transactions, and SPV resync outcomes.
+- [Deposit transaction](https://bisq.wiki/Deposit_transaction)
+- [Resyncing SPV file](https://bisq.wiki/Resyncing_SPV_file)
+- [Backing up application data](https://bisq.wiki/Backing_up_application_data)
+- [Deposit transaction pending in mempool and CPFP](https://bisq.wiki/Deposit_transaction_pending_in_mempool_and_CPFP)
+- [Dispute Resolution in Bisq 1](https://bisq.wiki/Dispute_Resolution_in_Bisq_1)
 
 ## Review Notes
 
-- Exact UI labels vary by Bisq 1 version; verify before giving click-by-click instructions.
-- Production candidates with memory tuning, DAO sync, privacy, payout, and general wallet issues were intentionally routed to other pages instead of bloating this confirmed-deposit page.
+Independently reviewed by the parent AI reviewer. Preserve private case evidence outside this reusable page.
 
 ## Last Change Summary
 
-Cleaned the production-approved page by removing noisy appended refs and reducing it to a safe decision tree for confirmed deposit, missing deposit, pending mempool deposit, and SPV/mediation boundaries.
+Merged repeated confirmation cases; corrected eviction, SPV, fee acceleration and automatic-refund assumptions.

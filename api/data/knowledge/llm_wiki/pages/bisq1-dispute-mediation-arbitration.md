@@ -1,73 +1,93 @@
 ---
 id: bisq1-dispute-mediation-arbitration
-title: Bisq 1 mediation and arbitration flow
+title: Bisq 1 mediation, arbitration and payment disputes
 type: llm_wiki
 page_type: support_playbook
 status: reviewed
 protocol: multisig_v1
-reviewed_by: suddenwhipvapor
-reviewed_at: '2026-06-27'
+reviewed_by: ai-review:codex:knowledge-resolution-20260918
+reviewed_at: '2026-09-18T09:25:43.205138+00:00'
 risk_level: high
 source_refs:
-- wiki:Dispute Resolution in Bisq 1
-- wiki:Mediation
-- wiki:Arbitration
-- wiki:Trading rules
-- wiki:Security deposit
-- wiki:Account limits
-- wiki:Failed Trades - Reimbursement of Trade Fees and Miner Fees
+- https://bisq.wiki/Dispute_Resolution_in_Bisq_1
+- https://bisq.wiki/Trading_rules
+- https://bisq.wiki/Table_of_penalties
+- https://bisq.wiki/Arbitration
+- https://bisq.wiki/Finding_your_mediator
+- https://bisq.wiki/Finding_your_arbitrator
+- https://bisq.wiki/Making_a_reimbursement_request
+- https://bisq.wiki/Dumping_delayed_payout_transactions
+- https://bisq.wiki/Delayed_payout_transaction_pending_in_mempool_and_CPFP
+- https://bisq.wiki/Burning_Men
+- https://bisq.wiki/Frequently_asked_questions
+- https://bisq.network/blog/bisq-v1-2-released/
+- https://bisq.wiki/Deposit_transaction
 ---
 ## Canonical Support Answer
 
-Bisq 1 dispute resolution has stages: trader chat, mediation, and arbitration. Most trade problems should first be handled through the built-in trader chat and then mediation. Keep communication inside Bisq whenever possible so the mediator can review the trade context and evidence.
+Bisq 1 uses trader chat, mediation and, when necessary, arbitration. Select the affected open trade and press Ctrl+O (Cmd+O on macOS) to request mediation, then use the ticket's chat in Support. You can request mediation before the payment deadline when there is a problem; a button also appears when the trade period expires. A Matrix support link is not the in-app ticket. For two affected trades, open a case for each. If the shortcut or ticket is unavailable, preserve the exact error and contact verified support rather than deleting trade files.
 
-Mediation can be opened from the trade flow when the trade period has expired and a button becomes available to optionally start a dispute; in some Bisq 1 situations support staff may tell the user to use the trade panel shortcut such as `Ctrl+O` or `Cmd+O`. A mediator can review transaction IDs, payment proof, chat contents, and trade-rule compliance, then propose a payout. A mediator does not unilaterally control the multisig funds; the proposal needs the protocol's normal cooperation/signature path. Mediators and traders have up to 48 hours to reply in support chat. Traders who do not reply within 48 hours can be penalized by the mediator.
+### Payment, deadlines and cancellation
 
-If a buyer sent fiat and the BTC seller has not released BTC, the buyer should keep the trade data intact, communicate in trader chat, and open mediation when the trade period expires, and the relevant button is available. The buyer should be ready to provide proof of payment. If the seller says payment details are wrong, the payment method failed, or the payment was sent from/to unexpected details, route through mediation instead of giving informal off-platform instructions.
+Buyers should pay according to the agreed contract and app instructions. Sellers can confirm towards the end of the trade period, especially for new chargeback-risk accounts. Trader-chat replies are not mandatory; silence before the deadline alone does not establish fraud or late release. The payment period ending does not automatically cancel, refund, release BTC or remove access to mediation. If paid but unsettled, preserve proof and request mediation. If the seller claims nonreceipt, check recipient and bank/payment status: proof of initiating payment is not automatically proof of correct receipt. Do not send a duplicate payment.
 
-Arbitration is the last-resort stage after mediation fails or a mediation proposal is rejected and the delayed payout transaction can be published. The delayed payout transaction is time locked: 10 days after deposit confirmation for altcoin trades and 20 days after deposit confirmation for fiat trades, both denominated in number of blocks. Arbitration decisions are based on the evidence, mediator feedback, trade rules, and on-chain transaction state; RefundAgent, the contributor role responsible for arbitration, has up to 5 days to reply in chat, so users should remain responsive and provide requested evidence.
+If the buyer cannot pay, the bank rejects details, the account is restricted, the buyer proposes partial payment, or either party wants to cancel an accepted rate, explain the problem to the peer and mediator. An unfavorable accepted price is not a free cancellation right. Do not substitute a new account, Wise link, Pix key, Zelle method, gift-card region or other payment details merely on a chat request. Ask the mediator to assess any mutually proposed alternative. Material sender/account-holder mismatch calls for immediate mediation. Do not return money, confirm unreceived funds or accept a cancellation payout merely on a promised bank refund; ask the mediator how actual receipt/refund evidence affects the proposal.
 
-Once the timelock on the DPT (delayed payout transaction) has expired, arbitration can also be started using the `Ctrl+O` or `Cmd+O` shortcut from the trade panel, or by dumping the DPTs from the command line, and broadcasting the transaction hex.
+Bank recalls affecting previous trades need prompt evidence-based review of pending trades and account identities; do not seize new funds as automatic compensation. XMR proof errors require distinguishing actual wallet receipt from missing payment: never confirm receipt just to bypass an invalid transaction-key message. If payment is verified but confirmation is blocked, report that exact distinction. Penalties depend on the rules, evidence and circumstances. Published penalty percentages are maxima based on the stated trade-value basis, not automatic percentages of the security deposit or amounts to add together. No fixed compensation, full-deposit forfeiture or penalty-free cancellation is guaranteed.
 
-If the deposit transaction is missing, invalid, or not found on-chain, use the failed-trade workflow instead of treating it as a normal mediation/arbitration case. If the deposit transaction exists and the app or payout state is inconsistent, collect the trade ID, maker fee txid, taker fee txid, deposit txid, payout/delayed-payout txid if present, and logs/screenshots for mediator or support review.
+### Mediation proposals and communication problems
+
+The mediator proposes a payout and has no third key to unilaterally spend the 2-of-2 multisig. Opening a dispute does not let the peer take your share. Both traders must participate in the mediated payout path. You can keep negotiating and tell the mediator your agreement, but a chat agreement does not itself update payout signatures. If an old proposal was already accepted and then revised, ask the mediator to coordinate the replacement with both traders; do not invent a reject/reset procedure or assume a new message replaces the old signature.
+
+For SendMediatedPayoutSignatureMessage, Invalid state, payment-confirmation loops or missing payout after acceptance, check peer acceptance, message delivery and the actual payout transaction with support. Do not assume only fees are at stake or that resync alone resolves protocol state. Notify the peer when payment is already received but the UI cannot confirm. Follow the official Payment started troubleshooting guide for the exact symptom rather than paying again or deleting arbitrary Tor files.
+
+Mediators and traders are expected to respond to dispute chat within 48 hours; this is not a guaranteed completion time. Notify the mediator of sync-related delays or planned absence and preserve evidence. Another verified agent may help an unavailable mediator, but coordinated recovery requires both peers. An N/A support-agent label does not prove automatic reassignment; use the trade information and official contact guides. An onion address is not a Matrix handle. Verify identities before sharing private trade evidence, and never share seeds or private keys. For future interactions, Settings > Preferences has an ignored-peers option using the peer's onion address; it does not cancel the current trade or replace its required communication.
+
+### Arbitration and delayed payouts
+
+When mediation cannot finish or its proposal is disputed, either trader can request arbitration once eligible. It is not buyer-only or automatic on rejection, silence or timer expiry. The delayed payout transaction (DPT) is prepared during setup and normally remains unpublished during a successful trade. Its block-based timelock is approximately 10 days for altcoin trades or 20 days for fiat trades from deposit confirmation, not from payment-period expiry. A disabled action needs the actual deposit-confirmation time and ticket state checked. The timelock is the earliest publication point, not a requirement to act that instant; separate reimbursement deadlines still matter.
+
+Follow the in-app arbitration process. Publishing the eligible DPT spends the trade escrow to Burning Men recipients determined from DAO state; it does not send an automatic refund to the traders. Burning Men are not the refund agent deciding the case. The refund agent reviews evidence and provides any applicable payout from separate funds. Current compensation can depend on deposit settings and case circumstances; do not promise winner-takes-all, both deposits or unconditional BTC recovery. Refund-agent chat response expectations are up to five days, not a fixed settlement deadline. If neither party acts, the timelock alone does not publish the DPT or donate funds automatically.
+
+A BTC arbitration payout is publicly linkable on-chain and the agent knows the case's supplied receiving address; do not promise anonymity or irrelevant coin history. If a DPT is confirmed but the UI disagrees, verify it is this trade's DPT rather than the deposit or normal payout and contact the assigned agent. Do not repeatedly publish or replace transactions to fix display state. A pending low-fee DPT is different from a pending deposit: a Burning Men recipient may be able to CPFP their own output after verified coordination and agreement on cost; traders must not apply the ordinary deposit recipe to funds they do not control.
+
+For support-requested diagnostics, the official --dumpDelayedPayoutTxs=true startup option exports pending, failed and closed DPT JSON files under the application's data directory. Use the official OS-specific guide, preserve privacy, and distinguish --dumpStatistics=true. Exporting evidence is not authorization to broadcast. Manual DPT publication belongs to the verified eligible arbitration workflow, not generic trade recovery.
+
+### Reimbursement and unresolved outcomes
+
+First ask the mediator/agent to review a specific mistaken proposal with evidence. If escalation is needed, use the documented arbitration process; disagreement alone does not establish entitlement. A last-resort DAO reimbursement request has a public support-repository issue plus an in-app DAO Governance reimbursement proposal linking that issue. A forum/GitHub post alone does not put it to a DAO vote. Follow the current official eligibility, timing and proposal-phase instructions; preserve the DPT evidence and do not publish private payment-account data. Approval is not guaranteed. This differs from reimbursement of verified failed-trade mining/trading fees.
+
+If no valid deposit was ever created, use failed-trade diagnosis rather than claiming funded escrow can be released. If payment occurred anyway, preserve both transaction and payment evidence and urgently explain this to support.
 
 ## Applies When
 
-- The user asks what happens after mediation fails.
-- The user asks when arbitration can be opened.
-- The user asks who decides disputed payouts in Bisq 1.
-- The user asks what proof to provide in mediation.
-- The buyer paid fiat in Bisq 1 but BTC was not released.
-- The seller or buyer is unresponsive during a trade, mediation, or arbitration.
-- Both peers want to cancel or unwind a Bisq 1 trade after payment or banking problems.
-- The user asks why funds are locked after mediation/arbitration or how a payout proposal is accepted.
-- The user asks whether security deposits protect honest traders in the Bisq 1 multisig protocol.
+Payment cannot be made, receipt is disputed, paid BTC remains unreleased, a proposal cannot complete, agents are unreachable, arbitration eligibility is unclear, or reimbursement is requested.
 
-## Do Not Say
+## Older trades before the current escrow protocol
 
-- Do not say the mediator can unilaterally move multisig funds.
-- Do not recommend opening arbitration before the protocol makes it available.
-- Do not promise a specific payout before mediator/arbitrator review.
-- Do not describe Bisq 1 cancellation as a simple local reject button when funds or payment may be involved.
-- Do not tell the user to delete `PendingTrades`, dispute lists, or other database files as a first-line fix for locked funds.
-- Do not tell a buyer to send fiat to changed or mismatching payment details without mediation review.
-- Do not route missing/invalid deposit transactions through normal mediation if the trade never locked funds.
+Identify each trade’s date, version and actual deposit/payout history before applying current arbitration instructions. Bisq changed from 2-of-3 to 2-of-2 escrow with version 1.2 in October 2019; an earlier trade need not have the current delayed-payout transaction. N/A alone does not prove funds are missing. Preserve the old data directory and inspect whether the deposit output was spent and where the payout went, with verified support if unclear. Do not construct or broadcast a delayed payout from a current guide merely to fill an old missing field.
 
 ## Evidence / Sources
 
-- `wiki:Dispute Resolution in Bisq 1` describes trader chat, mediation, arbitration, response expectations, 48-hour dispute-chat expectations, and payout suggestions.
-- `wiki:Mediation` documents mediator duties, proof requests, and transaction checks.
-- `wiki:Arbitration` explains arbitration availability, delayed payout transaction mechanics, 10/20-day delayed-payout timing, arbitrator response expectations, and DAO reimbursement context.
-- `wiki:Trading rules` documents communication boundaries and payment-rule expectations.
-- `wiki:Security deposit` explains the Bisq 1 security-deposit model.
-- `wiki:Account limits` explains why fiat account limits and signing exist for chargeback-risk methods.
-- `wiki:Failed Trades - Reimbursement of Trade Fees and Miner Fees` distinguishes missing/invalid deposit transactions from normal locked-funds disputes.
+- [Dispute Resolution in Bisq 1](https://bisq.wiki/Dispute_Resolution_in_Bisq_1)
+- [Trading rules](https://bisq.wiki/Trading_rules)
+- [Table of penalties](https://bisq.wiki/Table_of_penalties)
+- [Arbitration](https://bisq.wiki/Arbitration)
+- [Finding your mediator](https://bisq.wiki/Finding_your_mediator)
+- [Finding your arbitrator](https://bisq.wiki/Finding_your_arbitrator)
+- [Making a reimbursement request](https://bisq.wiki/Making_a_reimbursement_request)
+- [Dumping delayed payout transactions](https://bisq.wiki/Dumping_delayed_payout_transactions)
+- [Delayed payout transaction pending in mempool and CPFP](https://bisq.wiki/Delayed_payout_transaction_pending_in_mempool_and_CPFP)
+- [Burning Men](https://bisq.wiki/Burning_Men)
+- [Frequently asked questions](https://bisq.wiki/Frequently_asked_questions)
+
+- https://bisq.network/blog/bisq-v1-2-released/
+- https://bisq.wiki/Deposit_transaction
 
 ## Review Notes
 
-- Current UI shortcuts/buttons for opening mediation/arbitration should be verified against the user's Bisq 1 version.
-- Some production candidates contained case-specific Matrix handles, named traders, or broad risk claims; those were intentionally omitted from the reusable page.
+Independently checked against original conversations and primary references by the parent AI reviewer. This amendment resolves candidate IDs 1462, 2128, 2395. Earlier review evidence remains in the private batch audit. Preserve version and protocol qualifications and do not infer missing case outcomes.
 
 ## Last Change Summary
 
-Curated the production dispute cluster into a single Bisq 1 mediation/arbitration page covering escalation stages, evidence collection, delayed-payout timing, failed-trade boundaries, and unsafe advice to avoid.
+Resolved the remaining reviewed candidates using verified technical behavior and conditional diagnostic guidance. Reviewer: `ai-review:codex:knowledge-resolution-20260918`. New pages are explicitly identified in the private publication manifest.
