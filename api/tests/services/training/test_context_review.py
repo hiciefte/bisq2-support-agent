@@ -233,3 +233,86 @@ async def test_replay_writes_private_indexed_evidence(tmp_path, monkeypatch, cap
     assert "private-id-marker" not in output.read_text()
     assert "private-staff-marker" not in output.read_text()
     assert capsys.readouterr().out == "reviewed_samples=1; private_report_written=yes\n"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "field",
+    [
+        "factual_alignment",
+        "contradiction_score",
+        "completeness",
+        "hallucination_risk",
+    ],
+)
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        "0.9",
+        [],
+        {},
+        True,
+        False,
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        -0.01,
+        1.01,
+        10**400,
+    ],
+)
+async def test_invalid_scores_fail_before_arithmetic_even_when_context_accepts(
+    field, value
+):
+    payload = judgment()
+    payload[field] = value
+    engine = engine_for(payload)
+    result = await engine.compare("synthetic", "Question", "Staff", "Generated")
+    assert result.evaluation_status == "failed"
+    assert result.requires_full_review is True
+    assert result.routing == "FULL_REVIEW"
+    assert result.final_score == 0.0
+    assert field in result.llm_reasoning
+    assert engine._review_guard(payload)[0] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "field",
+    [
+        "factual_alignment",
+        "contradiction_score",
+        "completeness",
+        "hallucination_risk",
+    ],
+)
+async def test_missing_score_cannot_use_an_implicit_default(field):
+    payload = judgment()
+    del payload[field]
+    result = await engine_for(payload).compare(
+        "synthetic", "Question", "Staff", "Generated"
+    )
+    assert result.evaluation_status == "failed"
+    assert result.routing == "FULL_REVIEW"
+    assert result.final_score == 0.0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("number_type", [int, float])
+async def test_valid_integer_and_float_scores_retain_approval(number_type):
+    payload = judgment()
+    for field in (
+        "factual_alignment",
+        "contradiction_score",
+        "completeness",
+        "hallucination_risk",
+    ):
+        payload[field] = number_type(payload[field])
+    result = await engine_for(payload).compare(
+        "synthetic", "Question", "Staff", "Generated"
+    )
+    assert result.evaluation_status == "success"
+    assert result.requires_full_review is False
+    assert result.routing == "AUTO_APPROVE"
+    assert result.final_score == pytest.approx(1.0)

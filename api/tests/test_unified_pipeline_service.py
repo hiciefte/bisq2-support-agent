@@ -113,6 +113,7 @@ def mock_comparison_engine():
             hallucination_risk=0.05,
             final_score=0.92,
             llm_reasoning="High alignment between answers.",
+            requires_full_review=False,
             routing="AUTO_APPROVE",
             is_calibration=False,
         )

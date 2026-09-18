@@ -379,13 +379,23 @@ class TestComparisonQuestions:
             "I am comparing Bisq Easy and Bisq 1. How do their fees differ?",
             "Bisq1 vs. Bisq2: which should I choose?",
             "Bisq 2 versus Bisq 1",
+            "Compare the two Bisq versions",
+            "Give me a comparison of both versions",
+            "What are the differences between versions of Bisq?",
+        ],
+    )
+    @pytest.mark.parametrize(
+        "history",
+        [
+            [],
+            [{"role": "user", "content": "I am using Bisq 1."}],
+            [{"role": "user", "content": "I am using Bisq Easy."}],
         ],
     )
     async def test_comparison_proceeds_without_single_version_filter(
-        self, detector, question
+        self, detector, question, history
     ):
         # Previous single-product context must not narrow an explicit comparison.
-        history = [{"role": "user", "content": "I am using Bisq Easy."}]
         version, _, clarifying = await detector.detect_version(question, history)
         protocol, _, protocol_clarifying = await detector.detect_protocol(
             question, history
@@ -413,6 +423,8 @@ class TestComparisonQuestions:
             "Bisq1 and Bisq2 show different errors. What should I do?",
             "What is the difference between the errors in my trade?",
             "Can I import my Bisq2 account to Bisq1?",
+            "Both versions are stuck syncing. What should I do?",
+            "The two Bisq versions show different errors. What should I do?",
         ],
     )
     async def test_ambiguous_support_still_requests_version(self, detector, question):

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import math
 import random
 import re
 from dataclasses import dataclass
@@ -438,8 +439,29 @@ Follow the evaluation rubric in your instructions. Return only the JSON object."
             }
 
     @staticmethod
+    def _score_validation_error(result: Dict[str, Any]) -> Optional[str]:
+        """Reject absent or malformed judge scores before weighted arithmetic."""
+        for name in (
+            "factual_alignment",
+            "contradiction_score",
+            "completeness",
+            "hallucination_risk",
+        ):
+            value = result.get(name)
+            if (
+                type(value) not in (int, float)
+                or not 0.0 <= value <= 1.0
+                or not math.isfinite(value)
+            ):
+                return f"Invalid judge score: {name} must be a finite number in [0, 1]."
+        return None
+
+    @staticmethod
     def _review_guard(result: Dict[str, Any]) -> tuple[bool, str]:
         """Require complete contextual evidence before score-based routing."""
+        score_error = AnswerComparisonEngine._score_validation_error(result)
+        if score_error:
+            return True, score_error
         disposition = result.get("disposition")
         checks = result.get("context_checks")
         if disposition not in ("accept", "edit", "reject", "needs_evidence"):
@@ -520,8 +542,9 @@ Follow the evaluation rubric in your instructions. Return only the JSON object."
             question_text, staff_answer, generated_answer
         )
 
-        # Handle explicit failure - route to human review
-        if judge_result.get("evaluation_status") == "failed":
+        # Preserve provider failures and reject malformed scores before arithmetic.
+        score_error = self._score_validation_error(judge_result)
+        if judge_result.get("evaluation_status") == "failed" or score_error:
             return ComparisonResult(
                 question_event_id=question_event_id,
                 embedding_similarity=embedding_sim,
@@ -529,17 +552,21 @@ Follow the evaluation rubric in your instructions. Return only the JSON object."
                 contradiction_score=1.0,
                 completeness=0.0,
                 hallucination_risk=1.0,
-                llm_reasoning=judge_result.get("reasoning", "Evaluation failed"),
+                llm_reasoning=(
+                    judge_result.get("reasoning", "Evaluation failed")
+                    if judge_result.get("evaluation_status") == "failed"
+                    else score_error or "Evaluation failed"
+                ),
                 final_score=0.0,
                 routing="FULL_REVIEW",
                 is_calibration=self.is_calibration_mode,
                 evaluation_status="failed",
             )
 
-        factual = judge_result.get("factual_alignment", 0.5)
-        contradiction = judge_result.get("contradiction_score", 0.5)
-        completeness = judge_result.get("completeness", 0.5)
-        hallucination = judge_result.get("hallucination_risk", 0.5)
+        factual = judge_result["factual_alignment"]
+        contradiction = judge_result["contradiction_score"]
+        completeness = judge_result["completeness"]
+        hallucination = judge_result["hallucination_risk"]
         requires_full_review, context_review = self._review_guard(judge_result)
         reasoning = context_review + "\n" + str(judge_result.get("reasoning") or "")
 

@@ -446,8 +446,13 @@ class ProtocolDetector:
         has_both_products = self._has_bisq1_mention(text) and (
             self._has_bisq2_mention(text) or re.search(r"\bbisq\s+easy\b", text)
         )
+        has_grouped_versions = re.search(
+            r"\bboth\s+versions\b|\bversions?\s+of\s+bisq\b"
+            r"|\b(?:the\s+)?(?:two\s+)?bisq\s+versions?\b",
+            text,
+        )
         return bool(
-            has_both_products
+            (has_both_products or has_grouped_versions)
             and re.search(
                 r"\bdifferences?\s+between\b|\bcompar(?:e|ing|ison)\b|\b(?:versus|vs)\b",
                 text,
