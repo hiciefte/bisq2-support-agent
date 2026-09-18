@@ -585,75 +585,51 @@ reconcile_runtime_services() {
 }
 
 # Function to test the chat endpoint
+# One paid POST only: timeout or invalid output needs operator diagnosis, not retry.
+# Public callers retain their legacy retries/delay arguments for compatibility.
+_run_chat_smoke() {
+    local url="$1" question="$2" mode="$3"
+    local session payload response http_code body
+    session=$(openssl rand -hex 16) || return 1
+    payload=$(jq -nc --arg question "$question" '{question: $question, chat_history: []}') || return 1
+    if ! response=$(curl -s --retry 0 --connect-timeout 10 --max-time 120 \
+        -w "\n%{http_code}" -X POST -H "Content-Type: application/json" \
+        --cookie "session_id=$session" -d "$payload" "$url" 2>/dev/null); then
+        log_error "Chat smoke failed: transport_or_timeout; not retrying"
+        return 1
+    fi
+    http_code="${response##*$'\n'}"
+    body="${response%$'\n'*}"
+    if ! [[ "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+        log_error "Chat smoke failed: http_status; not retrying"
+        return 1
+    fi
+    local options=(--status "$http_code" --question "$question" --session "$session")
+    if [[ "$mode" == live ]]; then
+        options+=(--live)
+    else
+        options+=(--signal "${CHAT_TEST_REQUIRED_ANSWER_REGEX:-bisq}"
+            --signal "${CHAT_TEST_REQUIRED_CONCEPT_REGEX:-(bitcoin|btc)}"
+            --signal "${CHAT_TEST_REQUIRED_DOMAIN_REGEX:-(buy|purchase|seller|trade)}")
+    fi
+    # Body stays on stdin; the validator prints only controlled outcome codes.
+    # Its SQLite access is read-only and happens inside the current API container.
+    if ! printf '%s' "$body" | run_docker_compose \
+        "${DOCKER_DIR:-${INSTALL_DIR:-/opt/bisq-support}/docker}" \
+        "${COMPOSE_FILE:-docker-compose.yml}" exec -T api \
+        python -m app.scripts.validate_deployment_chat "${options[@]}"; then
+        log_error "Chat smoke failed: response_validation; not retrying"
+        return 1
+    fi
+}
+
 test_chat_endpoint() {
     local url="${1:-http://localhost/api/chat/query}"
-    local retries="${2:-5}"
-    local delay="${3:-10}"
+    # Arguments2/3 remain accepted but deliberately do not retry paid POSTs.
     local question="${CHAT_TEST_QUESTION:-In Bisq 2, how do I buy bitcoin with Bisq Easy?}"
-    local required_answer_regex="${CHAT_TEST_REQUIRED_ANSWER_REGEX:-bisq}"
-    local required_concept_regex="${CHAT_TEST_REQUIRED_CONCEPT_REGEX:-(bitcoin|btc)}"
-    local required_domain_regex="${CHAT_TEST_REQUIRED_DOMAIN_REGEX:-(buy|purchase|seller|trade)}"
-    local payload
-    payload=$(jq -nc --arg question "$question" \
-        '{question: $question, chat_history: [], bypass_hooks: ["escalation"]}')
-
     log_info "Testing chat endpoint..."
-
-    local attempt=1
-    while [ "$attempt" -le "$retries" ]; do
-        local response
-        local http_code
-
-        # Get both response body and HTTP status code
-        response=$(curl -s -w "\n%{http_code}" -X POST \
-            -H "Content-Type: application/json" \
-            -d "$payload" \
-            "$url")
-
-        # Extract HTTP code (last line) and body (everything else)
-        http_code=$(echo "$response" | tail -n1)
-        response=$(echo "$response" | sed '$d')
-
-        # Validate HTTP code is numeric (curl may fail with connection errors)
-        if ! [[ "$http_code" =~ ^[0-9]+$ ]]; then
-            http_code="000"
-        fi
-
-        # Check if response contains expected fields and a substantive answer.
-        if echo "$response" | jq -e '.answer and (.answer | type == "string") and (.answer | length > 20) and (.sources | type == "array") and (.sources | length > 0) and .response_time' > /dev/null 2>&1; then
-            local answer_lower
-            local signal_count=0
-            answer_lower=$(echo "$response" | jq -r '.answer' | tr '[:upper:]' '[:lower:]')
-
-            [[ "$answer_lower" =~ $required_answer_regex ]] && signal_count=$((signal_count + 1))
-            [[ "$answer_lower" =~ $required_concept_regex ]] && signal_count=$((signal_count + 1))
-            [[ "$answer_lower" =~ $required_domain_regex ]] && signal_count=$((signal_count + 1))
-
-            if [ "$signal_count" -gt 0 ]; then
-                if [ "$signal_count" -lt 3 ]; then
-                    log_warning "Chat endpoint answer passed with partial content signals (${signal_count}/3)"
-                fi
-                log_success "Chat endpoint test successful"
-                local response_time
-                response_time=$(echo "$response" | jq -r '.response_time')
-                log_success "Response time: ${response_time}"
-                return 0
-            else
-                log_warning "Chat endpoint returned schema-valid but content-weak answer"
-            fi
-        fi
-
-        # If we got a non-200 status or invalid response, retry
-        if [ "$attempt" -lt "$retries" ]; then
-            log_warning "Chat endpoint test failed (attempt $attempt/$retries, HTTP $http_code). Retrying in ${delay}s..."
-            sleep "$delay"
-        fi
-
-        attempt=$((attempt + 1))
-    done
-
-    log_error "Chat endpoint test failed after $retries attempts. Last response: $response"
-    return 1
+    _run_chat_smoke "$url" "$question" standard || return 1
+    log_success "Chat endpoint test successful"
 }
 
 is_mcp_live_data_enabled() {
@@ -680,73 +656,16 @@ is_mcp_live_data_enabled() {
 
 test_live_data_chat_endpoint() {
     local url="${1:-http://localhost/api/chat/query}"
-    local retries="${2:-5}"
-    local delay="${3:-10}"
+    # Arguments2/3 remain accepted but deliberately do not retry paid POSTs.
     local env_file="${4:-${DOCKER_DIR:-}/.env}"
     local question="${LIVE_DATA_SMOKE_QUESTION:-What is the current BTC price?}"
-    local payload
-
     if ! is_mcp_live_data_enabled "$env_file"; then
-        log_warning \
-            "Skipping MCP live-data smoke check because ENABLE_BISQ_MCP_INTEGRATION is disabled"
+        log_warning "Skipping MCP live-data smoke check because ENABLE_BISQ_MCP_INTEGRATION is disabled"
         return 0
     fi
-
-    payload=$(jq -nc --arg question "$question" \
-        '{question: $question, chat_history: [], bypass_hooks: ["escalation"]}')
-
     log_info "Testing MCP live-data chat endpoint..."
-
-    local attempt=1
-    while [ "$attempt" -le "$retries" ]; do
-        local response
-        local http_code
-
-        response=$(curl -s -w "\n%{http_code}" -X POST \
-            --connect-timeout 10 \
-            --max-time 30 \
-            -H "Content-Type: application/json" \
-            -d "$payload" \
-            "$url")
-
-        http_code=$(echo "$response" | tail -n1)
-        response=$(echo "$response" | sed '$d')
-
-        if ! [[ "$http_code" =~ ^[0-9]+$ ]]; then
-            http_code="000"
-        fi
-
-        if [[ "$http_code" =~ ^2[0-9][0-9]$ ]] && echo "$response" | jq -e '
-            .answer
-            and (.answer | type == "string")
-            and (.mcp_tools_used | type == "array")
-            and any(
-                .mcp_tools_used[];
-                .tool == "get_market_prices" or .tool == "get_offerbook"
-            )
-        ' > /dev/null 2>&1; then
-            local tools
-            tools=$(
-                echo "$response" |
-                    jq -r '[.mcp_tools_used[].tool] | unique | join(",")'
-            )
-            log_success "MCP live-data smoke test successful"
-            log_success "MCP tools used: ${tools}"
-            return 0
-        fi
-
-        if [ "$attempt" -lt "$retries" ]; then
-            log_warning \
-                "MCP live-data smoke test failed (attempt $attempt/$retries, HTTP $http_code). Retrying in ${delay}s..."
-            sleep "$delay"
-        fi
-
-        attempt=$((attempt + 1))
-    done
-
-    log_error \
-        "MCP live-data smoke test failed after $retries attempts. Last response: $response"
-    return 1
+    _run_chat_smoke "$url" "$question" live || return 1
+    log_success "MCP live-data smoke test successful"
 }
 
 # Function to display service status

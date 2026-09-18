@@ -6,6 +6,8 @@ import sqlite3
 import subprocess
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COMMON_SH = REPO_ROOT / "scripts" / "lib" / "common.sh"
 DOCKER_UTILS_SH = REPO_ROOT / "scripts" / "lib" / "docker-utils.sh"
@@ -2255,13 +2257,14 @@ def test_live_data_chat_smoke_requires_mcp_tool_metadata(tmp_path: Path) -> None
         f"""
         export PATH="{fakebin}:$PATH"
         source "{DOCKER_UTILS_SH}"
+        run_docker_compose() {{ cat >/dev/null; return 1; }}
         test_live_data_chat_endpoint "http://example.test/api/chat/query" 1 0 "{env_file}"
         """,
         cwd=REPO_ROOT,
     )
 
     assert result.returncode != 0
-    assert "MCP live-data smoke test failed after 1 attempts" in result.stdout
+    assert "Chat smoke failed: response_validation; not retrying" in result.stdout
 
 
 def test_live_data_chat_smoke_accepts_market_price_tool(tmp_path: Path) -> None:
@@ -2286,6 +2289,7 @@ def test_live_data_chat_smoke_accepts_market_price_tool(tmp_path: Path) -> None:
         f"""
         export PATH="{fakebin}:$PATH"
         source "{DOCKER_UTILS_SH}"
+        run_docker_compose() {{ cat >/dev/null; return 0; }}
         test_live_data_chat_endpoint "http://example.test/api/chat/query" 1 0 "{env_file}"
         """,
         cwd=REPO_ROOT,
@@ -2293,7 +2297,6 @@ def test_live_data_chat_smoke_accepts_market_price_tool(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert "MCP live-data smoke test successful" in result.stdout
-    assert "get_market_prices" in result.stdout
 
 
 def test_standalone_health_check_tracks_all_runtime_services() -> None:
@@ -2314,3 +2317,41 @@ def test_standalone_health_check_tracks_all_runtime_services() -> None:
         "alertmanager",
         "cadvisor",
     } <= all_services
+
+
+@pytest.mark.parametrize(
+    "function_name", ["test_chat_endpoint", "test_live_data_chat_endpoint"]
+)
+@pytest.mark.parametrize(
+    "transport_exit,http_status", [(28, "000"), (0, "429"), (0, "500"), (0, "200")]
+)
+def test_chat_smoke_is_single_ordinary_bounded_request(
+    tmp_path, transport_exit, http_status, function_name
+):
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    calls = tmp_path / "calls"
+    curl = fakebin / "curl"
+    curl.write_text(
+        "#!/bin/bash\n"
+        + f"printf '%s\\n' \"$*\" >>'{calls}'\n"
+        + f"printf '%s\\n' '{{\"private\":\"never-log-this\"}}' '{http_status}'\nexit {transport_exit}\n"
+    )
+    curl.chmod(0o755)
+    result = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        source "{DOCKER_UTILS_SH}"
+        run_docker_compose() {{ cat >/dev/null; return 1; }}
+        export ENABLE_BISQ_MCP_INTEGRATION=true
+        {function_name} "http://example.test/api/chat/query" 5 0
+    """,
+        cwd=REPO_ROOT,
+    )
+    assert result.returncode != 0
+    logged = calls.read_text().splitlines()
+    assert len(logged) == 1
+    assert "--max-time 120" in logged[0] and "--retry 0" in logged[0]
+    assert re.search(r"session_id=[0-9a-f]{32}(?:\s|$)", logged[0])
+    assert "bypass_hooks" not in logged[0]
+    assert "never-log-this" not in result.stdout + result.stderr
