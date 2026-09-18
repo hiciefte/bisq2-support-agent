@@ -211,6 +211,24 @@ def test_mcp_failure_is_explicit_and_does_not_invent_answer(wrapper, mcp):
     wrapper.client.responses.create.assert_not_called()
 
 
+def test_failure_diagnostics_do_not_log_provider_payloads(wrapper, caplog):
+    error = RuntimeError("private request and credential material")
+    error.status_code = 429
+    wrapper.client.responses.create.side_effect = error
+    with pytest.raises(RuntimeError):
+        wrapper.invoke("private user question")
+    assert "RuntimeError" in caplog.text and "http_status=429" in caplog.text
+    assert "private request" not in caplog.text
+    assert "private user" not in caplog.text
+
+
+def test_contract_failure_has_specific_safe_diagnostic(wrapper, caplog):
+    wrapper.client.responses.create.return_value = response(status="incomplete")
+    with pytest.raises(RuntimeError):
+        wrapper.invoke("question")
+    assert "Responses generation did not complete" in caplog.text
+
+
 class FakeStream:
     def __init__(self, events):
         self.events, self.closed = iter(events), False

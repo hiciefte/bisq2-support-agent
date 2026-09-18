@@ -79,7 +79,7 @@ isolated persistent volumes and their consumers load them at runtime.
     *   Description: Independent model for translation and translation-service language identification. Changing the answer model does not move these calls to Astra. Query rewriting, extraction and classification retain their existing separate settings.
     *   Default: `openai:gpt-4.1-nano`
 *   **`OPENAI_INPUT_COST_PER_TOKEN`**, **`OPENAI_OUTPUT_COST_PER_TOKEN`**
-    *   Description: Legacy AISuite streaming cost-metric overrides, defaulting to Nano pricing. Astra Responses uses built-in model-specific rates and actual reported input/output and cache usage; these legacy overrides do not set Astra pricing.
+    *   Description: Legacy AISuite cost-metric overrides, defaulting to Nano pricing. Astra Responses uses built-in model-specific rates and actual reported input/output and cache usage; these legacy overrides do not set Astra pricing.
     *   Defaults: `0.0000001` input and `0.0000004` output per token.
 
 The Astra adapter uses Responses support already present in the pinned OpenAI SDK; it does not require an AISuite or SDK upgrade. Existing model and fallback configuration remains in force until explicitly changed. Translation is now selected independently; installations that previously used a non-Nano answer model for translation should set `TRANSLATION_MODEL` to that model if they want to retain that translation choice.

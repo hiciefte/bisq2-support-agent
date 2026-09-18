@@ -229,7 +229,7 @@ class Settings(BaseSettings):
     COHERE_API_KEY: str = ""  # Reserved for future non-OpenAI embedding support.
     VOYAGE_API_KEY: str = ""  # Reserved for future non-OpenAI embedding support.
 
-    # Legacy AISuite streaming cost metrics; defaults are for GPT-4.1-nano.
+    # Legacy AISuite cost metrics; defaults are for GPT-4.1-nano.
     # Astra Responses accounting uses model-specific rates and reported usage,
     # including cache usage, rather than these legacy overrides.
     OPENAI_INPUT_COST_PER_TOKEN: float = 0.0000001  # $0.10 per 1M tokens

@@ -1,6 +1,7 @@
 """Responses support-answer adapter with local MCP execution and native streaming."""
 
 import json
+import logging
 from collections.abc import Iterator
 from copy import deepcopy
 from typing import Any
@@ -8,6 +9,29 @@ from typing import Any
 import httpx
 from app.utils.instrumentation import track_tokens_and_cost
 from jsonschema import validate
+
+logger = logging.getLogger(__name__)
+
+
+class _ResponseContractError(RuntimeError):
+    """Controlled diagnostic text that never contains provider or tool payloads."""
+
+
+def _log_failure(operation: str, error: Exception) -> None:
+    reason = (
+        str(error)
+        if isinstance(error, _ResponseContractError)
+        else type(error).__name__
+    )
+    status = getattr(error, "status_code", None)
+    if isinstance(error, httpx.HTTPStatusError):
+        status = error.response.status_code
+    if type(status) is not int:
+        status = None
+    # Provider/validation exception bodies can contain request or tool content.
+    logger.warning(
+        "Responses %s failed: %s (http_status=%s)", operation, reason, status
+    )
 
 
 class OpenAIResponsesLLMWrapper:
@@ -72,7 +96,7 @@ class OpenAIResponsesLLMWrapper:
     def _usage(self, response: dict) -> dict:
         usage = response.get("usage")
         if not isinstance(usage, dict):
-            raise RuntimeError("Responses usage missing")
+            raise _ResponseContractError("Responses usage missing")
         input_tokens = usage.get("input_tokens")
         output_tokens = usage.get("output_tokens")
         details = usage.get("input_tokens_details") or {}
@@ -82,9 +106,9 @@ class OpenAIResponsesLLMWrapper:
         )
         values = (input_tokens, output_tokens, cached, written)
         if any(type(value) is not int or value < 0 for value in values):
-            raise RuntimeError("Invalid Responses usage")
+            raise _ResponseContractError("Invalid Responses usage")
         if cached + written > input_tokens:
-            raise RuntimeError("Invalid Responses cache usage")
+            raise _ResponseContractError("Invalid Responses cache usage")
         cost = (
             (input_tokens - cached - written) * self.input_rate
             + cached * self.cached_rate
@@ -109,10 +133,10 @@ class OpenAIResponsesLLMWrapper:
     @staticmethod
     def _output(response: dict) -> list[dict]:
         if response.get("status") != "completed":
-            raise RuntimeError("Responses generation did not complete")
+            raise _ResponseContractError("Responses generation did not complete")
         output = response.get("output")
         if not isinstance(output, list):
-            raise RuntimeError("Responses output missing")
+            raise _ResponseContractError("Responses output missing")
         return output
 
     @staticmethod
@@ -127,7 +151,7 @@ class OpenAIResponsesLLMWrapper:
                         parts.append(content.get("refusal", ""))
         text = "".join(parts)
         if not text.strip():
-            raise RuntimeError("Responses returned no answer")
+            raise _ResponseContractError("Responses returned no answer")
         return text
 
     def invoke(self, prompt: str, system_content: str | None = None):
@@ -142,9 +166,10 @@ class OpenAIResponsesLLMWrapper:
             usage = self._usage(response)
             output = self._output(response)
             if any(item.get("type") == "function_call" for item in output):
-                raise RuntimeError("Unexpected tool request")
+                raise _ResponseContractError("Unexpected tool request")
             return LLMResponse(content=self._text(output), usage=usage)
-        except Exception:
+        except Exception as exc:
+            _log_failure("answer", exc)
             raise RuntimeError("Responses answer generation failed") from None
 
     def _rpc(
@@ -166,7 +191,7 @@ class OpenAIResponsesLLMWrapper:
             or data.get("id") != request_id
             or not isinstance(data.get("result"), dict)
         ):
-            raise RuntimeError("Local MCP request failed")
+            raise _ResponseContractError("Local MCP request failed")
         return data["result"]
 
     def invoke_with_tools(
@@ -184,10 +209,10 @@ class OpenAIResponsesLLMWrapper:
             with httpx.Client(timeout=self.mcp_timeout_seconds, trust_env=False) as mcp:
                 definitions = self._rpc(mcp, "tools/list", {}, 1).get("tools")
                 if not isinstance(definitions, list) or not definitions:
-                    raise RuntimeError("MCP tool catalogue missing")
+                    raise _ResponseContractError("MCP tool catalogue missing")
                 by_name = {item["name"]: item for item in definitions}
                 if len(by_name) != len(definitions):
-                    raise RuntimeError("Duplicate MCP tool names")
+                    raise _ResponseContractError("Duplicate MCP tool names")
                 tools = [
                     {
                         "type": "function",
@@ -216,7 +241,7 @@ class OpenAIResponsesLLMWrapper:
                             iterations=iterations,
                         )
                     if turn == max_turns - 1:
-                        raise RuntimeError("Tool turn limit reached")
+                        raise _ResponseContractError("Tool turn limit reached")
                     # Validate the entire batch before any local tool dispatch.
                     parsed_calls = []
                     for item in requested:
@@ -231,12 +256,14 @@ class OpenAIResponsesLLMWrapper:
                             or not call_id
                             or call_id in seen_ids
                         ):
-                            raise RuntimeError("Invalid MCP function request")
+                            raise _ResponseContractError("Invalid MCP function request")
                         if not isinstance(arguments, str):
-                            raise RuntimeError("Invalid MCP arguments")
+                            raise _ResponseContractError("Invalid MCP arguments")
                         parsed = json.loads(arguments)
                         if not isinstance(parsed, dict):
-                            raise RuntimeError("MCP arguments must be an object")
+                            raise _ResponseContractError(
+                                "MCP arguments must be an object"
+                            )
                         validate(parsed, by_name[name]["inputSchema"])
                         seen_ids.add(call_id)
                         parsed_calls.append((name, call_id, arguments, parsed))
@@ -250,7 +277,7 @@ class OpenAIResponsesLLMWrapper:
                             len(calls) + 2,
                         )
                         if result.get("isError"):
-                            raise RuntimeError("MCP tool reported failure")
+                            raise _ResponseContractError("MCP tool reported failure")
                         content = result.get("content")
                         if (
                             not isinstance(content, list)
@@ -261,7 +288,9 @@ class OpenAIResponsesLLMWrapper:
                                 for item in content
                             )
                         ):
-                            raise RuntimeError("MCP tool returned unsupported content")
+                            raise _ResponseContractError(
+                                "MCP tool returned unsupported content"
+                            )
                         text = "\n".join(item["text"] for item in content)
                         calls.append({"tool": name, "args": arguments, "result": text})
                         items.append(
@@ -271,7 +300,8 @@ class OpenAIResponsesLLMWrapper:
                                 "output": text,
                             }
                         )
-        except Exception:
+        except Exception as exc:
+            _log_failure("tools", exc)
             return ToolCallResult(
                 content="Responses or local MCP invocation failed",
                 tool_calls_made=calls,
@@ -301,7 +331,7 @@ class OpenAIResponsesLLMWrapper:
                 ):
                     delta = data.get("delta")
                     if not isinstance(delta, str):
-                        raise RuntimeError("Invalid Responses stream delta")
+                        raise _ResponseContractError("Invalid Responses stream delta")
                     if delta:
                         emitted = True
                         yield delta
@@ -314,13 +344,16 @@ class OpenAIResponsesLLMWrapper:
                     self._usage(response)
                     output = self._output(response)
                     if event_type != "response.completed" or not emitted:
-                        raise RuntimeError("Responses stream failed or was empty")
+                        raise _ResponseContractError(
+                            "Responses stream failed or was empty"
+                        )
                     self._text(output)
                     return
                 elif event_type == "error":
-                    raise RuntimeError("Responses stream error")
-            raise RuntimeError("Responses stream ended before completion")
-        except Exception:
+                    raise _ResponseContractError("Responses stream error")
+            raise _ResponseContractError("Responses stream ended before completion")
+        except Exception as exc:
+            _log_failure("stream", exc)
             raise RuntimeError("Responses streaming generation failed") from None
         finally:
             if stream is not None:
