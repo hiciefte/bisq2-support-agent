@@ -348,6 +348,11 @@ class ProtocolDetector:
         """
         question_lower = question.lower()
 
+        # An explicit comparison needs both products' evidence, regardless of
+        # which version the user previously mentioned using.
+        if self._is_product_comparison(question_lower):
+            return ("Unknown", 0.0, None)
+
         # 1. Check for explicit version mentions (highest confidence)
         explicit_version = self._check_explicit_mentions(question_lower)
         if explicit_version:
@@ -436,6 +441,23 @@ class ProtocolDetector:
 
     def _has_mixed_explicit_mentions(self, text: str) -> bool:
         return self._has_bisq1_mention(text) and self._has_bisq2_mention(text)
+
+    def _is_product_comparison(self, text: str) -> bool:
+        has_both_products = self._has_bisq1_mention(text) and (
+            self._has_bisq2_mention(text) or re.search(r"\bbisq\s+easy\b", text)
+        )
+        has_grouped_versions = re.search(
+            r"\bboth\s+versions\b|\bversions?\s+of\s+bisq\b"
+            r"|\b(?:the\s+)?(?:two\s+)?bisq\s+versions?\b",
+            text,
+        )
+        return bool(
+            (has_both_products or has_grouped_versions)
+            and re.search(
+                r"\bdifferences?\s+between\b|\bcompar(?:e|ing|ison)\b|\b(?:versus|vs)\b",
+                text,
+            )
+        )
 
     @staticmethod
     def _has_bisq1_mention(text: str) -> bool:
