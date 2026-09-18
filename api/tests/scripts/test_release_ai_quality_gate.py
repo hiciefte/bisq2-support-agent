@@ -768,3 +768,95 @@ async def test_generation_records_safe_http_failure_without_response_detail() ->
     assert rows[0]["release_response"]["evaluation_source"] == "unavailable"
     review_draft_loader.assert_not_awaited()
     assert "internal exception detail" not in json.dumps(rows)
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "The current Bitcoin market price is **€50,000 per BTC**, last updated at 13:02:45 UTC on 18 September 2026.",
+        "The current price is EUR 50,000.",
+        "The current price is €50000.00 per BTC.",
+        "The current price is 50,000.00 EUR per BTC.",
+        "The current price is 50000 € per BTC.",
+    ],
+)
+def test_market_price_accepts_exact_equivalent_eur_notation(answer: str) -> None:
+    manifest, rows = _passing_rows()
+    next(row for row in rows if row["case_id"] == "live-market-price")[
+        "answer"
+    ] = answer
+    result = next(
+        row
+        for row in _build_summary(manifest, rows)["per_sample"]
+        if row["case_id"] == "live-market-price"
+    )
+    assert result["gate"]["passed"] is True
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "EUR 5,000",
+        "EUR 50,001",
+        "EUR 50,000.99",
+        "€150,000",
+        "USD 50,000",
+        "EUR is unavailable; USD 50,000",
+        "EURUSD 50,000",
+        "XEUR 50,000",
+        "EUR 50,000BTC",
+        "price€50,000",
+        "-€50,000",
+        "- €50,000",
+        "−€50,000",
+        "+ 50000 EUR",
+        "+EUR 50,000",
+        "EUR -50,000",
+        "EUR +50,000",
+        "€50,000,000",
+        "€50,000.001",
+        "0.€50,000",
+        "50000 EURUSD",
+        "EUR50000",
+    ],
+)
+def test_market_price_rejects_wrong_or_embedded_monetary_values(answer: str) -> None:
+    manifest, rows = _passing_rows()
+    next(row for row in rows if row["case_id"] == "live-market-price")[
+        "answer"
+    ] = answer
+    result = next(
+        row
+        for row in _build_summary(manifest, rows)["per_sample"]
+        if row["case_id"] == "live-market-price"
+    )
+    assert "required_answer_term_missing" in result["gate"]["failures"]
+
+
+def test_equivalent_price_still_requires_actual_tool() -> None:
+    manifest, rows = _passing_rows()
+    row = next(row for row in rows if row["case_id"] == "live-market-price")
+    row["answer"] = "€50,000 per BTC"
+    row["release_response"]["mcp_tools"] = []
+    result = next(
+        row
+        for row in _build_summary(manifest, rows)["per_sample"]
+        if row["case_id"] == "live-market-price"
+    )
+    assert "required_mcp_tool_missing" in result["gate"]["failures"]
+
+
+def test_currency_normalization_is_scoped_to_price_tool_floor() -> None:
+    from app.scripts.release_ai_quality_gate import _required_answer_terms_present
+
+    floor = {
+        "required_mcp_tools": ["get_offerbook"],
+        "required_answer_terms": ["EUR", "50,000"],
+    }
+    assert not _required_answer_terms_present("€50,000", floor)
+    price_floor = {
+        "required_mcp_tools": ["get_market_prices"],
+        "required_answer_terms": ["EUR", "1,234", "current"],
+    }
+    assert _required_answer_terms_present("The current price is €1,234.00", price_floor)
+    assert not _required_answer_terms_present("The old price is €1,234.00", price_floor)

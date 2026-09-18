@@ -20,6 +20,7 @@ import re
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
@@ -586,6 +587,41 @@ async def generate_fresh_rows(
     return rows
 
 
+def _required_answer_terms_present(answer: str, floor: dict[str, Any]) -> bool:
+    """Recognize equivalent EUR prices without loosening other literal floors."""
+    terms = list(floor.get("required_answer_terms", []))
+    number = r"(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]+)?"
+    numeric_terms = [term for term in terms if re.fullmatch(number, term)]
+    currency_terms = [term for term in terms if term.upper() == "EUR"]
+    if (
+        "get_market_prices" in floor.get("required_mcp_tools", [])
+        and len(numeric_terms) == 1
+        and len(currency_terms) == 1
+    ):
+        expected = Decimal(numeric_terms[0].replace(",", ""))
+        # Keep currency and value together. Bound the whole numeric token, not
+        # a prefix of a different price (e.g. 50,000.99 or 150,000).
+        left = r"(?<![\w.,+\-−€$£])"
+        patterns = (
+            left + rf"(?:EUR\s+|€\s*)(?P<amount>{number})(?!\w|,\d|\.\d)",
+            left + rf"(?P<amount>{number})(?:\s+EUR|\s*€)(?!\w)",
+        )
+        if not any(
+            Decimal(match.group("amount").replace(",", "")) == expected
+            and not answer[: match.start()].rstrip().endswith(("+", "-", "−"))
+            for pattern in patterns
+            for match in re.finditer(pattern, answer, flags=re.IGNORECASE)
+        ):
+            return False
+        terms.remove(numeric_terms[0])
+        terms.remove(currency_terms[0])
+    normalized = answer.casefold()
+    return all(
+        re.search(rf"(?<!\w){re.escape(term.casefold())}(?!\w)", normalized) is not None
+        for term in terms
+    )
+
+
 def _score_release_contract(
     row: dict[str, Any], behavior_score: dict[str, Any]
 ) -> tuple[dict[str, Any], list[str]]:
@@ -636,12 +672,7 @@ def _score_release_contract(
     if missing_tools:
         failures.append("required_mcp_tool_missing")
 
-    normalized_answer = str(row.get("answer", "")).casefold()
-    if any(
-        re.search(rf"(?<!\w){re.escape(term.casefold())}(?!\w)", normalized_answer)
-        is None
-        for term in floor.get("required_answer_terms", [])
-    ):
+    if not _required_answer_terms_present(str(row.get("answer", "")), floor):
         failures.append("required_answer_term_missing")
 
     safe_contract = {

@@ -153,7 +153,7 @@ def build_ambiguous_support_workflow_block() -> str:
 - When the identified version, current trade state, and Context support a concrete escalation action, use it instead of a generic handoff. For Bisq 1, supported actions may include `Ctrl+O`/`Cmd+O` or replying in an existing mediation ticket.
 - Otherwise hand off generically. Never invent a shortcut or ticket, and do not direct users to a refund agent through a room-topic link.
 - If the exact procedure differs by version and the Context does not let you choose safely, say that the exact label or workflow differs by version and hand off instead of guessing.
-- If the user is asking for a human, manager, or escalation rather than product guidance, acknowledge that and hand off cleanly. Do not answer with product workflow steps."""
+- If the user is asking for a human, manager, or escalation, acknowledge that. If they also describe a paid or blocked trade, use at most two short sentences: tell them to preserve payment evidence and trade messages, and give one safe mediation/dispute next step supported by Context. If the question and chat history do not identify the version, keep this guidance version-neutral even when retrieved sources are protocol-specific. If they ask only for a human without describing a problem, hand off without adding product workflow steps. Do not invent whether a transfer or case creation has happened; the system supplies the actual handoff notice."""
 
 
 def build_answer_contract_block() -> str:
