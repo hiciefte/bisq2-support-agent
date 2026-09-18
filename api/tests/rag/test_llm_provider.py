@@ -406,6 +406,40 @@ class TestLLMProviderContract:
 
                 assert result == mock_embeddings
 
+    def test_astra_uses_responses_and_keeps_translation_on_nano(self, mock_settings):
+        from app.services.rag.llm_provider import AISuiteLLMWrapper, LLMProvider
+        from app.services.rag.openai_responses import OpenAIResponsesLLMWrapper
+
+        mock_settings.OPENAI_MODEL = "openai:gpt-6-astra"
+        mock_settings.TRANSLATION_MODEL = "openai:gpt-4.1-nano"
+        mock_settings.OPENAI_REASONING_EFFORT = "low"
+        mock_settings.MCP_LIVE_DATA_TIMEOUT_SECONDS = 12.5
+        with patch("aisuite.Client"), patch("openai.OpenAI") as sdk:
+            provider = LLMProvider(mock_settings)
+            answer = provider.initialize_llm(mcp_url="http://private-mcp/mcp")
+            translation = provider.initialize_translation_llm()
+
+        assert isinstance(answer, OpenAIResponsesLLMWrapper)
+        assert isinstance(translation, AISuiteLLMWrapper)
+        assert translation.model_id == "openai:gpt-4.1-nano"
+        assert provider.get_llm() is answer
+        sdk.assert_called_once_with(api_key="test-key", max_retries=0, timeout=90.0)
+
+    @pytest.mark.parametrize(
+        "model,expected",
+        [
+            ("openai:gpt-6-astra", True),
+            ("openai:gpt-6-astra-2026-09-17", True),
+            ("openai:gpt-5.6-terra", False),
+            ("openai:gpt-4.1-nano", False),
+            ("other:gpt-6-astra", False),
+        ],
+    )
+    def test_responses_selection_is_model_specific(self, model, expected):
+        from app.services.rag.llm_provider import _requires_responses
+
+        assert _requires_responses(model) is expected
+
 
 class TestLLMProviderNoLegacyCode:
     """Verify legacy code patterns are removed."""

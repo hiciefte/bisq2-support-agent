@@ -68,10 +68,22 @@ operator-managed secrets. `SCHEDULER_API_TOKEN` and
 isolated persistent volumes and their consumers load them at runtime.
 
 *   **`OPENAI_API_KEY`**
-    *   Description: (Required) Your API key from OpenAI, used for LLM operations via AISuite and embeddings.
+    *   Description: (Required) Your API key from OpenAI, used for LLM operations via AISuite or Responses and embeddings.
 *   **`OPENAI_MODEL`**
-    *   Description: The OpenAI model ID to use for generating chat responses via AISuite.
-  *   Default: `openai:gpt-4o-mini`
+    *   Description: Model ID for answer generation. The default continues to use AISuite. Explicitly set `openai:gpt-6-astra` in protected runtime configuration to opt in to the Astra Responses adapter; deploying the code alone does not switch the answer model.
+    *   Default: `openai:gpt-4.1-nano`
+*   **`OPENAI_REASONING_EFFORT`**
+    *   Description: Astra Responses reasoning effort: `low`, `medium`, `high`, `xhigh`, or `max`. Invalid values fail settings validation. This does not change the legacy AISuite model parameters.
+    *   Default: `low`
+*   **`TRANSLATION_MODEL`**
+    *   Description: Independent model for translation and translation-service language identification. Changing the answer model does not move these calls to Astra. Query rewriting, extraction and classification retain their existing separate settings.
+    *   Default: `openai:gpt-4.1-nano`
+*   **`OPENAI_INPUT_COST_PER_TOKEN`**, **`OPENAI_OUTPUT_COST_PER_TOKEN`**
+    *   Description: Legacy AISuite cost-metric overrides, defaulting to Nano pricing. Astra Responses uses built-in model-specific rates and actual reported input/output and cache usage; these legacy overrides do not set Astra pricing.
+    *   Defaults: `0.0000001` input and `0.0000004` output per token.
+
+The Astra adapter uses Responses support already present in the pinned OpenAI SDK; it does not require an AISuite or SDK upgrade. Existing model and fallback configuration remains in force until explicitly changed. Translation is now selected independently; installations that previously used a non-Nano answer model for translation should set `TRANSLATION_MODEL` to that model if they want to retain that translation choice.
+
 *   **`OPENAI_EMBEDDING_MODEL`**
     *   Description: The OpenAI model ID to use for creating text embeddings.
     *   Default: `text-embedding-3-small`

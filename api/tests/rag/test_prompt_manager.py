@@ -10,6 +10,7 @@ import pytest
 from app.prompts import error_messages
 from app.prompts.runtime_policy import SAFETY_REFLEX_WARNING
 from app.prompts.soul import load_soul, reload_soul
+from app.services.rag.llm_provider import LLMResponse
 from app.services.rag.prompt_manager import PromptManager
 
 
@@ -127,6 +128,25 @@ class TestPromptManagerErrorMessages:
         chain = prompt_manager.create_rag_chain(mock_llm, mock_retrieve, mock_format)
         result = chain("What is Bisq?")
         assert result == error_messages.TECHNICAL_ERROR
+
+    @pytest.mark.parametrize("already_tracked", [False, True])
+    def test_usage_is_charged_once(self, prompt_manager, already_tracked):
+        llm = MagicMock()
+        llm.invoke.return_value = LLMResponse(
+            content="A support answer",
+            usage={
+                "prompt_tokens": 100,
+                "completion_tokens": 20,
+                "cost_tracked": already_tracked,
+            },
+        )
+        prompt_manager.create_rag_prompt()
+        chain = prompt_manager.create_rag_chain(
+            llm, MagicMock(return_value=[]), MagicMock(return_value="")
+        )
+        with patch("app.services.rag.prompt_manager.track_tokens_and_cost") as track:
+            assert chain("What is Bisq?") == "A support answer"
+        assert track.call_count == (0 if already_tracked else 1)
 
 
 class TestPromptManagerResponseGuidelines:

@@ -254,7 +254,7 @@ async def lifespan(app: FastAPI):
             raise RuntimeError("RAG LLM is not initialized")
 
         translation_service = TranslationService(
-            llm_provider=rag_service.llm,
+            llm_provider=rag_service.llm_provider.initialize_translation_llm(),
             cache_db_path=os.path.join(settings.DATA_DIR, "translation_cache.db"),
             translation_skip_en_confidence=settings.MULTILINGUAL_TRANSLATION_SKIP_EN_CONFIDENCE,
             lid_backend=settings.MULTILINGUAL_LID_BACKEND,

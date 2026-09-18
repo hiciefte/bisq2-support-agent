@@ -1,10 +1,12 @@
-"""LLM Provider using AISuite with direct HTTP MCP support.
+"""LLM providers for AISuite and Astra's Responses API.
 
 This module provides:
 - LLM client using AISuite for unified interface
 - Direct HTTP MCP tool calling (bypasses uvloop/nest_asyncio incompatibility)
 - Embeddings via OpenAI provider
 """
+
+from __future__ import annotations
 
 import json
 import logging
@@ -20,6 +22,7 @@ from app.utils.instrumentation import track_tokens_and_cost
 
 if TYPE_CHECKING:
     from app.core.config import Settings
+    from app.services.rag.openai_responses import OpenAIResponsesLLMWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +93,15 @@ def _parse_tool_content(content: str) -> str:
 
 # OpenAI reasoning-model families reject `max_tokens` (they require
 # `max_completion_tokens`) and only support the default temperature.
-_REASONING_MODEL_PREFIXES = ("o1", "o3", "o4", "gpt-5")
+_REASONING_MODEL_PREFIXES = ("o1", "o3", "o4", "gpt-5", "gpt-6")
+
+
+def _requires_responses(model_id: str) -> bool:
+    """Astra's tool calls require Responses, including dated snapshots."""
+    provider, _, model = model_id.partition(":")
+    return provider == "openai" and (
+        model == "gpt-6-astra" or model.startswith("gpt-6-astra-")
+    )
 
 
 def _completion_params(
@@ -556,7 +567,7 @@ class LLMProvider:
         """
         self.settings = settings
         self.embeddings: OpenAIEmbeddingsProvider | None = None
-        self.llm: AISuiteLLMWrapper | None = None
+        self.llm: AISuiteLLMWrapper | OpenAIResponsesLLMWrapper | None = None
 
         try:
             self.ai_client = ai.Client()
@@ -592,28 +603,62 @@ class LLMProvider:
 
     def initialize_llm(
         self, mcp_url: str = "http://localhost:8000/mcp"
-    ) -> AISuiteLLMWrapper:
-        """Initialize LLM with native MCP support.
+    ) -> AISuiteLLMWrapper | OpenAIResponsesLLMWrapper:
+        """Initialize the answer model with its supported tool API.
 
         Args:
             mcp_url: URL of the MCP HTTP server
 
         Returns:
-            AISuiteLLMWrapper configured with MCP URL
+            Model wrapper configured with the private MCP URL
         """
-        logger.info("Initializing LLM with AISuite MCP support...")
         self._validate_openai_api_key()
+        self.llm = self._create_wrapper(self.settings.OPENAI_MODEL, mcp_url)
+        logger.info("Answer LLM initialized: %s", self.settings.OPENAI_MODEL)
+        return self.llm
 
-        self.llm = AISuiteLLMWrapper(
+    def initialize_translation_llm(
+        self,
+    ) -> AISuiteLLMWrapper | OpenAIResponsesLLMWrapper:
+        """Keep translation and language detection independent of answer upgrades."""
+        self._validate_openai_api_key()
+        return self._create_wrapper(self.settings.TRANSLATION_MODEL)
+
+    def _create_wrapper(
+        self, model: str, mcp_url: str = "http://localhost:8000/mcp"
+    ) -> AISuiteLLMWrapper | OpenAIResponsesLLMWrapper:
+        if _requires_responses(model):
+            from app.services.rag.openai_responses import OpenAIResponsesLLMWrapper
+            from openai import OpenAI
+
+            return OpenAIResponsesLLMWrapper(
+                client=OpenAI(
+                    api_key=self.settings.OPENAI_API_KEY,
+                    max_retries=0,
+                    timeout=90.0,
+                ),
+                model=model,
+                max_tokens=self.settings.MAX_TOKENS,
+                reasoning_effort=self.settings.OPENAI_REASONING_EFFORT,
+                mcp_url=mcp_url,
+                mcp_timeout_seconds=self.settings.MCP_LIVE_DATA_TIMEOUT_SECONDS,
+                # Standard short-context Astra rates, USD/token. The adapter
+                # accounts for cache reads/writes separately, including tools.
+                # https://developers.openai.com/api/docs/pricing
+                input_cost_per_token=0.00001,
+                cached_input_cost_per_token=0.000001,
+                cache_write_cost_per_token=0.0000125,
+                output_cost_per_token=0.00005,
+            )
+
+        return AISuiteLLMWrapper(
             client=self.ai_client,
-            model=self.settings.OPENAI_MODEL,
+            model=model,
             max_tokens=self.settings.MAX_TOKENS,
             temperature=self.settings.LLM_TEMPERATURE,
             mcp_url=mcp_url,
             mcp_timeout_seconds=self.settings.MCP_LIVE_DATA_TIMEOUT_SECONDS,
         )
-        logger.info(f"LLM initialized: {self.settings.OPENAI_MODEL}")
-        return self.llm
 
     def get_embeddings(self) -> OpenAIEmbeddingsProvider | None:
         """Get the initialized embeddings model.
@@ -623,7 +668,7 @@ class LLMProvider:
         """
         return self.embeddings
 
-    def get_llm(self) -> AISuiteLLMWrapper | None:
+    def get_llm(self) -> AISuiteLLMWrapper | OpenAIResponsesLLMWrapper | None:
         """Get the initialized LLM.
 
         Returns:

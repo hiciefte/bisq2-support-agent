@@ -2,6 +2,7 @@ import logging
 import os
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlparse
 
 from pydantic import Field, ValidationInfo, field_validator, model_validator
@@ -198,10 +199,12 @@ class Settings(BaseSettings):
     # Tor hidden service settings
     TOR_HIDDEN_SERVICE: str = ""  # .onion address if Tor hidden service is configured
 
-    # OpenAI settings (using AISuite for LLM interface)
+    # OpenAI settings (AISuite by default; Responses for opt-in Astra generation)
     OPENAI_API_KEY: str = ""
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
     OPENAI_MODEL: str = "openai:gpt-4.1-nano"  # Full model ID with provider prefix
+    OPENAI_REASONING_EFFORT: Literal["low", "medium", "high", "xhigh", "max"] = "low"
+    TRANSLATION_MODEL: str = "openai:gpt-4.1-nano"
     MAX_TOKENS: int = 4096
     GLOBAL_DAILY_LLM_TOKEN_BUDGET: int = Field(
         default=10_000_000,
@@ -226,8 +229,9 @@ class Settings(BaseSettings):
     COHERE_API_KEY: str = ""  # Reserved for future non-OpenAI embedding support.
     VOYAGE_API_KEY: str = ""  # Reserved for future non-OpenAI embedding support.
 
-    # Token pricing (for cost tracking in metrics)
-    # Default values are for GPT-4.1-nano
+    # Legacy AISuite cost metrics; defaults are for GPT-4.1-nano.
+    # Astra Responses accounting uses model-specific rates and reported usage,
+    # including cache usage, rather than these legacy overrides.
     OPENAI_INPUT_COST_PER_TOKEN: float = 0.0000001  # $0.10 per 1M tokens
     OPENAI_OUTPUT_COST_PER_TOKEN: float = 0.0000004  # $0.40 per 1M tokens
 

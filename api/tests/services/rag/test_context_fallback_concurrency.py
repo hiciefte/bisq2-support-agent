@@ -4,10 +4,11 @@ import asyncio
 import time
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from app.prompts import error_messages
+from app.services.rag.llm_provider import LLMResponse
 
 
 async def _wait_for_thread_event(event: Event) -> None:
@@ -16,6 +17,27 @@ async def _wait_for_thread_event(event: Event) -> None:
             await asyncio.sleep(0)
 
     await asyncio.wait_for(poll(), timeout=1.0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("already_tracked", [False, True])
+async def test_context_fallback_usage_is_charged_once(rag_service, already_tracked):
+    rag_service.llm = MagicMock()
+    rag_service.llm.invoke.return_value = LLMResponse(
+        content="A context answer",
+        usage={
+            "prompt_tokens": 100,
+            "completion_tokens": 20,
+            "cost_tracked": already_tracked,
+        },
+    )
+    with patch("app.services.simplified_rag_service.track_tokens_and_cost") as track:
+        response = await rag_service._answer_from_context(
+            "What did we establish?",
+            [{"role": "assistant", "content": "Earlier support guidance"}],
+        )
+    assert response["answer"] == "A context answer"
+    assert track.call_count == (0 if already_tracked else 1)
 
 
 @pytest.mark.asyncio

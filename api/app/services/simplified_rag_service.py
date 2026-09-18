@@ -1060,7 +1060,11 @@ class SimplifiedRAGService:
             )
 
             # Track token usage and cost
-            if hasattr(response_text, "usage") and response_text.usage:
+            if (
+                hasattr(response_text, "usage")
+                and response_text.usage
+                and not response_text.usage.get("cost_tracked")
+            ):
                 track_tokens_and_cost(
                     input_tokens=response_text.usage.get("prompt_tokens", 0),
                     output_tokens=response_text.usage.get("completion_tokens", 0),
