@@ -517,7 +517,11 @@ class PromptManager:
                 )
 
                 # Track token usage and cost if available
-                if hasattr(response_text, "usage") and response_text.usage:
+                if (
+                    hasattr(response_text, "usage")
+                    and response_text.usage
+                    and not response_text.usage.get("cost_tracked")
+                ):
                     usage = response_text.usage
                     track_tokens_and_cost(
                         input_tokens=usage.get("prompt_tokens", 0),

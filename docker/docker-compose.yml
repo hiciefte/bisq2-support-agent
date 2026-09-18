@@ -168,9 +168,11 @@ services:
     environment:
       # Only Docker-specific overrides here
       - ENVIRONMENT=production # Environment-specific setting
-      # OpenAI API configuration (used by AISuite for LLM and embeddings)
+      # OpenAI API configuration (answer generation, translation and embeddings)
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL}
+      - OPENAI_REASONING_EFFORT=${OPENAI_REASONING_EFFORT:-low}
+      - TRANSLATION_MODEL=${TRANSLATION_MODEL:-openai:gpt-4.1-nano}
       - OPENAI_EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL}
       - MAX_TOKENS=${MAX_TOKENS}
       - GLOBAL_DAILY_LLM_TOKEN_BUDGET=${GLOBAL_DAILY_LLM_TOKEN_BUDGET:-10000000}
