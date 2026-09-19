@@ -41,7 +41,9 @@ _SENSITIVE_ASSIGNMENT_RE = re.compile(
     re.IGNORECASE,
 )
 _TOKEN_RE = re.compile(r"[a-z0-9_]{3,}", re.IGNORECASE)
-_VERSION_RE = re.compile(r"v?(\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?)")
+# Bound user-supplied version components and prerelease labels before matching.
+_VERSION_PATTERN = r"[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}(?:-[A-Za-z0-9.-]{1,32})?"
+_VERSION_RE = re.compile(rf"v?({_VERSION_PATTERN})")
 
 
 def release_version(tag: str) -> str:
@@ -56,7 +58,7 @@ def explicit_user_version(question: str) -> str | None:
     """Read explicit version wording from the user, never retrieved evidence."""
     matches = re.findall(
         r"\b(?:bisq(?:\s+(?:2|easy))?\s*(?:version\s*|v)?|(?:version|running|using)\s+|v)"
-        r"(\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?)\b",
+        rf"({_VERSION_PATTERN})(?![\w-]|\.[\w.-])\b",
         question,
         re.IGNORECASE,
     )

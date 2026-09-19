@@ -6,8 +6,39 @@ from app.services.rag.code_evidence import (
     CodeEvidenceLoader,
     CodeEvidenceRecord,
     StaffCodeEvidenceRetriever,
+    explicit_user_version,
+    release_version,
 )
 from app.services.rag.source_refs import parse_code_source_ref
+
+
+@pytest.mark.parametrize(
+    "tag",
+    [
+        "0" * 100_000,
+        "2.1." + "0" * 100_000,
+        "2.1.13-" + "a" * 100_000,
+        "2.1.13-rc." + "a" * 100_000,
+        "2.1.13-rc.1." + "a" * 100_000,
+    ],
+    ids=[
+        "missing_separators",
+        "long_patch",
+        "long_prerelease",
+        "dotted_prerelease",
+        "nested_prerelease",
+    ],
+)
+def test_release_version_rejects_unbounded_components(tag: str) -> None:
+    with pytest.raises(ValueError, match="exact semantic version"):
+        release_version(tag)
+    assert explicit_user_version("Bisq version " + tag) is None
+
+
+def test_release_version_preserves_supported_identity() -> None:
+    assert release_version("v2.1.13-rc.1") == "2.1.13-rc.1"
+    assert explicit_user_version("I am running 2.1.13-rc.1") == "2.1.13-rc.1"
+    assert explicit_user_version("I am running 2.1.13-rc.1.") == "2.1.13-rc.1"
 
 
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
