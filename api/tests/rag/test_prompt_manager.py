@@ -209,7 +209,10 @@ class TestPromptManagerResponseGuidelines:
         assert (
             "Ask at most one; give supported product-independent safeguards" in template
         )
-        assert "product and its material preconditions are established" in template
+        assert (
+            "product and the action's material preconditions are established"
+            in template
+        )
         assert (
             "do not ask unnecessary questions once the required facts are known"
             in template
@@ -322,8 +325,76 @@ class TestPromptManagerResponseGuidelines:
         ):
             assert obsolete_instruction not in system
         assert system.index(
-            "material preconditions before choosing a procedure"
+            "material preconditions before choosing recovery or product-specific steps"
         ) < system.index("BISQ 1 WORKFLOW GUARDRAILS:")
+
+    def test_unknown_product_referral_preserves_recovery_preconditions(
+        self, prompt_manager
+    ):
+        question = (
+            "I've already paid, the seller stopped replying. Please bring in support."
+        )
+        context = (
+            "For an unresolved paid trade, retain payment evidence and trade messages "
+            "and use the affected trade's mediation/support path."
+        )
+        system, user = prompt_manager.format_prompt_messages(
+            question=question, chat_history_str="", context=context
+        )
+
+        assert question in user
+        assert context in user
+        assert context not in system
+        assert "For an established paid, blocked or unresponsive trade" in system
+        assert "preserve payment evidence and trade messages" in system
+        assert (
+            "give the Context-supported affected-trade mediation/support path before product clarification"
+            in system
+        )
+        assert (
+            "They do not delay a supported high-level mediation/support referral"
+            in system
+        )
+        assert (
+            "concrete UI actions and arbitration-stage changes still require the relevant product and trade state"
+            in system
+        )
+        assert "Do not imply a case was opened or a mediator assigned" in system
+        assert (
+            "do not prescribe product-specific screens, shortcuts, wallet exports, payment release, cancellation or recovery steps"
+            in system
+        )
+        assert (
+            "must be clarified before giving that procedure, even conditionally"
+            in system
+        )
+        for blanket_product_gate in (
+            "Before prescribing a procedure, establish its product",
+            "Give a documented procedure directly only when the user's product",
+            "SPV resync, DAO rebuild, failed-trades recovery, mediation, or arbitration",
+        ):
+            assert blanket_product_gate not in system
+
+    def test_human_only_request_does_not_invent_trade_workflow(self, prompt_manager):
+        question = "Please let me speak with a human."
+        system, user = prompt_manager.format_prompt_messages(
+            question=question,
+            chat_history_str="",
+            context="Mediation is available for unresolved trades.",
+        )
+
+        assert question in user
+        assert (
+            "If they ask only for a human without describing a problem, hand off without adding product workflow steps"
+            in system
+        )
+        assert (
+            "Do not invent whether a transfer or case creation has happened" in system
+        )
+        assert (
+            "A retrieved scenario does not establish those facts about this user"
+            in system
+        )
 
     def test_preconditions_preserve_scoped_facts_and_resolved_procedures(
         self, prompt_manager
