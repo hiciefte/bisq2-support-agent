@@ -97,3 +97,34 @@ def test_unknown_fallback_preserves_relevance_order_without_product_bias():
         "multisig_v1",
         "bisq_easy",
     ]
+
+
+@pytest.mark.parametrize("with_scores", [False, True])
+def test_imported_product_reference_retrieves_both_products(with_scores):
+    question = (
+        "After updating Bisq 2, my reputation no longer shows my imported "
+        "Bisq 1 account age. What should I check?"
+    )
+    backend = Mock()
+    backend.retrieve.side_effect = scoped_documents
+    backend.retrieve_with_scores.side_effect = scoped_documents
+    backend.retrieve_semantic_with_scores.return_value = []
+    retriever = DocumentRetriever(backend)
+
+    if with_scores:
+        docs, _ = retriever.retrieve_with_scores(question, "Unknown")
+        calls = backend.retrieve_with_scores.call_args_list
+    else:
+        docs = retriever.retrieve_with_version_priority(question, "Unknown")
+        calls = backend.retrieve.call_args_list
+
+    assert [call.kwargs["filter_dict"]["protocol"] for call in calls] == [
+        "bisq_easy",
+        "multisig_v1",
+        "all",
+    ]
+    assert {doc.metadata["protocol"] for doc in docs} == {
+        "bisq_easy",
+        "multisig_v1",
+        "all",
+    }

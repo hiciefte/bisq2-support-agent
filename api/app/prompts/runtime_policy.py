@@ -33,7 +33,7 @@ _SENSITIVE_WALLET_DATA_RE = re.compile(
 _SUSPICIOUS_CONTACT_PATTERNS = (
     re.compile(
         r"\b(?:did|have)\s+you\s+(?:just\s+)?"
-        r"(?:dm(?:ed)?|(?:direct|private)[- ]messag(?:e|ed))\s+(?:me|us)\b",
+        r"(?:dm(?:ed|['’]d)?|(?:direct|private)[- ]messag(?:e|ed))\s+(?:me|us)\b",
         re.IGNORECASE,
     ),
     re.compile(

@@ -15,6 +15,8 @@ from app.prompts.runtime_policy import should_apply_safety_reflex
         "I received a direct message from support.",
         "Did you just DM me as the assigned mediator?",
         "Have you DMed me?",
+        "Have you DM'd me?",
+        "Have you DM’d me?",
         "A support agent sent me a DM after I posted my trade issue.",
         "Someone contacted me and offered support with my stuck trade.",
         "Someone offered to help me with my trade.",
