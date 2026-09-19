@@ -5,10 +5,12 @@ by AISuite's native MCP support with HTTP transport. It exposes Bisq 2
 data tools via the standard MCP JSON-RPC 2.0 protocol.
 """
 
+import json
 import logging
 import re
 from typing import Any
 
+from app.services.bisq_network_status_service import BisqNetworkStatusService
 from fastapi import APIRouter
 from pydantic import BaseModel
 
@@ -18,6 +20,7 @@ router = APIRouter(prefix="/mcp", tags=["mcp"])
 
 # Singleton service instance
 _bisq_service = None
+_network_status_service = BisqNetworkStatusService()
 
 
 def get_bisq_service():
@@ -87,6 +90,27 @@ def make_json_rpc_response(
 
 # Tool definitions following MCP protocol
 TOOL_DEFINITIONS = [
+    {
+        "name": "get_bisq_network_status",
+        "description": (
+            "Read recent public Bisq monitor observations for tor, price_nodes, or "
+            "seed_nodes when investigating a current connection or infrastructure "
+            "problem. Returns timestamps, freshness and limited coverage. Unknown "
+            "or missing data is not an outage. This does not establish whole-network "
+            "or Bisq 2 application health; bisq_v2 is only a metric namespace."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "area": {
+                    "type": "string",
+                    "enum": ["tor", "price_nodes", "seed_nodes"],
+                }
+            },
+            "required": ["area"],
+            "additionalProperties": False,
+        },
+    },
     {
         "name": "get_market_prices",
         "description": "Get current Bitcoin market prices from the Bisq 2 network. Returns real-time BTC prices in various fiat currencies.",
@@ -301,6 +325,11 @@ async def _execute_tool(name: str, args: dict) -> str:
     Returns:
         String result from the tool execution
     """
+    if name == "get_bisq_network_status":
+        if not isinstance(args, dict) or set(args) != {"area"}:
+            return json.dumps({"status": "unknown", "reason": "invalid_arguments"})
+        return json.dumps(await _network_status_service.get_status(args["area"]))
+
     service = get_bisq_service()
 
     if name == "get_market_prices":

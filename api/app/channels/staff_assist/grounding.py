@@ -5,7 +5,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from app.services.rag.code_evidence import CODE_EVIDENCE_TYPE, STAFF_ONLY_AUDIENCE
+from app.services.rag.code_evidence import (
+    CODE_EVIDENCE_TYPE,
+    STAFF_ONLY_AUDIENCE,
+    explicit_user_version,
+)
 from app.services.rag.interfaces import RetrievedDocument
 
 logger = logging.getLogger(__name__)
@@ -26,17 +30,21 @@ class GroundingBriefService:
         question: str,
         knowledge_sources: list[dict[str, Any]],
         draft_answer: str | None = None,
+        user_version: str | None = None,
     ) -> dict[str, Any] | None:
         query = str(question or "").strip()
         if not query:
             return None
 
         protocol = self._infer_protocol(knowledge_sources)
+        user_version = user_version or explicit_user_version(query)
+        version_kwargs = {"user_version": user_version} if user_version else {}
         try:
             docs = self.code_retriever.retrieve(
                 query,
                 protocol=protocol,
                 k=self.max_evidence,
+                **version_kwargs,
             )
         except Exception:
             logger.exception("Failed to retrieve staff-only code evidence")
@@ -46,6 +54,14 @@ class GroundingBriefService:
             self._format_code_fact(doc)
             for doc in docs
             if self._is_staff_code_fact(doc, expected_protocol=protocol)
+            and (
+                user_version is None
+                or (
+                    doc.metadata.get("freshness_class") == "release_bound"
+                    and user_version.removeprefix("v")
+                    in doc.metadata.get("applies_to_versions", [])
+                )
+            )
         ]
         if not evidence:
             return None
@@ -55,6 +71,14 @@ class GroundingBriefService:
             "Ask for the user's Bisq version and exact error text before making version-specific claims.",
         ]
         uncertainties = self._uncertainties(evidence)
+        if user_version is None:
+            uncertainties.append(
+                "The user's installed version is unconfirmed; release-bound evidence does not establish that version or diagnose this case."
+            )
+        else:
+            uncertainties.append(
+                f"Evidence is limited to release {user_version}; a version match does not establish this case's cause."
+            )
         do_not_say = [
             "Do not expose raw file paths, class names, line numbers, or stack traces to the user.",
             "Do not treat main-branch code evidence as release-specific user guidance unless the user's version is known.",
@@ -119,6 +143,8 @@ class GroundingBriefService:
             "risk_level": metadata.get("risk_level"),
             "public_guidance": metadata.get("public_guidance"),
             "applies_to_versions": metadata.get("applies_to_versions") or [],
+            "release_tag": metadata.get("release_tag"),
+            "source_sha256": metadata.get("source_sha256"),
             "score": round(float(doc.score or 0.0), 4),
         }
 
@@ -168,6 +194,9 @@ class GroundingBriefService:
             support_use = str(item.get("support_use") or "").strip()
             if not claim:
                 continue
+            versions = item.get("applies_to_versions") or []
+            if versions:
+                claim = f"[Source release: {', '.join(versions)}] {claim}"
             if support_use:
                 code_lines.append(f"- {claim} Staff use: {support_use}")
             else:

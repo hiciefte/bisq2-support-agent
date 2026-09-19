@@ -53,8 +53,8 @@ class TestMCPHttpServerContract:
         # Reset service after test
         mcp_http_server.set_bisq_service(None)
 
-    def test_tools_list_returns_all_five_tools(self, test_client):
-        """MCP server must expose exactly 5 tools."""
+    def test_tools_list_returns_all_six_tools(self, test_client):
+        """Expose the five Bisq data tools and the bounded public monitor tool."""
         response = test_client.post(
             "/mcp",
             json={"jsonrpc": "2.0", "method": "tools/list", "id": 1},
@@ -64,7 +64,7 @@ class TestMCPHttpServerContract:
         data = response.json()
         assert "result" in data
         assert "tools" in data["result"]
-        assert len(data["result"]["tools"]) == 5
+        assert len(data["result"]["tools"]) == 6
 
         tool_names = {t["name"] for t in data["result"]["tools"]}
         assert tool_names == {
@@ -73,6 +73,7 @@ class TestMCPHttpServerContract:
             "get_reputation",
             "get_markets",
             "get_transaction",
+            "get_bisq_network_status",
         }
 
     def test_tools_list_includes_input_schemas(self, test_client):
@@ -97,6 +98,55 @@ class TestMCPHttpServerContract:
         for tool in response.json()["result"]["tools"]:
             assert "description" in tool
             assert len(tool["description"]) > 10
+
+    def test_network_status_dispatch_uses_only_validated_area(
+        self, test_client, monkeypatch
+    ):
+        from app.services.mcp import mcp_http_server
+
+        service = MagicMock()
+        service.get_status = AsyncMock(
+            return_value={"status": "unknown", "area": "tor"}
+        )
+        monkeypatch.setattr(mcp_http_server, "_network_status_service", service)
+        response = test_client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "get_bisq_network_status",
+                    "arguments": {"area": "tor"},
+                },
+            },
+        )
+        assert '"area": "tor"' in response.json()["result"]["content"][0]["text"]
+        service.get_status.assert_awaited_once_with("tor")
+
+    @pytest.mark.parametrize(
+        "arguments",
+        [{}, {"area": "tor", "target": "*"}, {"url": "https://example.test"}, []],
+    )
+    def test_network_status_extra_arguments_cannot_reach_service(
+        self, test_client, monkeypatch, arguments
+    ):
+        from app.services.mcp import mcp_http_server
+
+        service = MagicMock()
+        service.get_status = AsyncMock()
+        monkeypatch.setattr(mcp_http_server, "_network_status_service", service)
+        response = test_client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "get_bisq_network_status", "arguments": arguments},
+            },
+        )
+        assert "invalid_arguments" in response.json()["result"]["content"][0]["text"]
+        service.get_status.assert_not_awaited()
 
     def test_tool_call_get_market_prices(self, test_client, mock_bisq_service):
         """get_market_prices tool must return price data."""

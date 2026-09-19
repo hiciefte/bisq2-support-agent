@@ -41,6 +41,46 @@ _SENSITIVE_ASSIGNMENT_RE = re.compile(
     re.IGNORECASE,
 )
 _TOKEN_RE = re.compile(r"[a-z0-9_]{3,}", re.IGNORECASE)
+# Bound user-supplied version components and prerelease labels before matching.
+_VERSION_PATTERN = r"[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}(?:-[A-Za-z0-9.-]{1,32})?"
+_VERSION_RE = re.compile(rf"v?({_VERSION_PATTERN})")
+
+
+def release_version(tag: str) -> str:
+    """Accept an exact release identity, never a branch or a version range."""
+    match = _VERSION_RE.fullmatch(tag)
+    if match is not None:
+        version = match.group(1)
+        core, _, prerelease = version.partition("-")
+        identifiers = core.split(".")
+        if prerelease:
+            identifiers.extend(prerelease.split("."))
+        if all(
+            identifier
+            and not (
+                identifier.isdigit()
+                and len(identifier) > 1
+                and identifier.startswith("0")
+            )
+            for identifier in identifiers
+        ):
+            return version
+    raise ValueError("Release tag must identify an exact semantic version")
+
+
+def explicit_user_version(question: str) -> str | None:
+    """Read explicit version wording from the user, never retrieved evidence."""
+    matches = re.findall(
+        r"\b(?:bisq(?:\s+(?:2|easy))?\s*(?:version\s*|v)?|(?:version|running|using)\s+|v)"
+        rf"({_VERSION_PATTERN})(?![\w+-]|\.[\w.-])\b",
+        question,
+        re.IGNORECASE,
+    )
+    try:
+        versions = {release_version(match) for match in matches}
+    except ValueError:
+        return None
+    return versions.pop() if len(versions) == 1 else None
 
 
 def _redact_sensitive_text(text: str) -> str:
@@ -127,6 +167,8 @@ class CodeEvidenceRecord:
     source_refs: list[str]
     public_guidance: str | None = None
     applies_to_versions: list[str] = field(default_factory=list)
+    release_tag: str | None = None
+    source_sha256: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "CodeEvidenceRecord":
@@ -149,6 +191,20 @@ class CodeEvidenceRecord:
             )
 
         risk_level = _require_string(data, "risk_level")
+        tag = _optional_string(data.get("release_tag"))
+        source_sha256 = _optional_string(data.get("source_sha256"))
+        versions = _optional_string_list(data.get("applies_to_versions"))
+        if source_sha256 and not re.fullmatch(r"[0-9a-f]{64}", source_sha256):
+            raise ValueError("source_sha256 must be a full SHA256 digest")
+        if freshness_class == "release_bound":
+            if not tag or versions != [release_version(tag)]:
+                raise ValueError(
+                    "Release-bound evidence requires matching tag and version"
+                )
+            if not source_sha256 or not re.fullmatch(
+                r"[0-9a-f]{40}", _require_string(data, "commit")
+            ):
+                raise ValueError("Release-bound evidence requires full source hashes")
         if risk_level not in ALLOWED_RISK_LEVELS:
             raise ValueError(f"Unsupported code evidence risk_level '{risk_level}'")
 
@@ -183,7 +239,9 @@ class CodeEvidenceRecord:
             public_guidance=(
                 _redact_sensitive_text(public_guidance) if public_guidance else None
             ),
-            applies_to_versions=_optional_string_list(data.get("applies_to_versions")),
+            applies_to_versions=versions,
+            release_tag=tag,
+            source_sha256=source_sha256,
         )
 
     def to_retrieved_document(self, *, score: float = 0.0) -> RetrievedDocument:
@@ -216,6 +274,8 @@ class CodeEvidenceRecord:
                 "source_refs": list(self.source_refs),
                 "public_guidance": self.public_guidance,
                 "applies_to_versions": list(self.applies_to_versions),
+                "release_tag": self.release_tag,
+                "source_sha256": self.source_sha256,
             },
             score=score,
         )
@@ -267,6 +327,7 @@ class StaffCodeEvidenceRetriever:
         protocol: str | None = None,
         k: int = 3,
         min_score: float = 0.3,
+        user_version: str | None = None,
     ) -> list[RetrievedDocument]:
         query_terms = set(_TOKEN_RE.findall(str(query or "").lower()))
         candidates = [
@@ -274,6 +335,13 @@ class StaffCodeEvidenceRetriever:
             for record in self.loader.load()
             if record.audience == STAFF_ONLY_AUDIENCE
             and (protocol is None or record.protocol in {protocol, "all"})
+            and (
+                user_version is None
+                or (
+                    record.freshness_class == "release_bound"
+                    and user_version.removeprefix("v") in record.applies_to_versions
+                )
+            )
         ]
 
         scored = [

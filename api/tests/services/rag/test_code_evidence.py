@@ -6,8 +6,89 @@ from app.services.rag.code_evidence import (
     CodeEvidenceLoader,
     CodeEvidenceRecord,
     StaffCodeEvidenceRetriever,
+    explicit_user_version,
+    release_version,
 )
 from app.services.rag.source_refs import parse_code_source_ref
+
+
+@pytest.mark.parametrize(
+    "tag",
+    [
+        "0" * 100_000,
+        "2.1." + "0" * 100_000,
+        "2.1.13-" + "a" * 100_000,
+        "2.1.13-rc." + "a" * 100_000,
+        "2.1.13-rc.1." + "a" * 100_000,
+    ],
+    ids=[
+        "missing_separators",
+        "long_patch",
+        "long_prerelease",
+        "dotted_prerelease",
+        "nested_prerelease",
+    ],
+)
+def test_release_version_rejects_unbounded_components(tag: str) -> None:
+    with pytest.raises(ValueError, match="exact semantic version"):
+        release_version(tag)
+    assert explicit_user_version("Bisq version " + tag) is None
+
+
+def test_release_version_preserves_supported_identity() -> None:
+    assert release_version("v2.1.13-rc.1") == "2.1.13-rc.1"
+    assert explicit_user_version("I am running 2.1.13-rc.1") == "2.1.13-rc.1"
+    assert explicit_user_version("I am running 2.1.13-rc.1.") == "2.1.13-rc.1"
+
+
+@pytest.mark.parametrize(
+    "tag",
+    [
+        "2.1.13-rc..1",
+        "2.1.13-.rc",
+        "2.1.13-.",
+        "2.1.13-rc.",
+        "2.1.13-rc..",
+        "2.1.13-01",
+        "2.1.13-rc.01",
+        "2.1.13-0.00",
+        "02.1.13",
+        "2.01.13",
+        "2.1.013",
+    ],
+)
+def test_release_version_rejects_malformed_identifiers(tag: str) -> None:
+    with pytest.raises(ValueError, match="exact semantic version"):
+        release_version("v" + tag)
+
+
+@pytest.mark.parametrize(
+    "tag",
+    [
+        "2.1.13-rc..1",
+        "2.1.13-.rc",
+        "2.1.13-.",
+        "2.1.13-rc..",
+        "2.1.13-01",
+        "2.1.13-rc.01",
+        "2.1.13-0.00",
+        "02.1.13",
+        "2.01.13",
+        "2.1.013",
+        "2.1.13+unsupported-metadata",
+    ],
+)
+def test_explicit_version_rejects_malformed_or_partial_identity(tag: str) -> None:
+    assert explicit_user_version("I am running " + tag) is None
+
+
+@pytest.mark.parametrize(
+    "version",
+    ["0.0.0", "2.1.13-0", "2.1.13-rc.0", "2.1.13-01a", "2.1.13-rc-1.20"],
+)
+def test_version_preserves_valid_zero_and_prerelease_identifiers(version: str) -> None:
+    assert release_version("v" + version) == version
+    assert explicit_user_version("I am running " + version) == version
 
 
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
@@ -202,3 +283,67 @@ def test_code_source_refs_reject_branch_or_tag_like_revisions() -> None:
         )
         is None
     )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("release_tag", None),
+        ("source_sha256", None),
+        ("commit", "abc123"),
+        ("applies_to_versions", ["2.1.12"]),
+    ],
+)
+def test_loader_rejects_unbound_release_claims(
+    tmp_path: Path, field: str, value
+) -> None:
+    row = _valid_record(
+        freshness_class="release_bound",
+        release_tag="v2.1.13",
+        source_sha256="b" * 64,
+        commit="a" * 40,
+        applies_to_versions=["2.1.13"],
+    )
+    row[field] = value
+    _write_jsonl(tmp_path / "facts.jsonl", [row])
+    with pytest.raises(ValueError, match="Release-bound"):
+        CodeEvidenceLoader(tmp_path / "facts.jsonl").load()
+
+
+def test_version_aware_grounding_uses_real_file_and_never_promotes(
+    tmp_path: Path,
+) -> None:
+    from app.channels.staff_assist.grounding import GroundingBriefService
+
+    row = _valid_record(
+        freshness_class="release_bound",
+        release_tag="v2.1.13",
+        source_sha256="b" * 64,
+        commit="a" * 40,
+        applies_to_versions=["2.1.13"],
+        claim="Sell offer creation requires reputation.",
+    )
+    source = tmp_path / "facts.jsonl"
+    _write_jsonl(source, [row])
+    original = source.read_bytes()
+    retriever = StaffCodeEvidenceRetriever(CodeEvidenceLoader(source))
+    service = GroundingBriefService(code_retriever=retriever)
+    assert retriever.retrieve("sell offer reputation", user_version="2.1.12") == []
+    assert (
+        service.build(
+            question="Bisq v2.1.12 sell offer reputation", knowledge_sources=[]
+        )
+        is None
+    )
+    matching = service.build(
+        question="Bisq version 2.1.13 sell offer reputation", knowledge_sources=[]
+    )
+    assert matching is not None
+    assert matching["evidence"][0]["applies_to_versions"] == ["2.1.13"]
+    unknown = service.build(question="sell offer reputation", knowledge_sources=[])
+    assert unknown is not None
+    assert any("unconfirmed" in warning for warning in unknown["uncertainties"])
+    assert "Source release: 2.1.13" in unknown["staff_enriched_answer"]
+    assert unknown["customer_safe_draft"] is None
+    assert unknown["evidence"][0]["audience"] == "staff_only"
+    assert source.read_bytes() == original

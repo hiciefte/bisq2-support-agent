@@ -26,14 +26,18 @@ def main(argv: list[str] | None = None) -> int:
         repo=args.repo,
         commit=commit,
         freshness_class=args.freshness_class,
+        release_tag=args.release_tag,
     )
     records = extractor.extract()
     report = CodeEvidenceFreshnessChecker(args.repo_path).check(records)
+    if report.stale:
+        raise ValueError("Source changed during extraction; evidence was not written")
     write_code_evidence_jsonl(records, args.output)
 
     summary = {
         "repo": args.repo,
         "commit": commit,
+        "release_tag": args.release_tag,
         "output": str(args.output),
         "records": len(records),
         "freshness": {
@@ -51,7 +55,13 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-path", type=Path, required=True)
     parser.add_argument("--repo", required=True, help="Repository slug, e.g. bisq2")
-    parser.add_argument("--commit", help="Source commit hash. Defaults to git HEAD.")
+    parser.add_argument(
+        "--commit", help="Full source commit hash. Must equal clean git HEAD."
+    )
+    parser.add_argument(
+        "--release-tag",
+        help="Local tag verified against the official release; must resolve to HEAD.",
+    )
     parser.add_argument(
         "--freshness-class",
         default="main_branch",

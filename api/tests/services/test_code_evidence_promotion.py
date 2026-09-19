@@ -12,10 +12,10 @@ from app.services.training.unified_repository import UnifiedFAQCandidateReposito
 
 def _record(**overrides) -> CodeEvidenceRecord:
     data = {
-        "id": "bisq2:abc123:HTTPException.404:42",
+        "id": "bisq2:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:HTTPException.404:42",
         "type": "code_fact",
         "repo": "bisq2",
-        "commit": "abc123",
+        "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "path": "api/src/main/java/bisq/api/OfferResource.java",
         "line_start": 42,
         "line_end": 44,
@@ -23,6 +23,8 @@ def _record(**overrides) -> CodeEvidenceRecord:
         "protocol": "bisq_easy",
         "audience": "public_review_candidate",
         "freshness_class": "release_bound",
+        "release_tag": "v2.1.0",
+        "source_sha256": "b" * 64,
         "risk_level": "medium",
         "claim": "OfferResource can return user-visible error detail: Offer not found.",
         "support_use": "Use when users report that an offer disappeared before they could take it.",
@@ -32,7 +34,7 @@ def _record(**overrides) -> CodeEvidenceRecord:
         ),
         "applies_to_versions": ["2.1.0"],
         "source_refs": [
-            "code:bisq2@abc123:api/src/main/java/bisq/api/OfferResource.java:42-44"
+            "code:bisq2@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:api/src/main/java/bisq/api/OfferResource.java:42-44"
         ],
     }
     data.update(overrides)
@@ -149,7 +151,7 @@ def test_code_evidence_promotion_rejects_mismatched_source_ref(
     )
     record = _record(
         source_refs=[
-            "code:bisq2@abc123:api/src/main/java/bisq/api/OtherResource.java:42-44"
+            "code:bisq2@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:api/src/main/java/bisq/api/OtherResource.java:42-44"
         ],
     )
 
@@ -172,8 +174,8 @@ def test_code_evidence_promotion_rejects_any_mismatched_source_ref(
     )
     record = _record(
         source_refs=[
-            "code:bisq2@abc123:api/src/main/java/bisq/api/OfferResource.java:42-44",
-            "code:bisq2@abc123:api/src/main/java/bisq/api/OtherResource.java:42-44",
+            "code:bisq2@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:api/src/main/java/bisq/api/OfferResource.java:42-44",
+            "code:bisq2@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:api/src/main/java/bisq/api/OtherResource.java:42-44",
         ],
     )
 

@@ -336,3 +336,57 @@ def test_five_turns_are_bounded_and_final_request_is_not_dispatched(wrapper, mcp
     assert len(result.tool_calls_made) == 4
     assert mcp.post.call_count == 5  # catalogue plus four executions
     assert wrapper.cost.call_count == 5
+
+
+def test_network_monitor_is_reachable_through_actual_catalogue_and_dispatch(
+    wrapper, monkeypatch
+):
+    import json
+    import time
+    from unittest.mock import AsyncMock
+
+    from app.services.bisq_network_status_service import BisqNetworkStatusService
+    from app.services.mcp import mcp_http_server
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    monitor = BisqNetworkStatusService()
+    monitor._fetch = AsyncMock(
+        return_value=[
+            {
+                "target": "bisq_v2.torNetwork.torStartupTime",
+                "datapoints": [[1234, int(time.time() - 20)]],
+            }
+        ]
+    )
+    monkeypatch.setattr(mcp_http_server, "_network_status_service", monitor)
+    app = FastAPI()
+    app.include_router(mcp_http_server.router)
+    test_client = TestClient(app)
+    bridge = MagicMock()
+    bridge.post.side_effect = lambda url, json: test_client.post("/mcp", json=json)
+    factory = MagicMock()
+    factory.return_value.__enter__.return_value = bridge
+    monkeypatch.setattr("app.services.rag.openai_responses.httpx.Client", factory)
+    wrapper.client.responses.create.side_effect = [
+        response(
+            [function(name="get_bisq_network_status", arguments='{"area":"tor"}')]
+        ),
+        response(),
+    ]
+
+    result = wrapper.invoke_with_tools("Is Tor down right now?")
+
+    assert result.success
+    monitor._fetch.assert_awaited_once()
+    assert result.tool_calls_made[0]["tool"] == "get_bisq_network_status"
+    observation = json.loads(result.tool_calls_made[0]["result"])
+    assert observation["status"] == "observations_available"
+    assert observation["observations"]["latest_observed_at"]
+    assert observation["incident_reference"] is None
+    first, second = wrapper.client.responses.create.call_args_list
+    schema = next(
+        t for t in first.kwargs["tools"] if t["name"] == "get_bisq_network_status"
+    )
+    assert schema["parameters"]["additionalProperties"] is False
+    assert json.loads(second.kwargs["input"][-1]["output"]) == observation
