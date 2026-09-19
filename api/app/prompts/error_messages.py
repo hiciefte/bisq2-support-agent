@@ -27,4 +27,10 @@ LIVE_DATA_UNAVAILABLE: str = (
     "This question has been queued for human review."
 )
 
+NETWORK_STATUS_UNCONFIRMED: str = (
+    "Public monitoring did not establish the current network status. "
+    "This is not proof of an outage. This question has been queued for human review. "
+    "See the [public Bisq monitor](https://monitor.bisq.network)."
+)
+
 TECHNICAL_ERROR: str = "Running into technical difficulties. Try again later."

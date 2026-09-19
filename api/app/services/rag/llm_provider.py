@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -271,8 +272,32 @@ def _detect_currency(query: str) -> str | None:
     return None
 
 
+def needs_network_status(query: str) -> bool:
+    """Identify present network-status requests, not general Tor instructions."""
+    normalized = query.casefold().replace("’", "'")
+    if re.search(
+        r"\b(yesterday|last week|last month|historical|history of)\b", normalized
+    ):
+        return False
+    scope = re.search(r"\b(tor|network|seed ?nodes?|price ?nodes?)\b", normalized)
+    state = re.search(
+        r"\b(status|outage|down|offline|unreachable|unavailable|reachable|working now|"
+        r"connection problems?|connectivity problems?|can't connect|cannot connect|"
+        r"unable to connect|won't connect|stuck|failing|not connecting)\b",
+        normalized,
+    )
+    # A product mention plus trade/account status is not network-status intent.
+    product_connectivity = re.search(
+        r"\bbisq(?: ?[12])?\s+(?:is\s+)?(?:down|offline|unreachable|unavailable|"
+        r"not connecting|(?:can't|cannot|unable to|won't) connect)\b|"
+        r"\b(?:can't|cannot|unable to|won't) connect (?:to |with )?bisq(?: ?[12])?\b",
+        normalized,
+    )
+    return bool((scope and state) or product_connectivity)
+
+
 def needs_live_data(query: str) -> bool:
-    """Detect if query might benefit from live Bisq 2 data.
+    """Detect if query might benefit from live Bisq data or public monitoring.
 
     Args:
         query: User query text
@@ -281,7 +306,9 @@ def needs_live_data(query: str) -> bool:
         True if query likely needs live data
     """
     query_lower = query.lower()
-    return any(keyword in query_lower for keyword in LIVE_DATA_KEYWORDS)
+    return needs_network_status(query) or any(
+        keyword in query_lower for keyword in LIVE_DATA_KEYWORDS
+    )
 
 
 def _needs_live_data(query: str) -> bool:

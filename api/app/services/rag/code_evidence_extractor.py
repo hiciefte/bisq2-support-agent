@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -12,6 +14,7 @@ from app.services.rag.code_evidence import (
     CODE_EVIDENCE_TYPE,
     STAFF_ONLY_AUDIENCE,
     CodeEvidenceRecord,
+    release_version,
 )
 
 _EXCLUDED_DIRS = {
@@ -80,6 +83,51 @@ class CodeEvidenceFreshnessReport:
     failures: list[dict[str, object]]
 
 
+def _git(repo_path: Path, *args: str) -> str:
+    try:
+        return subprocess.run(
+            ["git", "-C", str(repo_path), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.rstrip("\n")
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise ValueError(
+            "Source must be an available Git checkout at the selected commit"
+        ) from exc
+
+
+def _validate_source(repo_path: Path, commit: str, release_tag: str | None) -> None:
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise ValueError("Source commit must be a full SHA")
+    if _git(repo_path, "rev-parse", "HEAD") != commit:
+        raise ValueError("Source HEAD does not match the selected commit")
+    status = _git(repo_path, "status", "--porcelain", "-z", "--untracked-files=all")
+    for entry in status.split("\0"):
+        if not entry:
+            continue
+        # A checkout can report an EOL-normalization diff although its bytes are
+        # identical to HEAD. Accept only that exact-content case, not real edits.
+        if entry[:3] != " M ":
+            raise ValueError("Source checkout is dirty")
+        path = repo_path / entry[3:]
+        content = path.read_bytes()
+        blob = hashlib.sha1(
+            b"blob " + str(len(content)).encode() + b"\0" + content
+        ).hexdigest()
+        if path.is_symlink() or blob != _git(
+            repo_path, "rev-parse", f"{commit}:{entry[3:]}"
+        ):
+            raise ValueError("Source checkout is dirty")
+    if release_tag:
+        release_version(release_tag)
+        if (
+            _git(repo_path, "rev-parse", f"refs/tags/{release_tag}^{{commit}}")
+            != commit
+        ):
+            raise ValueError("Release tag does not match the selected commit")
+
+
 class CodeEvidenceExtractor:
     """Extract conservative staff-only support facts from source files."""
 
@@ -91,14 +139,19 @@ class CodeEvidenceExtractor:
         commit: str,
         audience: str = STAFF_ONLY_AUDIENCE,
         freshness_class: str = "main_branch",
+        release_tag: str | None = None,
     ) -> None:
         self.repo_path = Path(repo_path)
         self.repo = repo.strip()
         self.commit = commit.strip()
         self.audience = audience
         self.freshness_class = freshness_class
+        self.release_tag = release_tag
 
     def extract(self) -> list[CodeEvidenceRecord]:
+        _validate_source(self.repo_path, self.commit, self.release_tag)
+        if self.freshness_class == "release_bound" and not self.release_tag:
+            raise ValueError("Release-bound extraction requires a release tag")
         records: list[CodeEvidenceRecord] = []
         for path in sorted(self._iter_candidate_files()):
             relative_path = path.relative_to(self.repo_path).as_posix()
@@ -114,6 +167,7 @@ class CodeEvidenceExtractor:
             elif suffix == ".md" and self._is_spec_markdown(relative_path):
                 records.extend(self._extract_markdown_spec(relative_path, lines))
 
+        _validate_source(self.repo_path, self.commit, self.release_tag)
         unique: dict[str, CodeEvidenceRecord] = {}
         for record in records:
             unique.setdefault(record.id, record)
@@ -123,14 +177,36 @@ class CodeEvidenceExtractor:
         )
 
     def _iter_candidate_files(self) -> Iterable[Path]:
-        for path in self.repo_path.rglob("*"):
-            if not path.is_file():
+        # Read only committed regular files; ignored/untracked files cannot become evidence.
+        entries = _git(
+            self.repo_path, "ls-tree", "-rz", "--full-tree", self.commit
+        ).split("\0")
+        for entry in entries:
+            if not entry:
                 continue
-            relative_parts = path.relative_to(self.repo_path).parts
-            if any(part in _EXCLUDED_DIRS for part in relative_parts[:-1]):
+            header, name = entry.split("\t", 1)
+            mode, kind, blob = header.split()
+            relative = Path(name)
+            if kind != "blob" or mode not in {"100644", "100755"}:
                 continue
-            if path.suffix.lower() in {".java", ".py", ".conf", ".properties", ".md"}:
-                yield path
+            if any(part in _EXCLUDED_DIRS for part in relative.parts[:-1]):
+                continue
+            if relative.suffix.lower() not in {
+                ".java",
+                ".py",
+                ".conf",
+                ".properties",
+                ".md",
+            }:
+                continue
+            path = self.repo_path / relative
+            content = path.read_bytes()
+            expected = hashlib.sha1(
+                b"blob " + str(len(content)).encode() + b"\0" + content
+            ).hexdigest()
+            if path.is_symlink() or expected != blob:
+                raise ValueError("Source content does not match the selected commit")
+            yield path
 
     def _extract_java(
         self, relative_path: str, lines: list[str]
@@ -416,7 +492,18 @@ class CodeEvidenceExtractor:
             "symbol": symbol,
             "protocol": _infer_protocol(path),
             "audience": self.audience,
-            "freshness_class": freshness_class or self.freshness_class,
+            "freshness_class": (
+                "release_bound"
+                if self.release_tag
+                else freshness_class or self.freshness_class
+            ),
+            "release_tag": self.release_tag,
+            "applies_to_versions": (
+                [release_version(self.release_tag)] if self.release_tag else []
+            ),
+            "source_sha256": hashlib.sha256(
+                (self.repo_path / path).read_bytes()
+            ).hexdigest(),
             "risk_level": risk_level,
             "claim": claim,
             "support_use": support_use,
@@ -457,10 +544,22 @@ class CodeEvidenceFreshnessChecker:
         failures: list[dict[str, object]] = []
         total = 0
         valid = 0
+        source_errors: dict[tuple[str, str | None], str | None] = {}
 
         for record in records:
             total += 1
-            failure = self._failure_for(record)
+            key = (record.commit, record.release_tag)
+            if key not in source_errors:
+                try:
+                    _validate_source(self.repo_path, *key)
+                    source_errors[key] = None
+                except ValueError as exc:
+                    source_errors[key] = str(exc)
+            failure: dict[str, object] | None = (
+                {"id": record.id, "path": record.path, "reason": source_errors[key]}
+                if source_errors[key]
+                else self._failure_for(record)
+            )
             if failure is None:
                 valid += 1
             else:
@@ -475,6 +574,12 @@ class CodeEvidenceFreshnessChecker:
 
     def _failure_for(self, record: CodeEvidenceRecord) -> dict[str, object] | None:
         source_path = self.repo_path / record.path
+        if not source_path.resolve().is_relative_to(self.repo_path.resolve()):
+            return {
+                "id": record.id,
+                "path": record.path,
+                "reason": "source_path_outside_repository",
+            }
         if not source_path.exists():
             return {
                 "id": record.id,
@@ -497,6 +602,50 @@ class CodeEvidenceFreshnessChecker:
                 "line_end": record.line_end,
                 "line_count": line_count,
                 "reason": "line_range_out_of_bounds",
+            }
+
+        if (
+            not record.source_sha256
+            or source_path.is_symlink()
+            or (
+                hashlib.sha256(source_path.read_bytes()).hexdigest()
+                != record.source_sha256
+            )
+        ):
+            return {
+                "id": record.id,
+                "path": record.path,
+                "reason": "source_content_mismatch",
+            }
+        if record.freshness_class == "release_bound" and (
+            not record.release_tag
+            or record.applies_to_versions != [release_version(record.release_tag)]
+        ):
+            return {
+                "id": record.id,
+                "path": record.path,
+                "reason": "release_identity_mismatch",
+            }
+
+        try:
+            committed_blob = _git(
+                self.repo_path, "rev-parse", f"{record.commit}:{record.path}"
+            )
+        except ValueError:
+            return {
+                "id": record.id,
+                "path": record.path,
+                "reason": "source_not_in_commit",
+            }
+        content = source_path.read_bytes()
+        actual_blob = hashlib.sha1(
+            b"blob " + str(len(content)).encode() + b"\0" + content
+        ).hexdigest()
+        if actual_blob != committed_blob:
+            return {
+                "id": record.id,
+                "path": record.path,
+                "reason": "source_not_at_commit",
             }
 
         expected_ref = (

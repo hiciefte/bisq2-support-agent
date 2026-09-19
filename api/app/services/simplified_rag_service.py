@@ -27,6 +27,7 @@ from app.core.pii_utils import redact_for_logs
 from app.prompts import error_messages
 from app.prompts.runtime_policy import SAFETY_REFLEX_WARNING, should_apply_safety_reflex
 from app.services.bisq_mcp_service import Bisq2MCPService
+from app.services.bisq_network_status_service import has_fresh_network_observations
 from app.services.faq.slug_manager import SlugManager
 from app.services.rag.auto_send_router import AutoSendRouter
 from app.services.rag.canonical_fixes import (
@@ -42,7 +43,11 @@ from app.services.rag.document_retriever import (
 from app.services.rag.faq_index_sync import FAQIndexSyncManager
 from app.services.rag.index_state_manager import IndexStateManager
 from app.services.rag.language_pipeline import QueryLanguageHandler
-from app.services.rag.llm_provider import LLMProvider, needs_live_data
+from app.services.rag.llm_provider import (
+    LLMProvider,
+    needs_live_data,
+    needs_network_status,
+)
 from app.services.rag.llm_wiki_loader import LLMWikiLoader
 from app.services.rag.mcp_reconciliation import (
     extract_last_tool_result,
@@ -1565,8 +1570,12 @@ class SimplifiedRAGService:
                 )
             )
 
-            # If no documents were retrieved, check if we can answer from conversation context
-            if not docs:
+            network_status_required = (
+                needs_network_status(preprocessed_question) and not needs_safety_reflex
+            )
+            # Public status evidence need not have a matching Wiki page. All other
+            # no-document behavior, including the safety reflex, stays unchanged.
+            if not docs and not (network_status_required and self.mcp_enabled):
                 logger.info("No relevant documents found for the query")
 
                 if needs_safety_reflex:
@@ -1659,7 +1668,14 @@ class SimplifiedRAGService:
             mcp_tools_used: list[dict[str, str]] | None = None
             mcp_invocation_succeeded = False
             live_data_required = needs_live_data(preprocessed_question)
-            live_data_failed = False
+            live_data_unavailable_message = (
+                error_messages.NETWORK_STATUS_UNCONFIRMED
+                if network_status_required
+                else error_messages.LIVE_DATA_UNAVAILABLE
+            )
+            live_data_failed = network_status_required and not self.mcp_enabled
+            if live_data_failed:
+                response_text = live_data_unavailable_message
             use_mcp_invocation = self.mcp_enabled and (
                 token_callback is None or live_data_required
             )
@@ -1704,14 +1720,22 @@ class SimplifiedRAGService:
                         )
                         raise RuntimeError("MCP tool invocation failed")
 
-                    if live_data_required and live_data_tool_calls_failed(
-                        tool_result.tool_calls_made
+                    missing_network_evidence = network_status_required and not (
+                        has_fresh_network_observations(
+                            extract_last_tool_result(
+                                tool_result.tool_calls_made, "get_bisq_network_status"
+                            )
+                        )
+                    )
+                    if missing_network_evidence or (
+                        live_data_required
+                        and live_data_tool_calls_failed(tool_result.tool_calls_made)
                     ):
                         logger.error(
                             "MCP live-data tool returned an unavailable result; "
                             "routing to human review"
                         )
-                        response_text = error_messages.LIVE_DATA_UNAVAILABLE
+                        response_text = live_data_unavailable_message
                         live_data_failed = True
                     else:
                         response_text = tool_result.content
@@ -1721,7 +1745,7 @@ class SimplifiedRAGService:
                         )
                         mcp_invocation_succeeded = True
 
-                    if mcp_invocation_succeeded:
+                    if mcp_invocation_succeeded or network_status_required:
                         # Return detailed tool usage info if the LLM called tools.
                         if tool_result.tool_calls_made:
                             from datetime import datetime, timezone
@@ -1749,7 +1773,7 @@ class SimplifiedRAGService:
                             "MCP live-data invocation failed; routing to human review",
                             exc_info=True,
                         )
-                        response_text = error_messages.LIVE_DATA_UNAVAILABLE
+                        response_text = live_data_unavailable_message
                         live_data_failed = True
                     else:
                         logger.warning(
@@ -1947,7 +1971,9 @@ class SimplifiedRAGService:
                 )
             if live_data_failed:
                 routing_reason = (
-                    "Live data is temporarily unavailable; human review required."
+                    "Public monitoring did not establish current status; human review required."
+                    if network_status_required
+                    else "Live data is temporarily unavailable; human review required."
                 )
 
             # Translate response back to user's language if needed
@@ -1990,7 +2016,9 @@ class SimplifiedRAGService:
                 "answer": final_response,
                 "sources": sources,
                 "response_time": response_time,
-                "answered_from": "documents",  # Metadata flag
+                "answered_from": (
+                    "live_tools" if not docs and mcp_tools_used else "documents"
+                ),
                 "forwarded_to_human": routing_action.queue_for_review,
                 "feedback_created": False,
                 "confidence": confidence,

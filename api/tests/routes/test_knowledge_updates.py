@@ -1392,7 +1392,7 @@ async def test_promote_code_evidence_endpoint_creates_reviewable_proposal(
         settings=Settings(DATA_DIR=str(tmp_path)),
         db_path=repository.db_path,
     )
-    source_ref = "code:bisq2@abc123:api/src/main/java/bisq/api/OfferResource.java:42-44"
+    source_ref = "code:bisq2@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:api/src/main/java/bisq/api/OfferResource.java:42-44"
 
     response = await promote_code_evidence_to_knowledge_update(
         request_body=PromoteCodeEvidenceRequest(
@@ -1403,10 +1403,10 @@ async def test_promote_code_evidence_endpoint_creates_reviewable_proposal(
                 "offer list and retry."
             ),
             evidence={
-                "id": "bisq2:abc123:HTTPException.404:42",
+                "id": "bisq2:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:HTTPException.404:42",
                 "kind": "code_fact",
                 "repo": "bisq2",
-                "commit": "abc123",
+                "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "path": "api/src/main/java/bisq/api/OfferResource.java",
                 "line_start": 42,
                 "line_end": 44,
@@ -1414,6 +1414,9 @@ async def test_promote_code_evidence_endpoint_creates_reviewable_proposal(
                 "protocol": "bisq_easy",
                 "audience": "staff_only",
                 "freshness_class": "release_bound",
+                "release_tag": "v2.1.13",
+                "source_sha256": "b" * 64,
+                "applies_to_versions": ["2.1.13"],
                 "risk_level": "medium",
                 "claim": "OfferResource can return user-visible error detail: Offer not found.",
                 "support_use": "Use when users report that an offer disappeared.",
@@ -1440,7 +1443,7 @@ async def test_promote_code_evidence_endpoint_accepts_symbol_less_evidence(
         settings=Settings(DATA_DIR=str(tmp_path)),
         db_path=repository.db_path,
     )
-    source_ref = "code:bisq2@abc123:api/src/main/java/bisq/api/OfferResource.java:42-44"
+    source_ref = "code:bisq2@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:api/src/main/java/bisq/api/OfferResource.java:42-44"
 
     response = await promote_code_evidence_to_knowledge_update(
         request_body=PromoteCodeEvidenceRequest(
@@ -1450,16 +1453,19 @@ async def test_promote_code_evidence_endpoint_accepts_symbol_less_evidence(
                 "list and retry."
             ),
             evidence={
-                "id": "bisq2:abc123:HTTPException.404:42",
+                "id": "bisq2:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:HTTPException.404:42",
                 "kind": "code_fact",
                 "repo": "bisq2",
-                "commit": "abc123",
+                "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "path": "api/src/main/java/bisq/api/OfferResource.java",
                 "line_start": 42,
                 "line_end": 44,
                 "protocol": "bisq_easy",
                 "audience": "staff_only",
                 "freshness_class": "release_bound",
+                "release_tag": "v2.1.13",
+                "source_sha256": "b" * 64,
+                "applies_to_versions": ["2.1.13"],
                 "risk_level": "medium",
                 "claim": "OfferResource can return user-visible error detail: Offer not found.",
                 "support_use": "Use when users report that an offer disappeared.",
