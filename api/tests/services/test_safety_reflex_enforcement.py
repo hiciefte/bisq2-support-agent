@@ -128,8 +128,8 @@ async def test_non_scam_answer_removes_model_echoed_static_warning(safety_servic
 @pytest.mark.asyncio
 async def test_non_scam_answer_removes_wrapped_static_warning(safety_service):
     wrapped_warning = SAFETY_REFLEX_WARNING.replace(
-        " verify staff",
-        "\nverify staff",
+        "; verify",
+        ";\nverify",
     )
     safety_service.rag_chain = MagicMock(
         return_value=(
@@ -149,8 +149,8 @@ async def test_non_scam_answer_removes_wrapped_static_warning(safety_service):
 @pytest.mark.asyncio
 async def test_scam_answer_normalizes_wrapped_static_warning(safety_service):
     wrapped_warning = SAFETY_REFLEX_WARNING.replace(
-        " verify staff",
-        "\nverify staff",
+        "; verify",
+        ";\nverify",
     )
     safety_service.rag_chain = MagicMock(
         return_value=f"{wrapped_warning}\n\nDo not share wallet secrets."

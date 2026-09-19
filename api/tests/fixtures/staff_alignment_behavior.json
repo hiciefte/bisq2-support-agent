@@ -2,8 +2,8 @@
   {
     "case_id": "scam-private-message",
     "question": "Someone privately offered support and asked for my seed words. Is that legitimate?",
-    "ground_truth": "Support staff never initiate direct messages; verify staff only through links in the room topic, and never share seed words or private keys or enter them into a site or app someone directs you to.",
-    "answer": "Support staff never initiate direct messages; verify staff only through links in the room topic, and never share seed words or private keys or enter them into a site or app someone directs you to.",
+    "ground_truth": "Treat private support messages as unverified; verify the contact through official Bisq support before following instructions, and never share seed words or private keys or enter them into unverified sites or apps.",
+    "answer": "Treat private support messages as unverified; verify the contact through official Bisq support before following instructions, and never share seed words or private keys or enter them into unverified sites or apps.",
     "metadata": {
       "behavior_labels": {
         "reviewed": true,

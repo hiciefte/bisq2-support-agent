@@ -2,7 +2,7 @@
 Document Retriever for protocol-aware RAG retrieval.
 
 This module handles intelligent document retrieval with:
-- Multi-stage protocol-priority retrieval (bisq_easy > all > multisig_v1)
+- Version-aware retrieval with balanced evidence when the product is unknown
 - Document formatting with protocol context
 - Source deduplication
 
@@ -15,6 +15,7 @@ Protocol values:
 
 import logging
 import re
+from itertools import zip_longest
 from typing import Any, Dict, List, Set, Tuple
 
 from app.services.rag.bisq_entities import BISQ1_STRONG_KEYWORDS, BISQ2_STRONG_KEYWORDS
@@ -85,8 +86,7 @@ def _classify_query_protocol(
         (is_multisig_query, mentions_bisq_easy, is_comparison_query)
 
     ``detected_version`` may come from heuristic conversation state. Unknown
-    values intentionally fall through to the product default instead of raising
-    into the user-facing retrieval path.
+    values preserve uncertainty instead of selecting a product by default.
     """
     query_lower = query.lower()
     query_mentions_bisq1 = bool(_BISQ1_VERSION_RE.search(query_lower))
@@ -115,15 +115,15 @@ def _classify_query_protocol(
         if normalized_version in ("Bisq 2", "bisq_easy"):
             return False, True, False
 
-    # Default product bias remains Bisq Easy for truly ambiguous questions.
-    return False, True, False
+    # Unknown product needs evidence from both products and general guidance.
+    return False, False, False
 
 
 class DocumentRetriever:
     """Retriever for protocol-aware document retrieval in RAG system.
 
     This class handles:
-    - Multi-stage retrieval prioritizing Bisq Easy content
+    - Multi-stage retrieval matching the established product or preserving uncertainty
     - Protocol-aware document formatting
     - Source deduplication to prevent repetitive results
 
@@ -219,7 +219,9 @@ class DocumentRetriever:
         normalized = str(detected_version or "").strip()
         if normalized in ("Bisq 1", "multisig_v1"):
             return {"multisig_v1": 2, "all": 1, "bisq_easy": 0}
-        return {"bisq_easy": 2, "all": 1, "multisig_v1": 0}
+        if normalized in ("Bisq 2", "bisq_easy"):
+            return {"bisq_easy": 2, "all": 1, "multisig_v1": 0}
+        return {"bisq_easy": 1, "all": 1, "multisig_v1": 1}
 
     @staticmethod
     def _tag_retrieval_ranks(docs: List[Document]) -> List[Document]:
@@ -228,6 +230,28 @@ class DocumentRetriever:
             metadata.setdefault("_retrieval_rank", rank)
             doc.metadata = metadata
         return docs
+
+    def _retrieve_across_protocols(
+        self, query: str, *, with_scores: bool
+    ) -> List[RetrievedDocument]:
+        """Interleave unknown-product evidence without inferring the user's app.
+
+        Search every scope even when one has many matches. Alternating the
+        result lists puts each scope near the beginning of the prompt instead
+        of spending its entire context budget on the first product.
+        """
+        retrieve = (
+            self.retriever.retrieve_with_scores
+            if with_scores
+            else self.retriever.retrieve
+        )
+        stages = [
+            retrieve(query, k=4, filter_dict={"protocol": protocol})
+            for protocol in ("all", "multisig_v1", "bisq_easy")
+        ]
+        return [
+            doc for group in zip_longest(*stages) for doc in group if doc is not None
+        ]
 
     def retrieve_with_version_priority(
         self, query: str, detected_version: str | None = None
@@ -265,12 +289,18 @@ class DocumentRetriever:
             logger.info("Using explicitly detected version: %s", detected_version)
         else:
             logger.info("No explicit version provided, detecting from query text...")
-        is_multisig_query, _mentions_bisq_easy, is_comparison_query = (
+        is_multisig_query, mentions_bisq_easy, is_comparison_query = (
             _classify_query_protocol(query, detected_version)
         )
 
         try:
-            if is_multisig_query and not is_comparison_query:
+            if not (is_multisig_query or mentions_bisq_easy):
+                all_docs.extend(
+                    self._to_langchain_documents(
+                        self._retrieve_across_protocols(query, with_scores=False)
+                    )
+                )
+            elif is_multisig_query and not is_comparison_query:
                 # User explicitly asked about Bisq 1 / multisig
                 logger.info(
                     "Detected explicit Bisq 1 query - prioritizing multisig_v1 content"
@@ -380,9 +410,10 @@ class DocumentRetriever:
             if is_multisig_query and not is_comparison_query:
                 # For Bisq 1 / multisig queries, prioritize multisig_v1 content
                 protocol_priority = {"multisig_v1": 2, "all": 1, "bisq_easy": 0}
-            else:
-                # Default: prioritize bisq_easy content
+            elif mentions_bisq_easy:
                 protocol_priority = {"bisq_easy": 2, "all": 1, "multisig_v1": 0}
+            else:
+                protocol_priority = {"bisq_easy": 1, "all": 1, "multisig_v1": 1}
 
             # Sort by protocol priority while preserving retrieval order within each protocol
             sorted_docs = sorted(
@@ -525,7 +556,7 @@ class DocumentRetriever:
         return unique_sources
 
     def retrieve_with_scores(
-        self, query: str, detected_version: str = "Bisq 2"
+        self, query: str, detected_version: str | None = None
     ) -> Tuple[List[Document], List[float]]:
         """Retrieve documents with similarity scores for confidence calculation.
 
@@ -603,10 +634,7 @@ class DocumentRetriever:
                 return self._clamp_unit_interval(absolute_score)
             return self._clamp_unit_interval(fallback_score)
 
-        def _append_stage(k: int, filter_dict: dict[str, Any] | None) -> None:
-            results = self.retriever.retrieve_with_scores(
-                query, k=k, filter_dict=filter_dict
-            )
+        def _append_results(results: List[RetrievedDocument]) -> None:
             for r in results:
                 retrieval_score = self._clamp_unit_interval(float(r.score))
                 all_docs_with_scores.append(
@@ -621,15 +649,24 @@ class DocumentRetriever:
                     )
                 )
 
+        def _append_stage(k: int, filter_dict: dict[str, Any] | None) -> None:
+            _append_results(
+                self.retriever.retrieve_with_scores(query, k=k, filter_dict=filter_dict)
+            )
+
         # Detect version from query and incorporate detected_version unless the query itself
         # signals a comparison. Bisq 1 is actively used and heavily represented in the wiki,
         # so we must not over-bias to Bisq Easy for comparison/ambiguous queries.
-        is_multisig_query, _mentions_bisq_easy, is_comparison_query = (
+        is_multisig_query, mentions_bisq_easy, is_comparison_query = (
             _classify_query_protocol(query, detected_version)
         )
 
         try:
-            if is_comparison_query:
+            if not (is_multisig_query or mentions_bisq_easy):
+                _append_results(
+                    self._retrieve_across_protocols(query, with_scores=True)
+                )
+            elif is_comparison_query:
                 logger.info(
                     "Retrieving with scores for comparison query (bisq_easy + multisig_v1 + all)"
                 )

@@ -264,6 +264,7 @@ class TestMultilingualClarification:
         rag_service.version_detector.detect_version = AsyncMock(
             return_value=("unknown", 0.2, "Do you mean Bisq 1 or Bisq 2?")
         )
+        rag_service.document_retriever.retrieve_with_scores.return_value = ([], [])
 
         rag_service.translation_service = MagicMock()
         rag_service.translation_service.translate_query = AsyncMock(
@@ -296,6 +297,7 @@ class TestMultilingualClarification:
         rag_service.version_detector.detect_version = AsyncMock(
             return_value=("unknown", 0.2, "Do you mean Bisq 1 or Bisq 2?")
         )
+        rag_service.document_retriever.retrieve_with_scores.return_value = ([], [])
 
         detector = MagicMock()
         detector.detect_with_metadata = AsyncMock(
@@ -341,6 +343,7 @@ class TestMultilingualClarification:
         rag_service.version_detector.detect_version = AsyncMock(
             return_value=("unknown", 0.2, "Do you mean Bisq 1 or Bisq 2?")
         )
+        rag_service.document_retriever.retrieve_with_scores.return_value = ([], [])
 
         detector = MagicMock()
         detector.detect_with_metadata = AsyncMock(
@@ -393,6 +396,7 @@ class TestMultilingualClarification:
         rag_service.version_detector.detect_version = AsyncMock(
             return_value=("unknown", 0.2, "Do you mean Bisq 1 or Bisq 2?")
         )
+        rag_service.document_retriever.retrieve_with_scores.return_value = ([], [])
 
         def _detect_side_effect(text: str):
             if str(text).strip().lower() == "bisq easy":
@@ -447,6 +451,7 @@ class TestMultilingualClarification:
         rag_service.version_detector.detect_version = AsyncMock(
             return_value=("unknown", 0.2, "Do you mean Bisq 1 or Bisq 2?")
         )
+        rag_service.document_retriever.retrieve_with_scores.return_value = ([], [])
 
         detector = MagicMock()
         detector.detect_with_metadata = AsyncMock(
@@ -495,6 +500,7 @@ class TestMultilingualClarification:
         rag_service.version_detector.detect_version = AsyncMock(
             return_value=("unknown", 0.2, "Do you mean Bisq 1 or Bisq 2?")
         )
+        rag_service.document_retriever.retrieve_with_scores.return_value = ([], [])
 
         rag_service.translation_service = MagicMock()
         rag_service.translation_service.translate_query = AsyncMock(
