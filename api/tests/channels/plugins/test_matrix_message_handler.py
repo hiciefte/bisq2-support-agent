@@ -189,6 +189,7 @@ async def test_on_message_records_trust_event_even_when_generation_disabled() ->
     channel = MagicMock()
     channel.handle_incoming = AsyncMock()
     trust_monitor_service = MagicMock()
+    channel.runtime.settings = SimpleNamespace(MATRIX_RESPONDER_ROOMS=None)
 
     handler = MatrixMessageHandler(
         client=client,
@@ -225,6 +226,7 @@ async def test_on_message_handles_staff_chatops_even_when_generation_disabled() 
     arbitration_service = MagicMock()
     arbitration_service.record_staff_activity = AsyncMock()
     runtime = MagicMock()
+    runtime.settings = SimpleNamespace(MATRIX_RESPONDER_ROOMS=None)
 
     def resolve_optional(name: str):
         if name == "staff_resolver":
@@ -296,6 +298,7 @@ async def test_on_message_dispatches_to_channel() -> None:
 
     outgoing = _outgoing_response(routing_action="auto_send")
     runtime = MagicMock()
+    runtime.settings = SimpleNamespace(MATRIX_RESPONDER_ROOMS=None)
 
     def resolve_optional(name: str):
         if name == "feedback_followup_coordinator":
@@ -375,6 +378,7 @@ async def test_on_message_decrypts_encrypted_event_before_dispatch(monkeypatch) 
 
     outgoing = _outgoing_response(routing_action="auto_send")
     runtime = MagicMock()
+    runtime.settings = SimpleNamespace(MATRIX_RESPONDER_ROOMS=None)
 
     def resolve_optional(name: str):
         if name == "feedback_followup_coordinator":
@@ -439,6 +443,7 @@ async def test_on_message_skips_on_encrypted_decrypt_error(monkeypatch) -> None:
     connection_manager.sync_forever = AsyncMock()
 
     runtime = MagicMock()
+    runtime.settings = SimpleNamespace(MATRIX_RESPONDER_ROOMS=None)
     runtime.resolve_optional = MagicMock(return_value=None)
 
     channel = MagicMock()
@@ -474,6 +479,7 @@ async def test_on_message_treats_staff_resolver_failures_as_non_staff() -> None:
 
     outgoing = _outgoing_response(routing_action="auto_send")
     runtime = MagicMock()
+    runtime.settings = SimpleNamespace(MATRIX_RESPONDER_ROOMS=None)
 
     def resolve_optional(name: str):
         if name == "feedback_followup_coordinator":
@@ -523,6 +529,7 @@ async def test_on_message_queues_when_autosend_disabled() -> None:
     escalation_service.create_escalation = AsyncMock(return_value=MagicMock(id=77))
 
     runtime = MagicMock()
+    runtime.settings = SimpleNamespace(MATRIX_RESPONDER_ROOMS=None)
 
     def resolve_optional(name: str):
         if name == "feedback_followup_coordinator":
@@ -575,6 +582,7 @@ async def test_on_message_consumes_feedback_followup_before_processing() -> None
     followup_coordinator.consume_if_pending = AsyncMock(return_value=True)
 
     runtime = MagicMock()
+    runtime.settings = SimpleNamespace(MATRIX_RESPONDER_ROOMS=None)
 
     def resolve_optional(name: str):
         if name == "feedback_followup_coordinator":
@@ -614,6 +622,7 @@ async def test_on_message_ignores_sender_when_same_as_matrix_user() -> None:
     connection_manager.sync_forever = AsyncMock()
 
     runtime = MagicMock()
+    runtime.settings = SimpleNamespace(MATRIX_RESPONDER_ROOMS=None)
     runtime.resolve_optional = MagicMock(return_value=None)
 
     channel = MagicMock()
@@ -645,6 +654,7 @@ async def test_on_message_ignores_staff_sender() -> None:
     staff_resolver.is_staff.return_value = True
 
     runtime = MagicMock()
+    runtime.settings = SimpleNamespace(MATRIX_RESPONDER_ROOMS=None)
     arbitration_service = MagicMock()
     arbitration_service.record_staff_activity = AsyncMock()
 
@@ -694,6 +704,7 @@ async def test_on_message_handles_staff_command_in_staff_room() -> None:
     matrix_reaction_handler.handle_staff_command = AsyncMock(return_value=True)
 
     runtime = MagicMock()
+    runtime.settings = SimpleNamespace(MATRIX_RESPONDER_ROOMS=None)
     arbitration_service = MagicMock()
     arbitration_service.record_staff_activity = AsyncMock()
 
@@ -753,6 +764,7 @@ async def test_on_message_prefers_matrix_chatops_adapter_before_legacy_staff_com
     matrix_reaction_handler.handle_staff_command = AsyncMock(return_value=True)
 
     runtime = MagicMock()
+    runtime.settings = SimpleNamespace(MATRIX_RESPONDER_ROOMS=None)
     arbitration_service = MagicMock()
     arbitration_service.record_staff_activity = AsyncMock()
 
@@ -808,6 +820,7 @@ async def test_on_message_ignores_non_sync_room() -> None:
     connection_manager.sync_forever = AsyncMock()
 
     runtime = MagicMock()
+    runtime.settings = SimpleNamespace(MATRIX_RESPONDER_ROOMS=None)
     runtime.resolve_optional = MagicMock(return_value=None)
 
     channel = MagicMock()

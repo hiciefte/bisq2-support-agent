@@ -29,6 +29,7 @@ from app.models.escalation import EscalationDeliveryStatus
 def mock_runtime():
     """ChannelRuntime mock."""
     runtime = MagicMock()
+    runtime.settings = SimpleNamespace(MATRIX_RESPONDER_ROOMS=None)
     runtime.resolve = MagicMock()
     runtime.resolve_optional = MagicMock(return_value=None)
     return runtime

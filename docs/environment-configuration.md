@@ -191,6 +191,23 @@ The Matrix integration uses lane-specific names to separate support-channel inge
 *   **`MATRIX_SYNC_ROOMS`**
     *   Description: Comma-separated room IDs polled for support Q/A ingestion.
     *   Required: Yes (when `MATRIX_SYNC_ENABLED=true`)
+*   **`MATRIX_RESPONDER_ROOMS`**
+    *   Description: Optional exact room IDs for live questions, reactions,
+        ChatOps, and all support-agent delivery, including staff-reviewed sends
+        and trust notices. Historical Q/A ingestion keeps using
+        `MATRIX_SYNC_ROOMS` independently.
+    *   Default: Unset preserves the existing live room configuration. Setting
+        an empty value denies all live rooms; it does not fall back to the
+        history source. Invalid room IDs reject startup.
+    *   For an isolated pilot, set this to only the approved operations room,
+        and point `MATRIX_STAFF_ROOM` and `MATRIX_CHATOPS_ROOM_IDS` there too.
+        Ancillary room settings cannot expand the explicit responder scope.
+        Recreate the API container after environment changes. This setting
+        never enables generation, ChatOps, or autonomous delivery.
+    *   Room IDs must name approved group rooms. An allowlist is not a permanent
+        Matrix DM classifier: a different room, including a DM, is denied
+        because it is outside the explicit scope. The separate monitoring
+        alert account and its `MATRIX_ALERT_ROOM` destination are unaffected.
 *   **`MATRIX_STAFF_ROOM`**
     *   Description: Dedicated Matrix staff room for escalation notifications ("needs human attention" notices) and staff actions.
     *   Required: **Recommended** (escalation notices are lost if this is empty)

@@ -608,6 +608,17 @@ class TestComparisonClassification:
             ("bisq 1 vs bisq 2", True),
             ("What is the difference between Bisq Easy and multisig?", True),
             ("What payment methods are different in Europe?", False),
+            (
+                "The payer has a different name in my Bisq 1 trade. Can I confirm?",
+                False,
+            ),
+            ("What is the difference between SEPA and SEPA Instant in Bisq 1?", False),
+            ("Compare the payment methods available in Bisq Easy.", False),
+            ("How are Bisq Easy and Bisq 1 different?", True),
+            ("Does Bisq Easy require me to create a multisig wallet?", False),
+            ("I received a multisig error while using Bisq 2.", False),
+            ("The payer name is different in my latest version of Bisq 1.", False),
+            ("Compare the old and new versions of Bisq 1.", False),
             # A bare "version(s)" token must not turn generic comparisons
             # into a Bisq 1 vs Bisq 2 comparison.
             (
@@ -634,6 +645,27 @@ class TestComparisonClassification:
             "What is the difference between Bisq 1 and Bisq 2?"
         )
         assert is_comparison is True
+
+    def test_payer_difference_keeps_bisq1_retrieval_scope(self):
+        is_multisig, mentions_easy, is_comparison = _classify_query_protocol(
+            "My Bisq 1 buyer paid from a different name than the contract."
+        )
+        assert is_multisig is True
+        assert mentions_easy is False
+        assert is_comparison is False
+
+    @pytest.mark.asyncio
+    async def test_single_product_comparison_has_no_cross_product_heading(
+        self, service
+    ):
+        response = await service.query(
+            "What is the difference between SEPA and SEPA Instant in Bisq 1?",
+            chat_history=[],
+            override_version="Bisq 1",
+        )
+        assert not response["answer"].startswith(
+            "Difference between Bisq 1 and Bisq 2:"
+        )
 
     @pytest.mark.asyncio
     async def test_sepa_question_not_forced_into_version_comparison(self, service):

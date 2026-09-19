@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.channels.chatops import ChatOpsAuthorizer, ChatOpsDispatcher, ChatOpsParser
+from app.channels.plugins.matrix.room_filter import is_responder_room_allowed
 from app.channels.staff import resolve_channel_staff_resolver
 from app.metrics.operator_metrics import record_chatops_auth, record_chatops_parse
 
@@ -44,6 +45,10 @@ class MatrixChatOpsAdapter:
         sender: str,
         text: str,
     ) -> bool:
+        if not is_responder_room_allowed(
+            getattr(self.runtime, "settings", None), room_id
+        ):
+            return False
         parsed = self.parser.parse(
             text=text,
             actor_id=sender,
@@ -122,6 +127,10 @@ class MatrixChatOpsAdapter:
     async def _send_notice(
         self, *, room_id: str, root_event_id: str, body: str
     ) -> None:
+        if not is_responder_room_allowed(
+            getattr(self.runtime, "settings", None), room_id
+        ):
+            return
         client = self.runtime.resolve_optional("matrix_client")
         if client is None:
             return

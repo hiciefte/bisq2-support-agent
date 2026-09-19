@@ -9,7 +9,9 @@ from app.channels.plugins.matrix.chatops_adapter import MatrixChatOpsAdapter
 
 def _runtime(*, staff_resolver: MagicMock | None = None) -> tuple[MagicMock, MagicMock]:
     runtime = MagicMock()
-    runtime.settings = MagicMock(MATRIX_SYNC_IGNORE_UNVERIFIED_DEVICES=True)
+    runtime.settings = MagicMock(
+        MATRIX_SYNC_IGNORE_UNVERIFIED_DEVICES=True, MATRIX_RESPONDER_ROOMS=None
+    )
     matrix_client = MagicMock()
     matrix_client.room_send = AsyncMock()
 
