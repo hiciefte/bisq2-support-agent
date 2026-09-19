@@ -1457,7 +1457,9 @@ class SimplifiedRAGService:
                     clarifying_question = None
                     logger.info("Skipping version clarification for safety reflex")
 
-                # If clarifying question needed and confidence is low, return it immediately
+                # Resolve a trusted source default before retrieval. Otherwise keep
+                # the missing-product question available as a no-evidence fallback;
+                # it must not suppress an answer supported by retrieved evidence.
                 if clarifying_question and version_confidence < 0.5:
                     source_default = self._resolve_source_default_version(
                         preprocessed_question,
@@ -1472,33 +1474,6 @@ class SimplifiedRAGService:
                             str(detection_source or "").strip().lower() or "unknown",
                             version_confidence,
                         )
-                    else:
-                        final_clarification = (
-                            await self.language_handler.translate_text_for_user(
-                                clarifying_question,
-                                original_language,
-                                label="clarification",
-                            )
-                        )
-
-                        logger.info(
-                            f"Requesting clarification from user: {clarifying_question[:50]}..."
-                        )
-                        return {
-                            "answer": final_clarification,
-                            "sources": [],
-                            "response_time": time.time() - start_time,
-                            "needs_clarification": True,
-                            "detected_version": detected_version,
-                            "version_confidence": version_confidence,
-                            "routing_action": "needs_clarification",
-                            "forwarded_to_human": False,
-                            "feedback_created": False,
-                            "canonical_question_en": canonical_question_en,
-                            "localized_question": localized_question,
-                            "original_language": original_language,
-                            "translated": was_translated,
-                        }
 
             # Get relevant documents with version priority and similarity scores
             # Pass detected_version to ensure correct version-specific retrieval
@@ -1601,6 +1576,30 @@ class SimplifiedRAGService:
                         "response_time": time.time() - start_time,
                         "forwarded_to_human": True,
                         "feedback_created": False,
+                    }
+
+                if clarifying_question and version_confidence < 0.5:
+                    final_clarification = (
+                        await self.language_handler.translate_text_for_user(
+                            clarifying_question,
+                            original_language,
+                            label="clarification",
+                        )
+                    )
+                    return {
+                        "answer": final_clarification,
+                        "sources": [],
+                        "response_time": time.time() - start_time,
+                        "needs_clarification": True,
+                        "detected_version": detected_version,
+                        "version_confidence": version_confidence,
+                        "routing_action": "needs_clarification",
+                        "forwarded_to_human": False,
+                        "feedback_created": False,
+                        "canonical_question_en": canonical_question_en,
+                        "localized_question": localized_question,
+                        "original_language": original_language,
+                        "translated": was_translated,
                     }
 
                 # Check if we have conversation history to potentially answer from
@@ -1973,44 +1972,6 @@ class SimplifiedRAGService:
                     )
                 else:
                     final_response = ""
-
-            # Stabilize version comparison questions for downstream consumers (including E2E).
-            # This is content-neutral: we only add a heading if the model didn't include
-            # any comparison phrasing, without inventing facts.
-            if original_language == "en":
-                if is_comparison_question:
-                    response_lower = final_response.lower()
-                    has_bisq1 = (
-                        re.search(r"\bbisq\s*1\b|\bbisq1\b", response_lower) is not None
-                    )
-                    has_bisq2 = (
-                        re.search(
-                            r"\bbisq\s*2\b|\bbisq2\b|\bbisq easy\b", response_lower
-                        )
-                        is not None
-                    )
-                    has_comparison_marker = any(
-                        marker in response_lower
-                        for marker in (
-                            "difference",
-                            "compared",
-                            "whereas",
-                            "contrast",
-                            "unlike",
-                            "on the other hand",
-                            "rather",
-                            "upgrade",
-                            "successor",
-                            "evolution",
-                        )
-                    )
-
-                    # If the model didn't clearly frame a comparison (or didn't mention both),
-                    # prepend a stable heading that includes both versions and the word "difference".
-                    if not (has_bisq1 and has_bisq2 and has_comparison_marker):
-                        final_response = (
-                            "Difference between Bisq 1 and Bisq 2:\n\n" + final_response
-                        )
 
             final_response = apply_support_answer_style(
                 final_response,

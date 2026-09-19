@@ -428,9 +428,9 @@ class TestDocumentRetrieverVersionPriority:
         assert multisig_calls[0].kwargs["k"] == 4
 
     def test_bisq2_priority_maintained(self, test_settings):
-        """Test that Bisq 2 priority is maintained for ambiguous queries.
+        """Test that an established Bisq 2 context keeps its retrieval priority.
 
-        Given: A query without version specification
+        Given: A follow-up question with Bisq 2 established in user context
         When: Retrieving documents
         Then: Should prioritize Bisq 2 documents (search Bisq 2 first)
         """
@@ -442,7 +442,7 @@ class TestDocumentRetrieverVersionPriority:
 
         # Act
         query = "How do I start a trade?"
-        retriever.retrieve_with_version_priority(query)
+        retriever.retrieve_with_version_priority(query, detected_version="Bisq 2")
 
         # Assert
         # First call should be for bisq_easy (Stage 1)

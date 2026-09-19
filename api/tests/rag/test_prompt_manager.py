@@ -260,14 +260,11 @@ class TestPromptManagerResponseGuidelines:
         prompt = prompt_manager.create_rag_prompt()
         template = prompt.messages[0].prompt.template
         assert "AMBIGUOUS SUPPORT WORKFLOWS:" in template
-        assert "do not stop with a version clarification" in template
+        assert "A missing product/version must not block guidance" in template
         assert "answer at the highest safe level first" in template
-        assert (
-            "Do not assume Bisq Easy, Bisq 1, or a specific UI button/menu path"
-            in template
-        )
-        assert "If version remains unknown after considering Context" in template
-        assert "do not name Bisq Easy, Bisq 1, MuSig" in template
+        assert "Do not re-ask facts already supplied" in template
+        assert "Retrieved product tags describe the evidence" in template
+        assert "do not prescribe product-specific screens" in template
         assert "prefer neutral wording such as 'open the affected trade'" in template
         assert "If the user is asking for a human, manager, or escalation" in template
 

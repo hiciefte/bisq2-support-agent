@@ -679,7 +679,7 @@ class TestComparisonClassification:
         )
 
     @pytest.mark.asyncio
-    async def test_real_version_comparison_still_gets_stable_heading(self, service):
+    async def test_real_version_comparison_preserves_generated_answer(self, service):
         service.llm.invoke.return_value = LLMResponse(
             content="They use different trade protocols."
         )
@@ -688,4 +688,130 @@ class TestComparisonClassification:
             chat_history=[],
             override_version="Bisq 2",
         )
-        assert response["answer"].startswith("Difference between Bisq 1 and Bisq 2:")
+        assert response["answer"] == "They use different trade protocols."
+        service.llm.invoke.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_imported_product_data_does_not_add_comparison_heading(self, service):
+        question = (
+            "After updating Bisq 2, my reputation no longer shows my imported "
+            "Bisq 1 account age. What should I check?"
+        )
+        answer = "Check that you selected the same profile as before the update."
+        service.llm.invoke.return_value = LLMResponse(content=answer)
+        response = await service.query(question, chat_history=[])
+
+        assert response["answer"] == answer
+        service.document_retriever.retrieve_with_scores.assert_called_once_with(
+            question, "Unknown"
+        )
+        service.llm.invoke.assert_called_once()
+
+
+class TestClarificationAfterEvidence:
+    """Unknown product must not bypass grounding or normal answer routing."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("mode", ["standard", "streaming", "tools"])
+    async def test_unknown_product_reaches_grounded_generation_and_review(
+        self, service, mode
+    ):
+        question = "The transfer was refused. What can I do next?"
+        history = [{"role": "user", "content": "I have not sent any money yet."}]
+        document = Document(
+            page_content="Keep the transfer paused while checking the registered details.",
+            metadata={
+                "type": "wiki",
+                "title": "Payment checks",
+                "protocol": "all",
+                "_score_type": "absolute_cosine",
+            },
+        )
+        service.document_retriever.retrieve_with_scores.return_value = (
+            [document],
+            [0.9],
+        )
+        service.document_retriever.format_documents.return_value = document.page_content
+        answer = "Keep the transfer paused. Which Bisq product are you using?"
+        service.llm.invoke.return_value = LLMResponse(content=answer)
+        service.llm.stream.return_value = iter([answer])
+        service.llm.invoke_with_tools.return_value = ToolCallResult(content=answer)
+        service.mcp_enabled = mode == "tools"
+        service.confidence_scorer.calculate_confidence.return_value = 0.8
+        service.auto_send_router = AutoSendRouter()
+
+        tokens = []
+        response = await service.query(
+            question,
+            chat_history=history,
+            token_callback=tokens.append if mode == "streaming" else None,
+        )
+
+        service.document_retriever.retrieve_with_scores.assert_called_once_with(
+            question, "Unknown"
+        )
+        invocation = {
+            "standard": service.llm.invoke,
+            "streaming": service.llm.stream,
+            "tools": service.llm.invoke_with_tools,
+        }[mode]
+        invocation.assert_called_once()
+        prompt = str(invocation.call_args)
+        assert document.page_content in prompt
+        assert history[0]["content"] in prompt
+        assert "A missing product/version must not block guidance" in prompt
+        assert (
+            "Do not choose a product because most retrieved excerpts concern it"
+            in prompt
+        )
+        assert response["answer"] == answer
+        assert response["sources"][0]["title"] == "Payment checks"
+        assert response["routing_action"] == "queue_medium"
+        assert response["forwarded_to_human"] is True
+        assert response.get("needs_clarification") is not True
+        service.confidence_scorer.calculate_confidence.assert_awaited_once()
+        if mode == "streaming":
+            assert tokens == [answer]
+
+    @pytest.mark.asyncio
+    async def test_unknown_without_documents_keeps_clarification_without_generation(
+        self, service
+    ):
+        service.document_retriever.retrieve_with_scores.return_value = ([], [])
+        service.feedback_service = MagicMock()
+        response = await service.query("What does this error mean?", chat_history=[])
+        assert response["routing_action"] == "needs_clarification"
+        assert response["sources"] == []
+        service.llm.invoke.assert_not_called()
+        service.auto_send_router.route_response.assert_not_awaited()
+        service.feedback_service.store_feedback.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unknown_with_weak_evidence_still_requires_human_review(
+        self, service
+    ):
+        docs = _make_docs()
+        service.document_retriever.retrieve_with_scores.return_value = (
+            docs,
+            [0.1, 0.1],
+        )
+        service.auto_send_router = AutoSendRouter()
+        response = await service.query("The transfer was refused. What next?", [])
+        assert response["routing_action"] == "needs_human"
+        assert response["confidence"] == 0.0
+        assert response["requires_human"] is True
+
+    @pytest.mark.asyncio
+    async def test_latest_user_product_context_reaches_retrieval_and_generation(
+        self, service
+    ):
+        history = [
+            {"role": "user", "content": "I use Bisq 2."},
+            {"role": "assistant", "content": "Are you asking about Bisq 1 or Bisq 2?"},
+        ]
+        await service.query("The transfer was refused. What can I do next?", history)
+        assert (
+            service.document_retriever.retrieve_with_scores.call_args.args[1]
+            == "Bisq 2"
+        )
+        assert "I use Bisq 2." in str(service.llm.invoke.call_args)

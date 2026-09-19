@@ -191,7 +191,7 @@ def test_mutated_scam_warning_does_not_satisfy_unchanged_warning_metric() -> Non
     row = _behavior_row(
         case_id="mutated-static-warning",
         ground_truth=SAFETY_REFLEX_WARNING,
-        answer=SAFETY_REFLEX_WARNING.replace("messages;", "messages."),
+        answer=SAFETY_REFLEX_WARNING.replace(";", ".", 1),
         scam_warning_warranted=True,
     )
 
