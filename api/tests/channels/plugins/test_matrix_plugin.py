@@ -624,7 +624,7 @@ class TestMatrixChannelMessageHandling:
 
         runtime = MagicMock(spec=ChannelRuntime)
         runtime.resolve_optional = MagicMock(return_value=mock_client)
-        runtime.settings = MagicMock()
+        runtime.settings = SimpleNamespace(MATRIX_RESPONDER_ROOMS=None)
         runtime.settings.MATRIX_SYNC_IGNORE_UNVERIFIED_DEVICES = False
 
         channel = MatrixChannel(runtime)

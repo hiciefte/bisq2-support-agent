@@ -20,9 +20,11 @@ from app.channels.models import (
     UserContext,
 )
 from app.channels.plugins.matrix.room_filter import (
+    is_responder_room_allowed,
     normalize_room_ids,
     resolve_allowed_reaction_rooms,
-    resolve_allowed_sync_rooms,
+    resolve_allowed_responder_rooms,
+    restrict_to_responder_rooms,
 )
 from app.channels.plugins.support_markdown import (
     build_matrix_message_content,
@@ -117,7 +119,7 @@ class MatrixChannel(ChannelBase):
         ).strip()
         if not matrix_user:
             return
-        allowed_room_ids = resolve_allowed_sync_rooms(settings)
+        allowed_room_ids = resolve_allowed_responder_rooms(settings)
         reaction_allowed_room_ids = resolve_allowed_reaction_rooms(settings)
         session_path = Path(str(settings.MATRIX_SYNC_SESSION_PATH)).expanduser()
         store_dir = session_path.parent / f"{session_path.stem}_store"
@@ -201,6 +203,7 @@ class MatrixChannel(ChannelBase):
         chatops_rooms = normalize_room_ids(
             getattr(settings, "MATRIX_CHATOPS_ROOM_IDS", None)
         ) or normalize_room_ids(getattr(settings, "MATRIX_STAFF_ROOM", None))
+        chatops_rooms = restrict_to_responder_rooms(settings, chatops_rooms)
         if chatops_rooms:
             runtime.register(
                 "matrix_chatops_adapter",
@@ -223,7 +226,7 @@ class MatrixChannel(ChannelBase):
                 MatrixTrustMonitorHandler(
                     client=matrix_client,
                     trust_monitor_service=trust_monitor_service,
-                    allowed_room_ids=trust_rooms,
+                    allowed_room_ids=restrict_to_responder_rooms(settings, trust_rooms),
                     staff_room_id=(
                         getattr(settings, "TRUST_MONITOR_MATRIX_STAFF_ROOM", "")
                         or getattr(settings, "MATRIX_STAFF_ROOM", "")
@@ -280,16 +283,21 @@ class MatrixChannel(ChannelBase):
         3) Matrix alert room fallback (`MATRIX_ALERT_ROOM`) for local/dev testing
         """
         payload = metadata if isinstance(metadata, dict) else {}
+        settings = getattr(self.runtime, "settings", None)
         metadata_target = str(payload.get("staff_room_id", "") or "").strip()
         if metadata_target:
-            return metadata_target
+            return (
+                metadata_target
+                if is_responder_room_allowed(settings, metadata_target)
+                else ""
+            )
 
-        settings = getattr(self.runtime, "settings", None)
         staff_room = str(getattr(settings, "MATRIX_STAFF_ROOM", "") or "").strip()
         if staff_room:
-            return staff_room
+            return staff_room if is_responder_room_allowed(settings, staff_room) else ""
 
-        return str(getattr(settings, "MATRIX_ALERT_ROOM", "") or "").strip()
+        alert_room = str(getattr(settings, "MATRIX_ALERT_ROOM", "") or "").strip()
+        return alert_room if is_responder_room_allowed(settings, alert_room) else ""
 
     async def start(self) -> None:
         """Start the Matrix channel.
@@ -355,7 +363,7 @@ class MatrixChannel(ChannelBase):
                 self._logger.warning(f"Failed to start reaction handler: {e}")
 
         runtime_settings = getattr(self.runtime, "settings", None)
-        allowed_rooms = set(resolve_allowed_sync_rooms(runtime_settings))
+        allowed_rooms = set(resolve_allowed_responder_rooms(runtime_settings))
         trust_rooms = normalize_room_ids(
             getattr(runtime_settings, "TRUST_MONITOR_MATRIX_PUBLIC_ROOMS", "")
         )
@@ -369,7 +377,7 @@ class MatrixChannel(ChannelBase):
         ).strip()
         if trust_staff_room:
             allowed_rooms.add(trust_staff_room)
-        for room_id in allowed_rooms:
+        for room_id in restrict_to_responder_rooms(runtime_settings, allowed_rooms):
             await self.join_room(str(room_id))
 
     async def stop(self, *, strict: bool = False) -> None:
@@ -586,7 +594,7 @@ class MatrixChannel(ChannelBase):
             ProactiveImpersonationScanner,
         )
 
-        sync_rooms = resolve_allowed_sync_rooms(settings)
+        sync_rooms = resolve_allowed_responder_rooms(settings)
 
         async def _handle_proactive_finding(result: Any) -> bool:
             return await run_in_trust_monitor_executor(
@@ -614,6 +622,10 @@ class MatrixChannel(ChannelBase):
 
     async def send_message(self, target: str, message: OutgoingMessage) -> SendResult:
         """Send a response while holding the shared Matrix lifecycle lock."""
+        if not is_responder_room_allowed(
+            getattr(self.runtime, "settings", None), target
+        ):
+            return SendResult(sent=False, error="matrix_room_out_of_scope")
         async with self._session_lifecycle_lock:
             return await self._send_message_unlocked(target, message)
 
@@ -792,6 +804,10 @@ class MatrixChannel(ChannelBase):
 
     async def send_reaction(self, room_id: str, event_id: str, key: str) -> bool:
         """Send a reaction while holding the shared Matrix lifecycle lock."""
+        if not is_responder_room_allowed(
+            getattr(self.runtime, "settings", None), room_id
+        ):
+            return False
         async with self._session_lifecycle_lock:
             return await self._send_reaction_unlocked(room_id, event_id, key)
 
@@ -983,6 +999,10 @@ class MatrixChannel(ChannelBase):
         Returns:
             True on success, False on failure.
         """
+        if not is_responder_room_allowed(
+            getattr(self.runtime, "settings", None), room_id
+        ):
+            return False
         self._logger.info(f"Joining Matrix room {room_id}")
 
         # Get Matrix client from runtime

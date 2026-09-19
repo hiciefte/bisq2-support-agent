@@ -11,7 +11,10 @@ from typing import Any
 
 from app.channels.inbound_orchestrator import InboundMessageOrchestrator
 from app.channels.models import ChannelType, IncomingMessage, UserContext
-from app.channels.plugins.matrix.room_filter import normalize_room_ids
+from app.channels.plugins.matrix.room_filter import (
+    is_responder_room_allowed,
+    normalize_room_ids,
+)
 from app.channels.policy import is_generation_enabled
 from app.channels.response_dispatcher import ChannelResponseDispatcher
 from app.channels.staff import resolve_channel_staff_resolver
@@ -115,6 +118,9 @@ class MatrixMessageHandler:
             return
 
         room_id = str(getattr(room, "room_id", "") or "").strip()
+        settings = getattr(getattr(channel, "runtime", None), "settings", None)
+        if not is_responder_room_allowed(settings, room_id):
+            return
         allowed_staff_rooms = self.staff_command_room_ids
         if not room_id or (
             room_id not in self.allowed_room_ids and room_id not in allowed_staff_rooms

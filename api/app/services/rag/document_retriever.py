@@ -35,36 +35,40 @@ _BISQ2_VERSION_RE = re.compile(r"\bbisq\s*2\b|\bbisq2\b")
 _COMPARISON_TOKEN_RE = re.compile(
     r"\b(compar(?:e|ing|ison)|different|differences?|diff|versus|vs|both\s+versions)\b"
 )
-# Explicit version/protocol tokens required for a comparison token to count
-# as a Bisq 1 vs Bisq 2 comparison (instead of e.g. comparing payment methods
-# or generic app/wallet versions). A bare "version(s)" token is intentionally
-# NOT enough - only Bisq-specific or Bisq-adjacent version phrases qualify.
-_VERSION_CONTEXT_TOKEN_RE = re.compile(
-    r"\bbisq\s*1\b|\bbisq1\b|\bbisq\s*2\b|\bbisq2\b|\bbisq\s+easy\b|\bmultisig\b"
-    r"|\bboth\s+versions\b|\bversions?\s+of\s+bisq\b"
-    r"|\b(?:the\s+)?(?:two\s+)?bisq\s+versions?\b"
+# A comparison word plus a single product is not a product comparison:
+# "different payer name in Bisq 1" still needs only Bisq 1 evidence.
+_GROUPED_VERSIONS_RE = re.compile(
+    r"\bboth\s+versions\b|\bversions\s+of\s+bisq\b(?!\s*[12]\b)"
+    r"|\b(?:the\s+)?(?:two\s+)?bisq\s+versions\b"
 )
 
 
 def is_bisq_version_comparison_query(query: str) -> bool:
     """Return True when the query asks to compare Bisq 1 and Bisq 2.
 
-    A comparison requires either explicit mentions of BOTH versions, or a
-    comparison token combined with an explicit version/protocol token.
-    A comparison token alone (e.g. "difference between SEPA and SEPA Instant
-    in Bisq") must not trigger version-comparison handling.
+    Require both products, or comparison wording about the Bisq versions as
+    a group. Comparing payment methods or payer names within one product
+    must not broaden retrieval to the other product.
 
     Shared by DocumentRetriever routing and SimplifiedRAGService so both
     classify comparison intent consistently.
     """
     query_lower = query.lower()
-    mentions_bisq1 = bool(_BISQ1_VERSION_RE.search(query_lower))
-    mentions_bisq2 = bool(_BISQ2_VERSION_RE.search(query_lower))
-    if mentions_bisq1 and mentions_bisq2:
+    if _BISQ1_VERSION_RE.search(query_lower) and _BISQ2_VERSION_RE.search(query_lower):
         return True
+    mentions_bisq1 = bool(
+        _BISQ1_VERSION_RE.search(query_lower) or re.search(r"\bmultisig\b", query_lower)
+    )
+    mentions_bisq2 = bool(
+        _BISQ2_VERSION_RE.search(query_lower)
+        or re.search(r"\bbisq\s+easy\b", query_lower)
+    )
     return bool(
         _COMPARISON_TOKEN_RE.search(query_lower)
-        and _VERSION_CONTEXT_TOKEN_RE.search(query_lower)
+        and (
+            (mentions_bisq1 and mentions_bisq2)
+            or _GROUPED_VERSIONS_RE.search(query_lower)
+        )
     )
 
 

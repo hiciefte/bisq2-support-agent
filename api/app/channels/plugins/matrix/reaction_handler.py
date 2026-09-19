@@ -10,7 +10,10 @@ from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from app.channels.plugins.matrix.room_filter import normalize_room_ids
+from app.channels.plugins.matrix.room_filter import (
+    is_responder_room_allowed,
+    normalize_room_ids,
+)
 from app.channels.reactions import (
     ReactionEvent,
     ReactionHandlerBase,
@@ -102,6 +105,10 @@ class MatrixReactionHandler(ReactionHandlerBase):
         """
         try:
             room_id = str(getattr(room, "room_id", "") or "").strip()
+            if not is_responder_room_allowed(
+                getattr(self.runtime, "settings", None), room_id
+            ):
+                return
             if not room_id or room_id not in self.allowed_room_ids:
                 return
 
@@ -306,6 +313,10 @@ class MatrixReactionHandler(ReactionHandlerBase):
         command_text: str,
         sender: str,
     ) -> bool:
+        if not is_responder_room_allowed(
+            getattr(self.runtime, "settings", None), room_id
+        ):
+            return False
         command, payload = self._parse_staff_command(command_text)
         if command not in {"/send", "/dismiss"}:
             return False
@@ -441,6 +452,10 @@ class MatrixReactionHandler(ReactionHandlerBase):
         client = self.runtime.resolve_optional("matrix_client")
         if client is None:
             return
+        if not is_responder_room_allowed(
+            getattr(self.runtime, "settings", None), room_id
+        ):
+            return
         normalized_room_id = str(room_id or "").strip()
         normalized_root_event_id = str(root_event_id or "").strip()
         text = str(body or "").strip()
@@ -575,6 +590,10 @@ class MatrixReactionHandler(ReactionHandlerBase):
         if not redacts:
             return
         room_id = str(getattr(room, "room_id", "") or "").strip()
+        if not is_responder_room_allowed(
+            getattr(self.runtime, "settings", None), room_id
+        ):
+            return
         if not room_id or room_id not in self.allowed_room_ids:
             return
 

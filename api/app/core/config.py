@@ -1,12 +1,13 @@
+import json
 import logging
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 from urllib.parse import urlparse
 
 from pydantic import Field, ValidationInfo, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +167,8 @@ class Settings(BaseSettings):
     MATRIX_SYNC_USER: str = ""  # Required when MATRIX_SYNC_ENABLED=true
     MATRIX_SYNC_PASSWORD: str = ""  # Required when MATRIX_SYNC_ENABLED=true
     MATRIX_SYNC_ROOMS: str | list[str] = ""  # Room IDs to monitor
+    # Unset preserves legacy scope; explicitly empty disables all live rooms.
+    MATRIX_RESPONDER_ROOMS: Annotated[str | list[str] | None, NoDecode] = None
     MATRIX_STAFF_ROOM: str = ""  # Room ID for staff escalation notifications
     MATRIX_SYNC_SESSION_FILE: str = "matrix_session.json"
     MATRIX_SYNC_IGNORE_UNVERIFIED_DEVICES: bool = True
@@ -880,6 +883,38 @@ class Settings(BaseSettings):
         if v > 30 * 24 * 3600:  # 30 days
             raise ValueError("ADMIN_SESSION_MAX_AGE must be ≤ 30 days")
         return v
+
+    @field_validator("MATRIX_RESPONDER_ROOMS", mode="before")
+    @classmethod
+    def parse_matrix_responder_rooms(
+        cls, v: str | list[str] | None
+    ) -> list[str] | None:
+        if v is None:
+            return None
+        rooms = v
+        if isinstance(v, str):
+            try:
+                rooms = json.loads(v) if v.lstrip().startswith("[") else v.split(",")
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    "MATRIX_RESPONDER_ROOMS must contain exact Matrix room IDs"
+                ) from exc
+        if not isinstance(rooms, list) or any(not isinstance(x, str) for x in rooms):
+            raise ValueError(
+                "MATRIX_RESPONDER_ROOMS must contain exact Matrix room IDs"
+            )
+        normalized = [room.strip() for room in rooms if room.strip()]
+        if any(
+            not room.startswith("!")
+            or ":" not in room[1:]
+            or not all(room[1:].split(":", 1))
+            or any(char.isspace() for char in room)
+            for room in normalized
+        ):
+            raise ValueError(
+                "MATRIX_RESPONDER_ROOMS must contain exact Matrix room IDs"
+            )
+        return normalized
 
     @field_validator("MATRIX_SYNC_ROOMS", mode="before")
     @classmethod
