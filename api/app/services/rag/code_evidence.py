@@ -49,20 +49,37 @@ _VERSION_RE = re.compile(rf"v?({_VERSION_PATTERN})")
 def release_version(tag: str) -> str:
     """Accept an exact release identity, never a branch or a version range."""
     match = _VERSION_RE.fullmatch(tag)
-    if match is None:
-        raise ValueError("Release tag must identify an exact semantic version")
-    return match.group(1)
+    if match is not None:
+        version = match.group(1)
+        core, _, prerelease = version.partition("-")
+        identifiers = core.split(".")
+        if prerelease:
+            identifiers.extend(prerelease.split("."))
+        if all(
+            identifier
+            and not (
+                identifier.isdigit()
+                and len(identifier) > 1
+                and identifier.startswith("0")
+            )
+            for identifier in identifiers
+        ):
+            return version
+    raise ValueError("Release tag must identify an exact semantic version")
 
 
 def explicit_user_version(question: str) -> str | None:
     """Read explicit version wording from the user, never retrieved evidence."""
     matches = re.findall(
         r"\b(?:bisq(?:\s+(?:2|easy))?\s*(?:version\s*|v)?|(?:version|running|using)\s+|v)"
-        rf"({_VERSION_PATTERN})(?![\w-]|\.[\w.-])\b",
+        rf"({_VERSION_PATTERN})(?![\w+-]|\.[\w.-])\b",
         question,
         re.IGNORECASE,
     )
-    versions = set(matches)
+    try:
+        versions = {release_version(match) for match in matches}
+    except ValueError:
+        return None
     return versions.pop() if len(versions) == 1 else None
 
 

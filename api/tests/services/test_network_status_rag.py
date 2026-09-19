@@ -7,12 +7,17 @@ from unittest.mock import MagicMock
 import pytest
 from app.prompts import error_messages
 from app.prompts.runtime_policy import SAFETY_REFLEX_WARNING
-from app.services.bisq_network_status_service import SCOPES, BisqNetworkStatusService
+from app.services.bisq_network_status_service import (
+    SCOPES,
+    BisqNetworkStatusService,
+    has_fresh_network_evidence,
+)
 from app.services.rag.auto_send_router import AutoSendRouter
 from app.services.rag.llm_provider import (
     ToolCallResult,
     needs_live_data,
     needs_network_status,
+    requested_network_status_areas,
 )
 
 from tests.services import test_rag_service_review_fixes as support_fixtures
@@ -25,21 +30,30 @@ def service(test_settings):
     return support_fixtures.service.__wrapped__(test_settings)
 
 
-def tool_call(status="observations_available"):
+def tool_call(status="observations_available", area="tor"):
+    target, value = {
+        "tor": ("bisq_v2.torNetwork.torStartupTime", 1000),
+        "seed_nodes": ("bisq_v2.seedNodes.test.rtt.serial", 1000),
+        "price_nodes": ("bisq_v2.priceNodes.test.price.USD", 100000),
+    }[area]
     report = BisqNetworkStatusService._summarize(
-        "tor",
-        SCOPES["tor"],
+        area,
+        SCOPES[area],
         [
             {
-                "target": "bisq_v2.torNetwork.torStartupTime",
-                "datapoints": [[1000, int(time.time() - 20)]],
+                "target": target,
+                "datapoints": [[value, int(time.time() - 20)]],
             }
         ],
         None,
         time.time(),
     )
     report["status"] = status
-    return {"tool": "get_bisq_network_status", "result": json.dumps(report)}
+    return {
+        "tool": "get_bisq_network_status",
+        "args": json.dumps({"area": area}),
+        "result": json.dumps(report),
+    }
 
 
 @pytest.mark.parametrize(
@@ -49,6 +63,7 @@ def tool_call(status="observations_available"):
         "Are the Bisq seed nodes reachable?",
         "Is there a Bisq network outage?",
         "Check price node status",
+        "Check price-node status",
         "I cannot connect to Bisq 2",
         "Tor is stuck at startup",
         "Bisq is down right now. Is it just me?",
@@ -171,3 +186,114 @@ async def test_zero_docs_safety_reflex_takes_precedence(service):
     )
     assert response["answer"] == SAFETY_REFLEX_WARNING
     service.llm.invoke_with_tools.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "query,areas",
+    [
+        ("Is Tor down?", {"tor"}),
+        ("Check seed-node status", {"seed_nodes"}),
+        ("Are price nodes and Tor down?", {"tor", "price_nodes"}),
+        ("Are Tor or seed nodes unavailable?", {"tor", "seed_nodes"}),
+        ("Is the Bisq network down?", set()),
+        ("Bisq cannot connect to the internet", set()),
+        ("Is Matrix's network down?", set()),
+    ],
+)
+def test_requested_scope_is_explicit_and_bounded(query, areas):
+    assert requested_network_status_areas(query) == areas
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "wrong_area",
+        "args_mismatch",
+        "report_mismatch",
+        "missing_args",
+        "invalid_args",
+        "unsupported_area",
+        "latest_mismatch",
+    ],
+)
+@pytest.mark.asyncio
+async def test_tor_status_rejects_wrong_area_or_unbound_call(service, mode):
+    service.mcp_enabled = True
+    service.document_retriever.retrieve_with_scores.return_value = ([], [])
+    service.auto_send_router = AutoSendRouter()
+    calls = [tool_call()]
+    if mode == "wrong_area":
+        calls = [tool_call(area="seed_nodes")]
+    elif mode == "args_mismatch":
+        calls[0]["args"] = json.dumps({"area": "seed_nodes"})
+    elif mode == "report_mismatch":
+        calls[0]["result"] = tool_call(area="seed_nodes")["result"]
+    elif mode == "missing_args":
+        calls[0].pop("args")
+    elif mode == "invalid_args":
+        calls[0]["args"] = "not JSON"
+    elif mode == "unsupported_area":
+        calls[0]["args"] = json.dumps({"area": "whole_network"})
+    elif mode == "latest_mismatch":
+        calls.append({**tool_call(), "result": tool_call(area="seed_nodes")["result"]})
+    service.llm.invoke_with_tools.return_value = ToolCallResult(
+        content="Tor is healthy right now.", tool_calls_made=calls
+    )
+    response = await service.query("Is Tor down right now?", chat_history=[])
+    assert response["answer"] == error_messages.NETWORK_STATUS_UNCONFIRMED
+    assert response["routing_action"] == "needs_human"
+    assert response["mcp_tools_used"][0]["result"] == calls[0]["result"]
+
+
+@pytest.mark.parametrize("all_areas_present", [True, False])
+@pytest.mark.asyncio
+async def test_multiple_explicit_areas_require_matching_fresh_evidence_for_each(
+    service, all_areas_present
+):
+    service.mcp_enabled = True
+    service.document_retriever.retrieve_with_scores.return_value = ([], [])
+    service.auto_send_router = AutoSendRouter()
+    calls = [tool_call()]
+    if all_areas_present:
+        calls.append(tool_call(area="seed_nodes"))
+    text = "Fresh monitor observations exist for Tor startup and legacy seed-node probes; coverage is limited."
+    service.llm.invoke_with_tools.return_value = ToolCallResult(
+        content=text, tool_calls_made=calls
+    )
+    response = await service.query(
+        "Are Tor or seed nodes down right now?", chat_history=[]
+    )
+    assert response["answer"] == (
+        text if all_areas_present else error_messages.NETWORK_STATUS_UNCONFIRMED
+    )
+
+
+@pytest.mark.asyncio
+async def test_generic_network_status_does_not_treat_component_probes_as_global_health(
+    service,
+):
+    service.mcp_enabled = True
+    service.document_retriever.retrieve_with_scores.return_value = ([], [])
+    service.auto_send_router = AutoSendRouter()
+    calls = [tool_call(area=area) for area in SCOPES]
+    service.llm.invoke_with_tools.return_value = ToolCallResult(
+        content="The whole Bisq network is healthy.", tool_calls_made=calls
+    )
+    response = await service.query("Is the Bisq network down?", chat_history=[])
+    assert response["answer"] == error_messages.NETWORK_STATUS_UNCONFIRMED
+    assert response["routing_action"] == "needs_human"
+    assert len(response["mcp_tools_used"]) == 3
+
+
+def test_scope_gate_preserves_latest_result_freshness_and_accepts_dict_arguments():
+    fresh = tool_call()
+    fresh["args"] = {"area": "tor"}
+    assert has_fresh_network_evidence([fresh], frozenset({"tor"}))
+    assert not has_fresh_network_evidence(
+        [fresh, tool_call("unknown")], frozenset({"tor"})
+    )
+    stale = tool_call()
+    report = json.loads(stale["result"])
+    report["observations"]["oldest_fresh_observed_at"] = "2000-01-01T00:00:00+00:00"
+    stale["result"] = json.dumps(report)
+    assert not has_fresh_network_evidence([stale], frozenset({"tor"}))

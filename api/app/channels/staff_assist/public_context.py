@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import re
 from typing import Any, Literal
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -66,8 +66,13 @@ class PublicEvidence(_StrictModel):
             "docs.bisq.network",
             "monitor.bisq.network",
         }
-        github = parsed.hostname == "github.com" and parsed.path.startswith(
-            "/bisq-network/"
+        decoded_path = unquote(parsed.path)
+        github = (
+            parsed.hostname == "github.com"
+            and decoded_path.startswith("/bisq-network/")
+            and "\\" not in decoded_path
+            and unquote(decoded_path) == decoded_path
+            and not any(part in {".", ".."} for part in decoded_path.split("/"))
         )
         if (
             parsed.scheme != "https"
@@ -184,7 +189,10 @@ class PublicContextService:
                 f"[Source {index}]({sources[key].url})"
                 for index, key in enumerate(decision.source_ids, 1)
             ]
-            rendered = "AI context · " + text
+            # Only deterministic citations are Markdown; model prose stays literal.
+            paragraph = " ".join(text.split())
+            plain_text = re.sub(r"([\\`*_{}\[\]()#+\-.!|~>])", r"\\\1", paragraph)
+            rendered = "AI context · " + plain_text
             if links:
                 rendered += "\n\n" + " · ".join(links)
             return PublicContextPreview(

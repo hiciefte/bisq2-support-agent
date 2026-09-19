@@ -13,6 +13,9 @@ and safety behavior remains unchanged. A current-status answer requires a fresh
 structured result from this specific tool. Missing, malformed, stale or partial
 evidence produces an unconfirmed-status response for staff review; the returned
 tool metadata retains available observations and coverage.
+Each explicitly requested area requires a fresh report matching that same tool
+call's arguments. Questions about the whole network remain unconfirmed because
+none of the supported areas establishes whole-network coverage.
 
 ## What the metrics mean
 

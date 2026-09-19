@@ -133,12 +133,49 @@ def test_generation_failure_is_silent_without_retry():
         "https://localhost/admin",
         "https://bisq.wiki@evil.example/",
         "https://github.com/attacker/repo",
+        "https://github.com/bisq-network/../attacker/repo",
+        "https://github.com/bisq-network/%2e%2e/attacker/repo",
+        "https://github.com/bisq-network/%2E%2E%2Fattacker/repo",
+        "https://github.com/bisq-network/%252e%252e/attacker/repo",
+        "https://github.com/bisq-network/./bisq2",
+        "https://github.com/bisq-network/%2e/bisq2",
+        "https://github.com/bisq-network/..\\attacker/repo",
+        "https://github.com/bisq-network/%5c..%5cattacker/repo",
         "https://bisq.wiki/Support)@room",
     ],
 )
 def test_unapproved_source_urls_cannot_be_rendered(url):
     with pytest.raises(ValidationError):
         request(evidence=[{"id": "x", "title": "x", "content": "x", "url": url}])
+
+
+def test_public_github_code_source_remains_allowed():
+    value = "https://github.com/bisq-network/bisq2/blob/main/README.md"
+    result = request(evidence=[{"id": "x", "title": "x", "content": "x", "url": value}])
+    assert result.evidence[0].url == value
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "**Important**\n# Heading\n- list item\n1. ordered item\n`inline code` and _emphasis_",
+        "Status\n===",
+        "Status\n\n    indented content",
+    ],
+)
+def test_model_markdown_is_literal_but_verified_citation_stays_linked(text):
+    from markdown_it import MarkdownIt
+
+    result = PublicContextService(llm_output(text=text)).preview(request())
+    assert result.decision.text == text
+    assert result.decision.action == "note"
+    html = MarkdownIt("commonmark", {"html": False}).render(result.rendered_note)
+    assert " ".join(text.split()) in html
+    assert not any(
+        tag in html
+        for tag in ("<strong>", "<em>", "<h1>", "<ul>", "<ol>", "<code>", "<pre>")
+    )
+    assert '<a href="https://bisq.wiki/Support">Source 1</a>' in html
 
 
 def test_staff_code_records_are_not_public_evidence():

@@ -279,7 +279,7 @@ def needs_network_status(query: str) -> bool:
         r"\b(yesterday|last week|last month|historical|history of)\b", normalized
     ):
         return False
-    scope = re.search(r"\b(tor|network|seed ?nodes?|price ?nodes?)\b", normalized)
+    scope = re.search(r"\b(tor|network|seed[ -]?nodes?|price[ -]?nodes?)\b", normalized)
     state = re.search(
         r"\b(status|outage|down|offline|unreachable|unavailable|reachable|working now|"
         r"connection problems?|connectivity problems?|can't connect|cannot connect|"
@@ -294,6 +294,19 @@ def needs_network_status(query: str) -> bool:
         normalized,
     )
     return bool((scope and state) or product_connectivity)
+
+
+def requested_network_status_areas(query: str) -> frozenset[str]:
+    """Return explicit supported scopes, without guessing generic network scope."""
+    normalized = query.casefold()
+    patterns = {
+        "tor": r"\btor\b",
+        "seed_nodes": r"\bseed[ -]?nodes?\b",
+        "price_nodes": r"\bprice[ -]?nodes?\b",
+    }
+    return frozenset(
+        area for area, pattern in patterns.items() if re.search(pattern, normalized)
+    )
 
 
 def needs_live_data(query: str) -> bool:

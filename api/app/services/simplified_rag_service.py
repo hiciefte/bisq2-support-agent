@@ -27,7 +27,7 @@ from app.core.pii_utils import redact_for_logs
 from app.prompts import error_messages
 from app.prompts.runtime_policy import SAFETY_REFLEX_WARNING, should_apply_safety_reflex
 from app.services.bisq_mcp_service import Bisq2MCPService
-from app.services.bisq_network_status_service import has_fresh_network_observations
+from app.services.bisq_network_status_service import has_fresh_network_evidence
 from app.services.faq.slug_manager import SlugManager
 from app.services.rag.auto_send_router import AutoSendRouter
 from app.services.rag.canonical_fixes import (
@@ -47,6 +47,7 @@ from app.services.rag.llm_provider import (
     LLMProvider,
     needs_live_data,
     needs_network_status,
+    requested_network_status_areas,
 )
 from app.services.rag.llm_wiki_loader import LLMWikiLoader
 from app.services.rag.mcp_reconciliation import (
@@ -1721,10 +1722,9 @@ class SimplifiedRAGService:
                         raise RuntimeError("MCP tool invocation failed")
 
                     missing_network_evidence = network_status_required and not (
-                        has_fresh_network_observations(
-                            extract_last_tool_result(
-                                tool_result.tool_calls_made, "get_bisq_network_status"
-                            )
+                        has_fresh_network_evidence(
+                            tool_result.tool_calls_made,
+                            requested_network_status_areas(preprocessed_question),
                         )
                     )
                     if missing_network_evidence or (

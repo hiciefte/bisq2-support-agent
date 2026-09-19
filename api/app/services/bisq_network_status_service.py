@@ -78,11 +78,15 @@ def _iso(timestamp: float) -> str:
     return datetime.fromtimestamp(timestamp, UTC).isoformat()
 
 
-def has_fresh_network_observations(value: str) -> bool:
+def has_fresh_network_observations(
+    value: str, *, required_area: str | None = None
+) -> bool:
     """Require a structured, fresh local-tool result before current-status prose."""
     try:
         report = json.loads(value)
         if not isinstance(report, dict) or report.get("area") not in SCOPES:
+            return False
+        if required_area is not None and report["area"] != required_area:
             return False
         if report.get("status") not in {"observations_available", "failure_observed"}:
             return False
@@ -93,6 +97,40 @@ def has_fresh_network_observations(value: str) -> bool:
         return -30 <= time.time() - timestamp <= FRESH_SECONDS
     except (AttributeError, TypeError, ValueError, OverflowError):
         return False
+
+
+def has_fresh_network_evidence(
+    tool_calls: list[dict[str, Any]] | None, requested_areas: frozenset[str]
+) -> bool:
+    """Bind each requested scope to its latest call arguments and fresh report.
+
+    An unspecified network scope has no whole-network tool equivalent. Keep it
+    unconfirmed instead of treating one monitored component as global coverage.
+    """
+    if not requested_areas or not requested_areas <= SCOPES.keys():
+        return False
+    evidence: dict[str, bool] = {}
+    for call in tool_calls or []:
+        if call.get("tool") != "get_bisq_network_status":
+            continue
+        try:
+            arguments = call.get("args")
+            if isinstance(arguments, str):
+                arguments = json.loads(arguments)
+            if (
+                not isinstance(arguments, dict)
+                or set(arguments) != {"area"}
+                or not isinstance(arguments["area"], str)
+                or arguments["area"] not in SCOPES
+            ):
+                return False
+            area = arguments["area"]
+            evidence[area] = has_fresh_network_observations(
+                call.get("result"), required_area=area
+            )
+        except (TypeError, ValueError):
+            return False
+    return all(evidence.get(area, False) for area in requested_areas)
 
 
 class BisqNetworkStatusService:

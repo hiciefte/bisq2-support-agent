@@ -41,6 +41,56 @@ def test_release_version_preserves_supported_identity() -> None:
     assert explicit_user_version("I am running 2.1.13-rc.1.") == "2.1.13-rc.1"
 
 
+@pytest.mark.parametrize(
+    "tag",
+    [
+        "2.1.13-rc..1",
+        "2.1.13-.rc",
+        "2.1.13-.",
+        "2.1.13-rc.",
+        "2.1.13-rc..",
+        "2.1.13-01",
+        "2.1.13-rc.01",
+        "2.1.13-0.00",
+        "02.1.13",
+        "2.01.13",
+        "2.1.013",
+    ],
+)
+def test_release_version_rejects_malformed_identifiers(tag: str) -> None:
+    with pytest.raises(ValueError, match="exact semantic version"):
+        release_version("v" + tag)
+
+
+@pytest.mark.parametrize(
+    "tag",
+    [
+        "2.1.13-rc..1",
+        "2.1.13-.rc",
+        "2.1.13-.",
+        "2.1.13-rc..",
+        "2.1.13-01",
+        "2.1.13-rc.01",
+        "2.1.13-0.00",
+        "02.1.13",
+        "2.01.13",
+        "2.1.013",
+        "2.1.13+unsupported-metadata",
+    ],
+)
+def test_explicit_version_rejects_malformed_or_partial_identity(tag: str) -> None:
+    assert explicit_user_version("I am running " + tag) is None
+
+
+@pytest.mark.parametrize(
+    "version",
+    ["0.0.0", "2.1.13-0", "2.1.13-rc.0", "2.1.13-01a", "2.1.13-rc-1.20"],
+)
+def test_version_preserves_valid_zero_and_prerelease_identifiers(version: str) -> None:
+    assert release_version("v" + version) == version
+    assert explicit_user_version("I am running " + version) == version
+
+
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
