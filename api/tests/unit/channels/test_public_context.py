@@ -21,7 +21,7 @@ def request(**overrides):
             {
                 "id": "public-doc",
                 "title": "Support",
-                "content": "Use the official support documentation.",
+                "content": "Bisq 2 support documentation covers requesting mediation.",
                 "url": "https://bisq.wiki/Support",
             }
         ],
@@ -33,7 +33,7 @@ def request(**overrides):
 def llm_output(**overrides):
     value = {
         "action": "note",
-        "text": "The support documentation provides relevant context.",
+        "text": "Bisq 2 support documentation covers requesting mediation.",
         "source_ids": ["public-doc"],
         "reason": "Adds a useful public source.",
     }
@@ -64,6 +64,7 @@ def test_public_preview_requires_review_and_renders_only_selected_source():
     result = PublicContextService(llm_output()).preview(request())
     assert result.rendered_note.startswith("AI context · ")
     assert "https://bisq.wiki/Support" in result.rendered_note
+    assert "[Support](https://bisq.wiki/Support)" in result.rendered_note
     assert result.requires_review is True
     assert result.usage == {"total_tokens": 50}
 
@@ -77,13 +78,10 @@ def test_public_preview_requires_review_and_renders_only_selected_source():
         {"text": "Visit https://attacker.example for help."},
         {"text": "@room Please send me your details."},
         {"text": "<img src='https://example.org'/>"},
-        {"text": "word " * 81},
+        {"text": "word " * 56},
+        {"text": "AI context"},
+        {"text": "**AI context:**"},
         {"action": "silence", "text": "But here is a reply."},
-        {
-            "action": "clarification",
-            "text": "Which release? Which wallet?",
-            "source_ids": [],
-        },
     ],
 )
 def test_invalid_generation_never_falls_back_to_a_full_answer(change):
@@ -93,19 +91,118 @@ def test_invalid_generation_never_falls_back_to_a_full_answer(change):
     assert result.rendered_note is None
 
 
-def test_clarification_can_ask_one_necessary_question_without_evidence():
+def test_no_public_evidence_is_silent_without_a_model_call():
+    llm = llm_output()
+    result = PublicContextService(llm).preview(request(evidence=[]))
+    assert result.decision.reason == "no_public_evidence"
+    assert result.decision.action == "silence"
+    assert result.rendered_note is None
+    assert result.model_called is False
+    llm.invoke.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "text,source_ids",
+    [
+        ("Which Bisq product and version are you using?", []),
+        ("Which release? Which wallet?", ["public-doc"]),
+        ("Please share your app version.", ["public-doc"]),
+    ],
+)
+def test_legacy_clarification_action_is_never_rendered(text, source_ids):
     result = PublicContextService(
         llm_output(
             action="clarification",
-            text="Which Bisq product and version are you using?",
-            source_ids=[],
+            text=text,
+            source_ids=source_ids,
         )
-    ).preview(request(evidence=[]))
-    assert result.decision.action == "clarification"
-    assert (
-        result.rendered_note
-        == "AI context · Which Bisq product and version are you using?"
+    ).preview(request())
+    assert result.decision.action == "silence"
+    assert result.decision.reason == "clarification_suppressed"
+    assert result.rendered_note is None
+    assert result.model_called is True
+    assert result.usage == {"total_tokens": 50}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Which product and version?",
+        "Which release? Which wallet?",
+        "Are you using Bisq 2.1.13?",
+        "Which app are you using, e.g. Bisq 1 or Bisq 2?",
+        "Which app are you using, i.e. which Bisq product?",
+        "Which product, Bisq 1 vs. Bisq 2, are you using?",
+        "Which details, app version etc., can you share?",
+        "Welche Version verwendest du, z.B. Bisq 2.1.13?",
+        "Which app, E.G. Bisq 1 or Bisq 2, are you using?",
+        "Welche Version verwendest du?",
+        "你使用哪个版本？",
+    ],
+)
+def test_question_only_note_is_suppressed_even_with_a_citation(text):
+    result = PublicContextService(llm_output(text=text)).preview(request())
+    assert result.decision.action == "silence"
+    assert result.decision.reason == "clarification_suppressed"
+    assert result.rendered_note is None
+
+
+def test_word_limit_rejects_instead_of_truncating_a_qualification():
+    text = (
+        " ".join(["fact"] * 45)
+        + " This observation does not establish the user's local connection health."
     )
+    accepted = PublicContextService(llm_output(text=text)).preview(request())
+    assert len(text.split()) == 55
+    assert accepted.decision.action == "note"
+    assert "does not establish" in accepted.rendered_note
+    rejected = PublicContextService(llm_output(text="Fresh " + text)).preview(request())
+    assert rejected.decision.reason == "invalid_model_output"
+    assert rejected.rendered_note is None
+
+
+@pytest.mark.parametrize(
+    "heading",
+    [
+        "AI context · ",
+        "AI context: ",
+        "AI context note — ",
+        "AI note\n",
+        "## AI context\n",
+        "**AI context:** ",
+        "**AI context**: ",
+        "AI context · AI context: ",
+    ],
+)
+def test_renderer_owns_the_single_ai_label(heading):
+    from markdown_it import MarkdownIt
+
+    fact = "Bisq 2.1.13 includes this documented error route. It does not identify your installed version."
+    result = PublicContextService(llm_output(text=heading + fact)).preview(request())
+    assert result.decision.action == "note"
+    assert result.rendered_note.count("AI context") == 1
+    html = MarkdownIt("commonmark").render(result.rendered_note)
+    assert "AI context · " + fact in html
+
+
+@pytest.mark.parametrize(
+    "fact",
+    [
+        "AI context can help staff locate the relevant documented trade stage.",
+        'The guide labels this prompt "Which version?" and explains its product scope.',
+        "The monitor reported one successful Tor startup at 20:13 UTC. This does not establish your connection health.",
+        "Bisq 2.1.13 includes this documented error route. Which version are you using?",
+        "The documentation distinguishes products, e.g. Bisq 1 and Bisq 2. Which product are you using?",
+    ],
+)
+def test_legitimate_fact_language_is_preserved(fact):
+    from html import unescape
+
+    from markdown_it import MarkdownIt
+
+    result = PublicContextService(llm_output(text=fact)).preview(request())
+    assert result.decision.action == "note"
+    assert fact in unescape(MarkdownIt("commonmark").render(result.rendered_note))
 
 
 def test_untrusted_prompt_content_remains_user_data():
@@ -175,7 +272,68 @@ def test_model_markdown_is_literal_but_verified_citation_stays_linked(text):
         tag in html
         for tag in ("<strong>", "<em>", "<h1>", "<ul>", "<ol>", "<code>", "<pre>")
     )
-    assert '<a href="https://bisq.wiki/Support">Source 1</a>' in html
+    assert '<a href="https://bisq.wiki/Support">Support</a>' in html
+
+
+@pytest.mark.parametrize(
+    "url,expected_url",
+    [
+        ("https://bisq.wiki/Support", "https://bisq.wiki/Support"),
+        ("https://bisq.wiki/Support guide", "https://bisq.wiki/Support%20guide"),
+        (
+            "https://bisq.wiki/Support%20guide?q=a+b#Help",
+            "https://bisq.wiki/Support%20guide?q=a+b#Help",
+        ),
+    ],
+)
+def test_citation_url_remains_clickable_in_actual_matrix_renderer(url, expected_url):
+    from app.channels.plugins.support_markdown import build_matrix_message_content
+
+    evidence = request().evidence[0].model_dump()
+    evidence["url"] = url
+    result = PublicContextService(llm_output()).preview(request(evidence=[evidence]))
+    content = build_matrix_message_content(result.rendered_note)
+    assert f'href="{expected_url}"' in content["formatted_body"]
+    assert ">Support</a>" in content["formatted_body"]
+
+
+def test_untrusted_evidence_title_is_literal_and_only_verified_url_is_linked():
+    from html.parser import HTMLParser
+
+    from markdown_it import MarkdownIt
+
+    class Links(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.urls = []
+            self.labels = []
+            self.in_link = False
+
+        def handle_starttag(self, tag, attrs):
+            if tag == "a":
+                self.urls.append(dict(attrs)["href"])
+                self.in_link = True
+
+        def handle_endtag(self, tag):
+            if tag == "a":
+                self.in_link = False
+
+        def handle_data(self, data):
+            if self.in_link:
+                self.labels.append(data)
+
+    title = (
+        "Mediation [guide](https://attacker.example) <b> &amp;\n**Read** ![image](bad)"
+    )
+    evidence = request().evidence[0].model_dump()
+    evidence["title"] = title
+    result = PublicContextService(llm_output()).preview(request(evidence=[evidence]))
+    html = MarkdownIt("commonmark", {"html": True}).render(result.rendered_note)
+    links = Links()
+    links.feed(html)
+    assert links.urls == ["https://bisq.wiki/Support"]
+    assert "".join(links.labels) == " ".join(title.split())
+    assert not any(tag in html for tag in ("<img", "<b>", "<strong>"))
 
 
 def test_staff_code_records_are_not_public_evidence():
