@@ -394,3 +394,42 @@ def apply_autosend_policy(response: Any, autosend_enabled: bool) -> Any:
         if not getattr(metadata, "routing_reason", None):
             metadata.routing_reason = AUTOSEND_DISABLED_REASON
     return response
+
+
+def is_staff_context_policy(policy: Any) -> bool:
+    """Recognize the Matrix-only review audience independently of generation."""
+    return (
+        getattr(policy, "channel_id", "matrix") == "matrix"
+        and getattr(policy, "response_kind", "answer") == "public_context"
+        and getattr(policy, "delivery_audience", "source_room") == "staff_room"
+        and getattr(policy, "ai_response_mode", "autonomous") == "hitl"
+    )
+
+
+def is_staff_context_enabled(policy_service: Any | None, channel_id: str) -> bool:
+    if channel_id != "matrix" or policy_service is None:
+        return False
+    try:
+        policy = policy_service.get_policy(channel_id)
+        return (
+            is_staff_context_policy(policy)
+            and getattr(policy, "generation_enabled", False) is True
+        )
+    except Exception:
+        logger.exception("Unable to read staff context policy")
+        return False
+
+
+def allows_source_delivery(policy_service: Any | None, channel_id: str) -> bool:
+    """Only legacy answer/source policies allow general channel sends."""
+    if policy_service is None:
+        return True
+    try:
+        policy = policy_service.get_policy(channel_id)
+        return (
+            getattr(policy, "delivery_audience", "source_room") == "source_room"
+            and getattr(policy, "response_kind", "answer") == "answer"
+        )
+    except Exception:
+        logger.exception("Output policy unavailable; delivery blocked")
+        return False

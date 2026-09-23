@@ -424,6 +424,8 @@ class ChannelAutoResponsePolicy:
     mandatory_escalation_topics: list[str]
     timer_jitter_max_seconds: int
     updated_at: str
+    response_kind: str = "answer"
+    delivery_audience: str = "source_room"
 
 
 def _topics_to_storage(topics: list[str]) -> str:
@@ -455,6 +457,8 @@ class ChannelAutoResponsePolicyService:
     """Store and retrieve per-channel autoresponse policy."""
 
     _ALTER_COLUMN_SQL: Dict[str, str] = {
+        "response_kind": "TEXT NOT NULL DEFAULT 'answer'",
+        "delivery_audience": "TEXT NOT NULL DEFAULT 'source_room'",
         "generation_enabled": "INTEGER",
         "ai_response_mode": "TEXT NOT NULL DEFAULT 'autonomous'",
         "hitl_approval_timeout_seconds": "INTEGER NOT NULL DEFAULT 3600",
@@ -514,6 +518,8 @@ class ChannelAutoResponsePolicyService:
                         enabled INTEGER NOT NULL,
                         generation_enabled INTEGER,
                         ai_response_mode TEXT NOT NULL DEFAULT 'autonomous',
+                        response_kind TEXT NOT NULL DEFAULT 'answer',
+                        delivery_audience TEXT NOT NULL DEFAULT 'source_room',
                         hitl_approval_timeout_seconds INTEGER NOT NULL DEFAULT 3600,
                         draft_assistant_enabled INTEGER NOT NULL DEFAULT 1,
                         knowledge_amplifier_enabled INTEGER NOT NULL DEFAULT 1,
@@ -574,6 +580,8 @@ class ChannelAutoResponsePolicyService:
                             enabled,
                             generation_enabled,
                             ai_response_mode,
+                            response_kind,
+                            delivery_audience,
                             hitl_approval_timeout_seconds,
                             draft_assistant_enabled,
                             knowledge_amplifier_enabled,
@@ -601,13 +609,15 @@ class ChannelAutoResponsePolicyService:
                             timer_jitter_max_seconds,
                             updated_at
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             channel_id,
                             1 if defaults["enabled"] else 0,
                             1 if defaults["generation_enabled"] else 0,
                             defaults["ai_response_mode"],
+                            defaults["response_kind"],
+                            defaults["delivery_audience"],
                             defaults["hitl_approval_timeout_seconds"],
                             1 if defaults["draft_assistant_enabled"] else 0,
                             1 if defaults["knowledge_amplifier_enabled"] else 0,
@@ -802,6 +812,8 @@ class ChannelAutoResponsePolicyService:
         enabled: bool | None = None,
         generation_enabled: bool | None = None,
         ai_response_mode: str | None = None,
+        response_kind: str | None = None,
+        delivery_audience: str | None = None,
         hitl_approval_timeout_seconds: int | None = None,
         draft_assistant_enabled: bool | None = None,
         knowledge_amplifier_enabled: bool | None = None,
@@ -834,6 +846,8 @@ class ChannelAutoResponsePolicyService:
                 enabled,
                 generation_enabled,
                 ai_response_mode,
+                response_kind,
+                delivery_audience,
                 hitl_approval_timeout_seconds,
                 draft_assistant_enabled,
                 knowledge_amplifier_enabled,
@@ -883,6 +897,27 @@ class ChannelAutoResponsePolicyService:
                 f"Unsupported ai_response_mode '{ai_response_mode}'."
                 f" Supported values: {', '.join(SUPPORTED_AI_RESPONSE_MODES)}"
             )
+
+        next_response_kind = (
+            current.response_kind
+            if response_kind is None
+            else str(response_kind).strip().lower()
+        )
+        next_delivery_audience = (
+            current.delivery_audience
+            if delivery_audience is None
+            else str(delivery_audience).strip().lower()
+        )
+        if (next_response_kind, next_delivery_audience) != ("answer", "source_room"):
+            if not (
+                normalized == "matrix"
+                and next_response_kind == "public_context"
+                and next_delivery_audience == "staff_room"
+                and next_ai_response_mode == "hitl"
+            ):
+                raise ValueError(
+                    "Staff context requires matrix, public_context, staff_room and hitl"
+                )
 
         next_hitl_approval_timeout_seconds = (
             current.hitl_approval_timeout_seconds
@@ -1140,6 +1175,8 @@ class ChannelAutoResponsePolicyService:
             enabled=next_enabled,
             generation_enabled=next_generation_enabled,
             ai_response_mode=next_ai_response_mode,
+            response_kind=next_response_kind,
+            delivery_audience=next_delivery_audience,
             hitl_approval_timeout_seconds=next_hitl_approval_timeout_seconds,
             draft_assistant_enabled=next_draft_assistant_enabled,
             knowledge_amplifier_enabled=next_knowledge_amplifier_enabled,
@@ -1186,6 +1223,8 @@ class ChannelAutoResponsePolicyService:
                         enabled,
                         generation_enabled,
                         ai_response_mode,
+                        response_kind,
+                        delivery_audience,
                         hitl_approval_timeout_seconds,
                         draft_assistant_enabled,
                         knowledge_amplifier_enabled,
@@ -1213,11 +1252,13 @@ class ChannelAutoResponsePolicyService:
                         timer_jitter_max_seconds,
                         updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(channel_id) DO UPDATE SET
                         enabled = excluded.enabled,
                         generation_enabled = excluded.generation_enabled,
                         ai_response_mode = excluded.ai_response_mode,
+                        response_kind = excluded.response_kind,
+                        delivery_audience = excluded.delivery_audience,
                         hitl_approval_timeout_seconds = excluded.hitl_approval_timeout_seconds,
                         draft_assistant_enabled = excluded.draft_assistant_enabled,
                         knowledge_amplifier_enabled = excluded.knowledge_amplifier_enabled,
@@ -1250,6 +1291,8 @@ class ChannelAutoResponsePolicyService:
                         1 if updated.enabled else 0,
                         1 if updated.generation_enabled else 0,
                         updated.ai_response_mode,
+                        updated.response_kind,
+                        updated.delivery_audience,
                         updated.hitl_approval_timeout_seconds,
                         1 if updated.draft_assistant_enabled else 0,
                         1 if updated.knowledge_amplifier_enabled else 0,
@@ -1317,6 +1360,8 @@ class ChannelAutoResponsePolicyService:
             "enabled": default_autoresponse_enabled(channel_id),
             "generation_enabled": default_generation_enabled(channel_id),
             "ai_response_mode": default_ai_response_mode(channel_id),
+            "response_kind": "answer",
+            "delivery_audience": "source_room",
             "hitl_approval_timeout_seconds": default_hitl_approval_timeout_seconds(
                 channel_id
             ),
@@ -1441,6 +1486,8 @@ class ChannelAutoResponsePolicyService:
             enabled=bool(row["enabled"]),
             generation_enabled=_bool_field("generation_enabled"),
             ai_response_mode=mode,
+            response_kind=_str_field("response_kind"),
+            delivery_audience=_str_field("delivery_audience"),
             hitl_approval_timeout_seconds=max(
                 0, _int_field("hitl_approval_timeout_seconds")
             ),

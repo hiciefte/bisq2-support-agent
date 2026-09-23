@@ -7,6 +7,7 @@ from typing import Any
 
 from app.channels.chatops import ChatOpsAuthorizer, ChatOpsDispatcher, ChatOpsParser
 from app.channels.plugins.matrix.room_filter import is_responder_room_allowed
+from app.channels.policy import allows_source_delivery
 from app.channels.staff import resolve_channel_staff_resolver
 from app.metrics.operator_metrics import record_chatops_auth, record_chatops_parse
 
@@ -127,6 +128,11 @@ class MatrixChatOpsAdapter:
     async def _send_notice(
         self, *, room_id: str, root_event_id: str, body: str
     ) -> None:
+        if not allows_source_delivery(
+            self.runtime.resolve_optional("channel_autoresponse_policy_service"),
+            "matrix",
+        ):
+            return
         if not is_responder_room_allowed(
             getattr(self.runtime, "settings", None), room_id
         ):

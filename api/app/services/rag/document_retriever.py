@@ -18,12 +18,12 @@ import re
 from itertools import zip_longest
 from typing import Any, Dict, List, Set, Tuple
 
-from app.services.rag.bisq_entities import BISQ1_STRONG_KEYWORDS, BISQ2_STRONG_KEYWORDS
 from app.services.rag.interfaces import (
     RerankerProtocol,
     RetrievedDocument,
     RetrieverProtocol,
 )
+from app.services.rag.protocol_detector import ProtocolDetector
 from langchain_core.documents import Document
 
 logger = logging.getLogger(__name__)
@@ -54,7 +54,7 @@ def is_bisq_version_comparison_query(query: str) -> bool:
     Shared by DocumentRetriever routing and SimplifiedRAGService so both
     classify comparison intent consistently.
     """
-    query_lower = query.lower()
+    query_lower = ProtocolDetector.product_detection_text(query)
     if _BISQ1_VERSION_RE.search(query_lower) and _BISQ2_VERSION_RE.search(query_lower):
         return True
     mentions_bisq1 = bool(
@@ -73,10 +73,6 @@ def is_bisq_version_comparison_query(query: str) -> bool:
     )
 
 
-def _keyword_score(query_lower: str, keywords: List[str]) -> int:
-    return sum(1 for keyword in keywords if keyword in query_lower)
-
-
 def _classify_query_protocol(
     query: str, detected_version: str | None = None
 ) -> tuple[bool, bool, bool]:
@@ -88,31 +84,29 @@ def _classify_query_protocol(
     ``detected_version`` may come from heuristic conversation state. Unknown
     values preserve uncertainty instead of selecting a product by default.
     """
-    query_lower = query.lower()
-    query_mentions_bisq1 = bool(_BISQ1_VERSION_RE.search(query_lower))
-    query_mentions_bisq2 = bool(_BISQ2_VERSION_RE.search(query_lower))
     is_comparison_query = is_bisq_version_comparison_query(query)
 
     if is_comparison_query:
         return True, True, True
 
-    if query_mentions_bisq1:
+    query_version, _ = ProtocolDetector().detect_version_from_text(query)
+    if query_version == "Bisq 1":
         return True, False, False
-    if query_mentions_bisq2:
-        return False, True, False
-
-    bisq1_score = _keyword_score(query_lower, BISQ1_STRONG_KEYWORDS)
-    bisq2_score = _keyword_score(query_lower, BISQ2_STRONG_KEYWORDS)
-    if bisq1_score > bisq2_score and bisq1_score > 0:
-        return True, False, False
-    if bisq2_score > bisq1_score and bisq2_score > 0:
+    if query_version == "Bisq 2":
         return False, True, False
 
     if detected_version:
         normalized_version = detected_version.strip()
-        if normalized_version in ("Bisq 1", "multisig_v1"):
+        excluded_versions = ProtocolDetector._negated_versions(query.lower())
+        if (
+            normalized_version in ("Bisq 1", "multisig_v1")
+            and "Bisq 1" not in excluded_versions
+        ):
             return True, False, False
-        if normalized_version in ("Bisq 2", "bisq_easy"):
+        if (
+            normalized_version in ("Bisq 2", "bisq_easy")
+            and "Bisq 2" not in excluded_versions
+        ):
             return False, True, False
 
     # Unknown product needs evidence from both products and general guidance.
@@ -231,6 +225,125 @@ class DocumentRetriever:
             doc.metadata = metadata
         return docs
 
+    @staticmethod
+    def _quoted_phrase(query: str) -> str | None:
+        """Accept one short double-quoted term, not arbitrary quoted prose."""
+        match = re.search(r'"([^"\n]+)"|“([^“”\n]+)”', query)
+        if match is None or re.search(
+            r'["“”]', query[: match.start()] + query[match.end() :]
+        ):
+            return None
+        phrase = match.group(1) or match.group(2)
+        if len(phrase) > 80 or not 2 <= len(re.findall(r"\w+", phrase)) <= 8:
+            return None
+        return " ".join(phrase.casefold().split())
+
+    def _retrieve_primary_scope(
+        self, query: str, *, k: int, protocol: str, with_scores: bool
+    ) -> List[RetrievedDocument]:
+        """Recover a quoted term inside one scope without replacing baseline hits.
+
+        Preserve the baseline and only add exact phrase matches from one
+        optional phrase-only sparse lookup. Sparse scores are provenance, not
+        full-query relevance or evidence of source applicability or truth.
+        """
+        retrieve = (
+            self.retriever.retrieve_with_scores
+            if with_scores
+            else self.retriever.retrieve
+        )
+        baseline = retrieve(query, k=k, filter_dict={"protocol": protocol})
+        phrase = self._quoted_phrase(query)
+        if phrase is None:
+            return baseline
+        pattern = re.compile(rf"(?<!\w){re.escape(phrase)}(?!\w)")
+
+        def matches(doc: RetrievedDocument) -> bool:
+            return doc.protocol == protocol and bool(
+                pattern.search(" ".join(doc.content.casefold().split()))
+            )
+
+        preferred = [
+            (doc, rank, k) for rank, doc in enumerate(baseline) if matches(doc)
+        ]
+        if not preferred:
+            try:
+                retrieve_hybrid = getattr(self.retriever, "retrieve_hybrid", None)
+                if not callable(retrieve_hybrid):
+                    return baseline
+                expanded = retrieve_hybrid(
+                    phrase,
+                    k=12,
+                    semantic_weight=0.0,
+                    keyword_weight=1.0,
+                    filter_dict={"protocol": protocol},
+                )
+                baseline_keys = {
+                    self._dedupe_key_from_retrieved(doc) for doc in baseline
+                }
+                for rank, doc in enumerate(expanded):
+                    if (
+                        not matches(doc)
+                        or self._dedupe_key_from_retrieved(doc) in baseline_keys
+                    ):
+                        continue
+                    metadata = dict(doc.metadata)
+                    metadata.pop("_relative_rank_score", None)
+                    metadata.pop("_absolute_similarity_score", None)
+                    metadata.update(
+                        {
+                            "_quoted_phrase_candidate_score": doc.score,
+                            "_quoted_phrase_candidate_score_type": "sparse_bm25",
+                            "_score_type": "keyword_only",
+                        }
+                    )
+                    preferred.append(
+                        (
+                            RetrievedDocument(
+                                content=doc.content,
+                                metadata=metadata,
+                                # No calibrated full-query relevance is available.
+                                score=0.0,
+                                id=doc.id,
+                            ),
+                            rank,
+                            12,
+                        )
+                    )
+            except Exception:
+                logger.warning(
+                    "Quoted-phrase sparse lookup failed; preserving baseline retrieval",
+                    exc_info=True,
+                )
+                return baseline
+        if not preferred:
+            return baseline
+
+        selected: List[RetrievedDocument] = []
+        seen: set[tuple[str, str]] = set()
+        for doc, rank, budget in preferred + [
+            (doc, rank, k) for rank, doc in enumerate(baseline)
+        ]:
+            key = self._dedupe_key_from_retrieved(doc)
+            if key in seen:
+                continue
+            seen.add(key)
+            selected.append(
+                RetrievedDocument(
+                    content=doc.content,
+                    metadata={
+                        **doc.metadata,
+                        "_quoted_phrase_candidate_rank": rank,
+                        "_quoted_phrase_candidate_limit": budget,
+                    },
+                    score=doc.score,
+                    id=doc.id,
+                )
+            )
+            if len(selected) == k:
+                break
+        return selected
+
     def _retrieve_across_protocols(
         self, query: str, *, with_scores: bool
     ) -> List[RetrievedDocument]:
@@ -308,8 +421,8 @@ class DocumentRetriever:
 
                 # Stage 1: Prioritize multisig_v1 content (k=4 for better coverage)
                 logger.info("Stage 1: Searching for multisig_v1 content...")
-                multisig_docs = self.retriever.retrieve(
-                    query, k=4, filter_dict={"protocol": "multisig_v1"}
+                multisig_docs = self._retrieve_primary_scope(
+                    query, k=4, protocol="multisig_v1", with_scores=False
                 )
                 multisig_lc = self._to_langchain_documents(multisig_docs)
                 logger.info(f"Found {len(multisig_lc)} multisig_v1 documents")
@@ -368,8 +481,8 @@ class DocumentRetriever:
                 else:
                     # Stage 1: Prioritize bisq_easy content
                     logger.info("Stage 1: Searching for bisq_easy content...")
-                    bisq_easy_docs = self.retriever.retrieve(
-                        query, k=6, filter_dict={"protocol": "bisq_easy"}
+                    bisq_easy_docs = self._retrieve_primary_scope(
+                        query, k=6, protocol="bisq_easy", with_scores=False
                     )
                     bisq_easy_lc = self._to_langchain_documents(bisq_easy_docs)
                     logger.info(f"Found {len(bisq_easy_lc)} bisq_easy documents")
@@ -612,16 +725,18 @@ class DocumentRetriever:
             if r.id and "_retrieved_id" not in metadata:
                 metadata["_retrieved_id"] = r.id
             metadata["_retrieval_score"] = self._clamp_unit_interval(retrieval_score)
-            metadata["_relative_rank_score"] = self._clamp_unit_interval(
-                retrieval_score
-            )
+            keyword_only = metadata.get("_score_type") == "keyword_only"
+            if not keyword_only:
+                metadata["_relative_rank_score"] = self._clamp_unit_interval(
+                    retrieval_score
+                )
             metadata["_retrieval_rank"] = retrieval_rank
             if absolute_score is not None:
                 metadata["_absolute_similarity_score"] = self._clamp_unit_interval(
                     absolute_score
                 )
                 metadata["_score_type"] = "absolute_cosine"
-            else:
+            elif not keyword_only:
                 metadata["_score_type"] = "relative_rank"
             lc.metadata = metadata
             return lc
@@ -679,7 +794,11 @@ class DocumentRetriever:
                 logger.info("Retrieving with scores for Bisq 1 / multisig_v1 query")
 
                 # Stage 1: multisig_v1 content
-                _append_stage(k=4, filter_dict={"protocol": "multisig_v1"})
+                _append_results(
+                    self._retrieve_primary_scope(
+                        query, k=4, protocol="multisig_v1", with_scores=True
+                    )
+                )
 
                 # Stage 2: 'all' content (always). Many Bisq 1 wiki pages are categorized
                 # as 'general' in our processed dump, so we must include them for Bisq 1 queries.
@@ -688,7 +807,11 @@ class DocumentRetriever:
                 logger.info("Retrieving with scores for Bisq Easy query")
 
                 # Stage 1: bisq_easy content
-                _append_stage(k=6, filter_dict={"protocol": "bisq_easy"})
+                _append_results(
+                    self._retrieve_primary_scope(
+                        query, k=6, protocol="bisq_easy", with_scores=True
+                    )
+                )
 
                 # Stage 2: 'all' content
                 if len(all_docs_with_scores) < 4:

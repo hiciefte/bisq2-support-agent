@@ -25,6 +25,8 @@ const POLICIES: ChannelAutoresponsePolicy[] = [
     enabled: true,
     generation_enabled: true,
     ai_response_mode: "autonomous",
+    response_kind: "answer",
+    delivery_audience: "source_room",
     hitl_approval_timeout_seconds: 3600,
     draft_assistant_enabled: false,
     knowledge_amplifier_enabled: false,
@@ -60,6 +62,8 @@ const POLICIES: ChannelAutoresponsePolicy[] = [
     enabled: false,
     generation_enabled: true,
     ai_response_mode: "hitl",
+    response_kind: "answer",
+    delivery_audience: "source_room",
     hitl_approval_timeout_seconds: 3600,
     draft_assistant_enabled: true,
     knowledge_amplifier_enabled: true,
@@ -95,6 +99,8 @@ const POLICIES: ChannelAutoresponsePolicy[] = [
     enabled: false,
     generation_enabled: false,
     ai_response_mode: "autonomous",
+    response_kind: "answer",
+    delivery_audience: "source_room",
     hitl_approval_timeout_seconds: 3600,
     draft_assistant_enabled: true,
     knowledge_amplifier_enabled: true,
@@ -130,6 +136,31 @@ const POLICIES: ChannelAutoresponsePolicy[] = [
 describe("useChannelAutoresponsePolicies", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  test("Matrix review selects staff context without enabling public delivery", async () => {
+    mockedMakeAuthenticatedRequest.mockImplementation(async (endpoint, options) => {
+      if (!options?.method) return mockJsonResponse(POLICIES);
+      return mockJsonResponse({ ...POLICIES[2], ...JSON.parse(String(options.body)) });
+    });
+    const { result } = renderHook(() => useChannelAutoresponsePolicies(POLICIES));
+    await act(async () => { await result.current.setChannelMode("matrix", "review"); });
+    const update = mockedMakeAuthenticatedRequest.mock.calls.find(([path, options]) => path.endsWith("/matrix") && options?.method === "PUT");
+    expect(JSON.parse(String(update?.[1]?.body))).toMatchObject({
+      generation_enabled: true,
+      enabled: false,
+      response_kind: "public_context",
+      delivery_audience: "staff_room",
+      ai_response_mode: "hitl",
+      acknowledgment_mode: "none",
+      escalation_user_notice_mode: "none",
+      public_escalation_notice_enabled: false,
+      escalation_notification_channel: "staff_room",
+    });
+    const writes = mockedMakeAuthenticatedRequest.mock.calls.filter(([, options]) => options?.method);
+    expect(writes).toHaveLength(1);
+    await act(async () => { expect(await result.current.setChannelMode("matrix", "auto")).toBe(false); });
+    expect(mockedMakeAuthenticatedRequest.mock.calls.filter(([, options]) => options?.method)).toHaveLength(1);
   });
 
   test("maps channel mode to policy payload", async () => {
@@ -199,7 +230,13 @@ describe("useChannelAutoresponsePolicies", () => {
       JSON.stringify({
         generation_enabled: false,
         enabled: false,
-        ai_response_mode: "autonomous",
+        ai_response_mode: "hitl",
+        response_kind: "public_context",
+        delivery_audience: "staff_room",
+        acknowledgment_mode: "none",
+        escalation_user_notice_mode: "none",
+        public_escalation_notice_enabled: false,
+        escalation_notification_channel: "staff_room",
       }),
     );
   });

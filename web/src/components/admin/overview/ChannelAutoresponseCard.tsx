@@ -271,7 +271,7 @@ export function ChannelAutoresponseCard({
           </Badge>
         </div>
         <p className="text-sm text-muted-foreground">
-          Per channel mode: Off (ignore messages), Review (HITL, drafts require support approval), or Auto-send.
+          Choose how each channel helps users. Matrix staff context stays in the staff room and admin review queue.
         </p>
       </div>
 
@@ -287,6 +287,8 @@ export function ChannelAutoresponseCard({
           const generationEnabled = Boolean(policy?.generation_enabled);
           const autosendEnabled = Boolean(policy?.enabled);
           const aiResponseMode = policy?.ai_response_mode ?? "autonomous";
+          const isStaffContext = policy?.response_kind === "public_context"
+            && policy?.delivery_audience === "staff_room";
           const isSaving = isSavingByChannel[channel.id];
           const Icon = channel.icon;
           const escalationRoute = (
@@ -303,7 +305,7 @@ export function ChannelAutoresponseCard({
           const modeLabel = mode === "off"
             ? "AI processing off"
             : mode === "review"
-              ? "Review (HITL)"
+              ? (isStaffContext ? "Staff context review" : "Review (HITL)")
               : "Auto-send mode";
           const acknowledgmentMode = (
             policy?.acknowledgment_mode
@@ -373,7 +375,7 @@ export function ChannelAutoresponseCard({
               <div className="mt-3">
                 <ToggleGroup
                   type="single"
-                  value={mode}
+                  value={channel.id === "matrix" && mode === "review" && !isStaffContext ? "legacy-review" : mode}
                   onValueChange={(value) => {
                     if (value === "off" || value === "review" || value === "auto") {
                       onModeChange(channel.id, value);
@@ -396,13 +398,15 @@ export function ChannelAutoresponseCard({
                     size="sm"
                     className="min-w-[84px] text-xs"
                   >
-                    Review (HITL)
+                    {channel.id === "matrix" ? "Staff context" : "Review (HITL)"}
                   </ToggleGroupItem>
                   <ToggleGroupItem
                     value="auto"
                     variant="outline"
                     size="sm"
                     className="min-w-[94px] text-xs"
+                    disabled={channel.id === "matrix" || isSaving}
+                    title={channel.id === "matrix" ? "Matrix public auto-send is unavailable" : undefined}
                   >
                     Auto-send
                   </ToggleGroupItem>
@@ -411,15 +415,22 @@ export function ChannelAutoresponseCard({
               <p className="mt-2 text-xs text-muted-foreground">
                 {mode === "off"
                   ? "Inbound channel messages are ignored by the AI pipeline."
-                  : mode === "review"
+                  : isStaffContext
+                    ? "Concise AI context appears in a staff-room thread and the admin review queue. Approval records an internal decision; it cannot publish to the public room."
+                    : mode === "review"
                     ? "Review (HITL): AI drafts for staff, waits for approval, and escalates on HITL timeout."
                     : "AI generates and sends responses immediately."}
               </p>
               {policy ? (
                 <p className="mt-1 text-[11px] text-muted-foreground">
-                  Delay {policy.first_response_delay_seconds}s, cooldown {policy.staff_active_cooldown_seconds}s, HITL timeout {policy.hitl_approval_timeout_seconds}s.
+                  Delay {policy.first_response_delay_seconds}s, cooldown {policy.staff_active_cooldown_seconds}s{isStaffContext ? "." : `, HITL timeout ${policy.hitl_approval_timeout_seconds}s.`}
                 </p>
               ) : null}
+              {isStaffContext ? (
+                <p className="mt-3 border-t border-border/60 pt-3 text-xs text-muted-foreground">
+                  Destination: configured staff room. Public acknowledgments and user notices are off. Turning this mode off stops new processing and keeps existing reviews internal.
+                </p>
+              ) : <>
               <div className="mt-3 space-y-2">
                 <div className="flex items-center gap-1.5">
                   <p className="text-xs font-medium text-foreground">Internal Notice Target</p>
@@ -671,6 +682,7 @@ export function ChannelAutoresponseCard({
                   </div>
                 ) : null}
               </div>
+              </>}
             </article>
           );
         })

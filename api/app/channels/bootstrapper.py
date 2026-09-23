@@ -177,6 +177,11 @@ class ChannelBootstrapper:
         self._register_question_prefilter(runtime)
         self._register_ingress_context_service(runtime)
 
+        from app.channels.staff_assist.context_runtime import MatrixContextRuntime
+
+        if runtime.resolve_optional("matrix_context_runtime") is None:
+            runtime.register("matrix_context_runtime", MatrixContextRuntime(runtime))
+
         return runtime
 
     @staticmethod

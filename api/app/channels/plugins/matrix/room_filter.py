@@ -76,3 +76,8 @@ def resolve_allowed_reaction_rooms(settings: Any | None) -> frozenset[str]:
     if alert_room:
         rooms.add(alert_room)
     return restrict_to_responder_rooms(settings, rooms)
+
+
+def resolve_allowed_context_source_rooms(settings: Any | None) -> frozenset[str]:
+    """Read-only context inputs; these never expand responder send scope."""
+    return normalize_room_ids(getattr(settings, "MATRIX_CONTEXT_SOURCE_ROOMS", None))

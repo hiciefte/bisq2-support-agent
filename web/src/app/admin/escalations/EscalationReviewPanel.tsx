@@ -36,6 +36,8 @@ import {
 import { toast } from 'sonner'
 import { makeAuthenticatedRequest } from '@/lib/auth'
 import type { EscalationItem } from './page'
+import { staffContextMetadata } from "@/lib/staff-context"
+import { StaffContextDetails } from "./StaffContextDetails"
 import { MarkdownContent } from "@/components/chat/components/markdown-content"
 import { SourceBadges } from "@/components/chat/components/source-badges"
 import { ConfidenceBadge } from "@/components/chat/components/confidence-badge"
@@ -553,6 +555,9 @@ export function EscalationReviewPanel({
   const aiDraftRef = useRef<string>("")
   const suggestedTextareaRef = useRef<HTMLTextAreaElement | null>(null)
 
+  const context = staffContextMetadata(escalation.channel_metadata)
+  const isStaffContext = context !== null
+
   const [phase, setPhase] = useState<'review' | 'faq'>('review')
   const [questionView, setQuestionView] = useState<'canonical' | 'original'>(() => getInitialQuestionView(escalation))
   const [suggestedAnswerView, setSuggestedAnswerView] = useState<'canonical' | 'localized'>(() => getInitialSuggestedAnswerView(escalation))
@@ -584,7 +589,7 @@ export function EscalationReviewPanel({
       escalation.staff_answer || "",
       canonicalDraft,
     )
-    const shouldStartInFaq = hasExistingStaffResponse && (
+    const shouldStartInFaq = !isStaffContext && hasExistingStaffResponse && (
       hasMeaningfulEdit &&
       (escalation.status === "responded" || escalation.status === "closed")
     )
@@ -602,12 +607,12 @@ export function EscalationReviewPanel({
     })
     setFaqCategory(inferred.category)
     setFaqProtocol(inferred.protocol)
-  }, [escalation])
+  }, [escalation, isStaffContext])
 
   useEffect(() => {
     let cancelled = false
 
-    if (!open || !escalation.id) {
+    if (!open || !escalation.id || isStaffContext) {
       setGroundingBrief(null)
       setGroundingBriefError(null)
       setIsLoadingGroundingBrief(false)
@@ -643,7 +648,7 @@ export function EscalationReviewPanel({
     return () => {
       cancelled = true
     }
-  }, [open, escalation.id])
+  }, [open, escalation.id, isStaffContext])
 
   useEffect(() => {
     if (!isEditingSuggestedAnswer) return
@@ -663,7 +668,7 @@ export function EscalationReviewPanel({
 
   const handleRespond = async () => {
     if (!staffAnswer.trim()) {
-      toast.error('Please enter a response before sending')
+      toast.error(isStaffContext ? "Enter a note before recording approval" : "Please enter a response before sending")
       return
     }
 
@@ -680,6 +685,12 @@ export function EscalationReviewPanel({
       )
 
       if (response.ok) {
+        if (isStaffContext) {
+          toast.success("Internal review recorded. No public reply sent.")
+          onUpdated()
+          onOpenChange(false)
+          return
+        }
         const trimmedAnswer = staffAnswer.trim()
         const unchangedFromAiDraft = !isMeaningfullyEditedAnswer(
           trimmedAnswer,
@@ -724,11 +735,12 @@ export function EscalationReviewPanel({
         setFaqProtocol(inferred.protocol)
         scrollToTop()
       } else {
-        const data = await response.json().catch(() => ({ detail: 'Failed to send response' }))
-        toast.error(data.detail || 'Failed to send response')
+        const fallback = isStaffContext ? "Failed to record review" : "Failed to send response"
+        const data = await response.json().catch(() => ({ detail: fallback }))
+        toast.error(data.detail || fallback)
       }
     } catch {
-      toast.error('An error occurred while sending the response')
+      toast.error(isStaffContext ? "Could not record the internal review" : "An error occurred while sending the response")
     } finally {
       setIsResponding(false)
     }
@@ -745,7 +757,7 @@ export function EscalationReviewPanel({
       )
 
       if (response.ok) {
-        toast.success('Escalation closed')
+        toast.success(isStaffContext ? "Staff context review closed" : "Escalation closed")
         onUpdated()
         onOpenChange(false)
       } else {
@@ -764,6 +776,7 @@ export function EscalationReviewPanel({
   }
 
   const createFaq = async (force: boolean) => {
+    if (isStaffContext) return
     if (!faqQuestion.trim() || !faqAnswer.trim()) {
       toast.error('Question and answer are required')
       return
@@ -940,6 +953,7 @@ export function EscalationReviewPanel({
   const localizedDraftAnswer = getLocalizedDraftAnswer(escalation)
   const hasDraftVariants = localizedDraftAnswer !== canonicalDraftAnswer
   const originalLanguageLabel = (escalation.user_language || "orig").toUpperCase()
+  const activePhase = isStaffContext ? "review" : phase
 
   return (
     <>
@@ -961,14 +975,14 @@ export function EscalationReviewPanel({
                 </Button>
               </DialogClose>
               <DialogTitle className="flex items-center gap-2">
-                {phase === 'review' ? 'Escalation Review' : 'Create FAQ'}
+                {activePhase === "review" ? (isStaffContext ? "Staff Context Review" : "Escalation Review") : "Create FAQ"}
                 <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${statusBadge.className}`}>
-                  {statusBadge.label}
+                  {isStaffContext && escalation.status === "responded" ? "Reviewed" : statusBadge.label}
                 </span>
               </DialogTitle>
               <DialogDescription>
-                {phase === 'review'
-                  ? 'Review and respond to the escalated support question.'
+                {activePhase === 'review'
+                  ? (isStaffContext ? "Review the AI context for staff. Your decision stays internal." : "Review and respond to the escalated support question.")
                   : 'Create an FAQ draft from the resolved escalation. You can edit everything before publishing.'}
               </DialogDescription>
 
@@ -1090,7 +1104,7 @@ export function EscalationReviewPanel({
                           </div>
                         </>
                       )}
-                      {typeof escalation.confidence_score === "number" && (
+                      {!isStaffContext && typeof escalation.confidence_score === "number" && (
                         <div className="flex items-center justify-between gap-3">
                           <span className="text-muted-foreground">Confidence</span>
                           <span className="tabular-nums text-foreground/90">{Math.round(escalation.confidence_score * 100)}%</span>
@@ -1111,6 +1125,7 @@ export function EscalationReviewPanel({
 
           <div ref={scrollAreaRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 pb-4 sm:px-6 sm:pb-6">
             <div className="space-y-5 pt-1">
+              {context && <StaffContextDetails context={context} />}
               <section className="space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
@@ -1153,18 +1168,18 @@ export function EscalationReviewPanel({
                 </div>
               </section>
 
-              {phase === 'review' && canRespond && (
+              {activePhase === 'review' && canRespond && (
                 <section className="space-y-3">
                   <div className="flex items-center gap-2">
                     <div className="min-w-0 flex items-center gap-2">
                       <Bot className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden="true" />
                       <h3 className="text-sm font-medium truncate">
-                        Suggested answer {suggestedAnswerView === "canonical" ? "(English canonical)" : `(Localized ${originalLanguageLabel})`}
+                        {isStaffContext ? "AI context" : `Suggested answer ${suggestedAnswerView === "canonical" ? "(English canonical)" : `(Localized ${originalLanguageLabel})`}`}
                         {suggestedAnswerView === "canonical" && isEditingSuggestedAnswer && (
                           <span className="text-muted-foreground ml-1">(Editing)</span>
                         )}
                       </h3>
-                      {typeof escalation.confidence_score === "number" && (
+                      {!isStaffContext && typeof escalation.confidence_score === "number" && (
                         <span className="text-xs text-muted-foreground tabular-nums shrink-0">
                           {Math.round(escalation.confidence_score * 100)}% confidence
                         </span>
@@ -1261,13 +1276,13 @@ export function EscalationReviewPanel({
                         </div>
                       ) : isEditingSuggestedAnswer ? (
                         <>
-                          <Label htmlFor="escalation-staff-answer" className="sr-only">Suggested answer (editable)</Label>
+                          <Label htmlFor="escalation-staff-answer" className="sr-only">{isStaffContext ? "Internal review note (editable)" : "Suggested answer (editable)"}</Label>
                           <Textarea
                             ref={suggestedTextareaRef}
                             id="escalation-staff-answer"
                             name="staff_answer"
                             rows={10}
-                            placeholder="Edit the AI draft or write your own response…"
+                            placeholder={isStaffContext ? "Edit the internal review note…" : "Edit the AI draft or write your own response…"}
                             value={staffAnswer}
                             onChange={(e) => {
                               setStaffAnswer(e.target.value)
@@ -1294,20 +1309,20 @@ export function EscalationReviewPanel({
                           {staffAnswer.trim() ? (
                             <MarkdownContent content={staffAnswer} className="text-sm" />
                           ) : (
-                            <p className="text-muted-foreground">No suggested answer available.</p>
+                            <p className="text-muted-foreground">{isStaffContext ? "No AI context note is available for this case." : "No suggested answer available."}</p>
                           )}
                         </div>
                       )}
 
-                      {(chatSources.length > 0 || typeof escalation.confidence_score === "number" || (suggestedAnswerView === "canonical" && isEditingSuggestedAnswer)) && (
+                      {(chatSources.length > 0 || !isStaffContext && typeof escalation.confidence_score === "number" || (suggestedAnswerView === "canonical" && isEditingSuggestedAnswer)) && (
                         <div className="mt-3 pt-3 border-t border-border/50 flex flex-wrap items-center gap-3">
                           {chatSources.length > 0 && <SourceBadges sources={chatSources} />}
-                          {typeof escalation.confidence_score === "number" && (
+                          {!isStaffContext && typeof escalation.confidence_score === "number" && (
                             <ConfidenceBadge confidence={escalation.confidence_score} />
                           )}
                           {suggestedAnswerView === "canonical" && isEditingSuggestedAnswer && (
                             <span className="text-[11px] text-muted-foreground">
-                              Tip: Press Cmd/Ctrl+Enter to send. Escape to preview.
+                              {isStaffContext ? "Cmd/Ctrl+Enter records approval. Escape previews the note." : "Tip: Press Cmd/Ctrl+Enter to send. Escape to preview."}
                             </span>
                           )}
                         </div>
@@ -1316,7 +1331,7 @@ export function EscalationReviewPanel({
                 </section>
               )}
 
-              {phase === 'review' && canRespond && (
+              {activePhase === 'review' && canRespond && !isStaffContext && (
                 <StaffGroundingBriefPanel
                   brief={groundingBrief}
                   isLoading={isLoadingGroundingBrief}
@@ -1325,10 +1340,18 @@ export function EscalationReviewPanel({
                 />
               )}
 
+              {isStaffContext && !canRespond && canonicalDraftAnswer && (
+                <section className="space-y-3">
+                  <h3 className="text-sm font-medium">Original AI context</h3>
+                  <MarkdownContent content={canonicalDraftAnswer} className="text-sm" />
+                  {chatSources.length > 0 && <SourceBadges sources={chatSources} />}
+                </section>
+              )}
+
               {escalation.staff_answer && (escalation.status === 'responded' || escalation.status === 'closed') && (
                 <Card>
                   <CardHeader className="pb-3">
-                    <CardTitle className="text-sm">Staff response</CardTitle>
+                    <CardTitle className="text-sm">{isStaffContext ? "Recorded internal review" : "Staff response"}</CardTitle>
                   </CardHeader>
                   <CardContent className="pt-0">
                     <MarkdownContent content={escalation.staff_answer} className="text-sm" />
@@ -1341,7 +1364,7 @@ export function EscalationReviewPanel({
                 </Card>
               )}
 
-              {phase === 'faq' && (
+              {activePhase === 'faq' && (
                 <div className="rounded-lg border border-border bg-card p-4 space-y-4">
                   <div
                     className="text-sm p-3 bg-emerald-500/10 rounded-lg border-l-2 border-emerald-500/40 text-emerald-400 leading-relaxed"
@@ -1469,7 +1492,7 @@ export function EscalationReviewPanel({
           <div className="border-t border-border bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-4 py-4 sm:px-6">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-                {phase === 'review' && canRespond && (
+                {activePhase === 'review' && canRespond && (
                   <Button
                     onClick={handleRespond}
                     size="sm"
@@ -1478,14 +1501,16 @@ export function EscalationReviewPanel({
                   >
                     {isResponding ? (
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : isStaffContext ? (
+                      <Check className="mr-2 h-4 w-4" />
                     ) : (
                       <Send className="mr-2 h-4 w-4" />
                     )}
-                    Send Response
+                    {isStaffContext ? "Record approval" : "Send Response"}
                   </Button>
                 )}
 
-                {phase === 'faq' && (
+                {activePhase === 'faq' && (
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                     <Button
                       onClick={handleComplete}
@@ -1515,25 +1540,25 @@ export function EscalationReviewPanel({
               </div>
 
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                {phase === 'review' && canClose && (
+                {activePhase === 'review' && canClose && (!isStaffContext || canRespond) && (
                   <Button
                     onClick={handleClose}
                     variant="outline"
                     size="sm"
                     disabled={isActionInProgress}
                     className="w-full text-muted-foreground hover:text-foreground sm:w-auto"
-                    title="Dismiss this escalation without sending a reply to the user"
+                    title={isStaffContext ? "Close this internal review without approving the note" : "Dismiss this escalation without sending a reply to the user"}
                   >
                     {isClosing ? (
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     ) : (
                       <XCircle className="mr-2 h-4 w-4" />
                     )}
-                    Dismiss (No Reply)
+                    {isStaffContext ? "Reject note" : "Dismiss (No Reply)"}
                   </Button>
                 )}
 
-                {phase === 'faq' && (
+                {activePhase === 'faq' && (
                   <Button
                     type="button"
                     variant="outline"

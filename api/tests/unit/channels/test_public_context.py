@@ -6,6 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 from app.channels.staff_assist.public_context import (
+    PUBLIC_CONTEXT_PROMPT,
     PublicContextRequest,
     PublicContextService,
 )
@@ -147,18 +148,96 @@ def test_question_only_note_is_suppressed_even_with_a_citation(text):
     assert result.rendered_note is None
 
 
-def test_word_limit_rejects_instead_of_truncating_a_qualification():
-    text = (
-        " ".join(["fact"] * 45)
-        + " This observation does not establish the user's local connection health."
-    )
-    accepted = PublicContextService(llm_output(text=text)).preview(request())
+@pytest.mark.parametrize(
+    "qualification",
+    [
+        "This observation does not establish the user's local connection health.",
+        "This outcome requires the earlier operation to have failed before completion.",
+        "This workflow requires an account that supports transfers to other people.",
+        "This observation describes availability, not whether the earlier request completed.",
+        "The documentation does not explain the separate display problem.",
+    ],
+)
+def test_word_limit_rejects_instead_of_truncating_a_qualification(qualification):
+    from html import unescape
+
+    from markdown_it import MarkdownIt
+
+    # Synthetic conditions exercise rendering and length boundaries, not the
+    # model's ability to identify necessary conditions in real evidence.
+    text = " ".join(["context"] * (55 - len(qualification.split())))
+    text += " " + qualification
+    result = PublicContextService(llm_output(text=text)).preview(request())
     assert len(text.split()) == 55
-    assert accepted.decision.action == "note"
-    assert "does not establish" in accepted.rendered_note
-    rejected = PublicContextService(llm_output(text="Fresh " + text)).preview(request())
-    assert rejected.decision.reason == "invalid_model_output"
-    assert rejected.rendered_note is None
+    assert result.decision.action == "note"
+    assert result.decision.text == text
+    assert text in unescape(MarkdownIt("commonmark").render(result.rendered_note))
+    assert result.requires_review is True
+
+    over_limit = PublicContextService(llm_output(text="Additional " + text)).preview(
+        request()
+    )
+    assert over_limit.decision.action == "silence"
+    assert over_limit.decision.reason == "invalid_model_output"
+    assert over_limit.rendered_note is None
+
+
+def test_generation_receives_complete_question_and_evidence_without_rewriting():
+    evidence = [
+        {
+            "id": "workflow",
+            "title": "Workflow",
+            "content": "The documented workflow uses an external account.",
+            "url": "https://bisq.wiki/Support",
+        },
+        {
+            "id": "limits",
+            "title": "Limits",
+            "content": "The workflow requires transfers to other people's accounts.",
+            "url": "https://bisq.wiki/Support",
+        },
+    ]
+    preview_request = request(
+        question="Does readiness establish completion, and why is the screen flickering?",
+        recent_messages=[
+            {
+                "role": "user",
+                "content": "Readiness and the display are separate issues.",
+            }
+        ],
+        evidence=evidence,
+    )
+    llm = llm_output(action="silence", text="", source_ids=[])
+    result = PublicContextService(llm).preview(preview_request)
+    args, kwargs = llm.invoke.call_args
+    assert json.loads(args[0]) == preview_request.model_dump()
+    assert kwargs["system_content"] == PUBLIC_CONTEXT_PROMPT
+    assert preview_request.question not in kwargs["system_content"]
+    assert result.decision.action == "silence"
+    assert result.rendered_note is None
+    llm.invoke.assert_called_once()
+
+
+def test_leading_partial_claim_boundary_survives_the_actual_message_renderer():
+    from html import unescape
+
+    from app.channels.plugins.support_markdown import build_matrix_message_content
+
+    # This exercises the output contract, not semantic judgment of model output.
+    # A separate model evaluation must establish that the prompt elicits it.
+    text = (
+        "The evidence does not establish completion or explain the screen flicker. "
+        "For the documented product, this status reports readiness."
+    )
+    llm = llm_output(text=text)
+    result = PublicContextService(llm).preview(request())
+    content = build_matrix_message_content(result.rendered_note)
+    assert result.decision.text == text
+    assert text in unescape(content["formatted_body"])
+    assert content["body"].startswith("AI context · " + text)
+    assert result.requires_review is True
+    assert result.model_called is True
+    llm.invoke.assert_called_once()
 
 
 @pytest.mark.parametrize(

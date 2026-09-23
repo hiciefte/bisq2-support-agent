@@ -23,6 +23,8 @@ const POLICIES: ChannelAutoresponsePolicy[] = [
     enabled: true,
     generation_enabled: true,
     ai_response_mode: "autonomous",
+    response_kind: "answer",
+    delivery_audience: "source_room",
     hitl_approval_timeout_seconds: 3600,
     draft_assistant_enabled: false,
     knowledge_amplifier_enabled: false,
@@ -58,6 +60,8 @@ const POLICIES: ChannelAutoresponsePolicy[] = [
     enabled: true,
     generation_enabled: true,
     ai_response_mode: "hitl",
+    response_kind: "answer",
+    delivery_audience: "source_room",
     hitl_approval_timeout_seconds: 3600,
     draft_assistant_enabled: true,
     knowledge_amplifier_enabled: true,
@@ -93,6 +97,8 @@ const POLICIES: ChannelAutoresponsePolicy[] = [
     enabled: false,
     generation_enabled: false,
     ai_response_mode: "autonomous",
+    response_kind: "answer",
+    delivery_audience: "source_room",
     hitl_approval_timeout_seconds: 3600,
     draft_assistant_enabled: true,
     knowledge_amplifier_enabled: true,
@@ -153,6 +159,27 @@ function sectionScope(row: HTMLElement, heading: string) {
 }
 
 describe("ChannelAutoresponseCard", () => {
+  test("Matrix staff context makes the internal destination explicit and hides public controls", () => {
+    renderCard({ policies: POLICIES.map((policy) => policy.channel_id === "matrix" ? {
+      ...policy,
+      generation_enabled: true,
+      enabled: false,
+      ai_response_mode: "hitl",
+      response_kind: "public_context",
+      delivery_audience: "staff_room",
+      acknowledgment_mode: "none",
+      escalation_user_notice_mode: "none",
+    } : policy) });
+    const row = within(screen.getByText("Matrix Support Rooms").closest("article") as HTMLElement);
+    expect(row.getByText(/cannot publish to the public room/)).toBeInTheDocument();
+    expect(row.getByText(/Destination: configured staff room/)).toBeInTheDocument();
+    expect(row.getByRole("radio", { name: "Staff context" })).toHaveAttribute("data-state", "on");
+    expect(row.getByRole("radio", { name: "Auto-send" })).toBeDisabled();
+    expect(row.queryByText("User Room Escalation Notice")).not.toBeInTheDocument();
+    expect(row.queryByText("Immediate Receipt Acknowledgment")).not.toBeInTheDocument();
+    expect(row.queryByRole("radio", { name: "Public Room" })).not.toBeInTheDocument();
+  });
+
   test("renders channel mode labels from policy state", () => {
     renderCard();
 

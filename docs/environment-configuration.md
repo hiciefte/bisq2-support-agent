@@ -193,12 +193,14 @@ The Matrix integration uses lane-specific names to separate support-channel inge
     *   Required: Yes (when `MATRIX_SYNC_ENABLED=true`)
 *   **`MATRIX_RESPONDER_ROOMS`**
     *   Description: Optional exact room IDs for live questions, reactions,
-        ChatOps, and all support-agent delivery, including staff-reviewed sends
-        and trust notices. Historical Q/A ingestion keeps using
+        ChatOps, and legacy answer delivery, including staff-reviewed answers
+        and trust notices. Staff-context notes use the separate staff-room
+        destination described below. Historical Q/A ingestion keeps using
         `MATRIX_SYNC_ROOMS` independently.
     *   Default: Unset preserves the existing live room configuration. Setting
-        an empty value denies all live rooms; it does not fall back to the
-        history source. Invalid room IDs reject startup.
+        an empty value denies rooms on those legacy paths; it does not fall
+        back to the history source or stop staff-context notes. Invalid room
+        IDs reject startup.
     *   For an isolated pilot, set this to only the approved operations room,
         and point `MATRIX_STAFF_ROOM` and `MATRIX_CHATOPS_ROOM_IDS` there too.
         Ancillary room settings cannot expand the explicit responder scope.
@@ -212,6 +214,22 @@ The Matrix integration uses lane-specific names to separate support-channel inge
     *   Description: Dedicated Matrix staff room for escalation notifications ("needs human attention" notices) and staff actions.
     *   Required: **Recommended** (escalation notices are lost if this is empty)
     *   Note: In local testing, this can be set to the same room as `MATRIX_ALERT_ROOM`.
+*   **`MATRIX_CONTEXT_SOURCE_ROOMS`**
+    *   Description: Exact, comma-separated group-room IDs admitted as read-only
+        question sources by Matrix staff-context mode. These rooms do not join
+        the responder delivery allowlist. Empty by default; invalid IDs reject
+        startup. The bot must already belong to these rooms and the staff room.
+    *   Staff-context delivery uses only `MATRIX_STAFF_ROOM`, independently of
+        `MATRIX_RESPONDER_ROOMS`. The destination must differ from every context
+        source. Review mode, generation, Matrix sync and a connected client are
+        also required. Select **Off** in the Matrix runtime policy to stop new
+        notes, or clear `MATRIX_CONTEXT_SOURCE_ROOMS` and recreate the API to
+        disable intake. An empty responder allowlist or
+        `AUTONOMOUS_DELIVERY_ENABLED=false` alone does not stop this path.
+        Environment changes require API recreation; adding this variable alone
+        activates no channel.
+    *   See [Matrix staff-context operation](matrix-staff-context.md) for review,
+        uncertainty, and rollout boundaries.
 *   **`MATRIX_CHATOPS_ENABLED`**
     *   Description: Enables Matrix `!case` command handling in staff rooms.
     *   Default: `false`

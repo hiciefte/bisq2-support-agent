@@ -361,3 +361,57 @@ describe('EscalationReviewPanel grounding brief', () => {
     })
   })
 })
+
+describe("staff context internal review", () => {
+  const metadata = {
+    response_kind: "public_context",
+    delivery_audience: "staff_room",
+    context_status: "delivered",
+    context_reason: "staff_context_delivered",
+    source_url: "https://matrix.to/#/!support:example.org/$question",
+    staff_thread_url: "https://matrix.to/#/!staff:example.org/$root",
+    evidence_version: "evidence-v1",
+    generation_version: "context-v1",
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    makeAuthenticatedRequestMock.mockResolvedValue(jsonResponse({ status: "responded", delivery_status: "not_required" }));
+  });
+
+  test("approval records one internal review without delivery, auto-close, grounding fetch or FAQ follow-on", async () => {
+    const onUpdated = jest.fn();
+    const onOpenChange = jest.fn();
+    render(<EscalationReviewPanel escalation={createEscalation({ channel: "matrix", channel_metadata: metadata })} open onUpdated={onUpdated} onOpenChange={onOpenChange} />);
+    expect(screen.getByText(/cannot publish a reply to the public room/)).toBeInTheDocument();
+    expect(screen.getByText("Posted to staff thread")).toBeInTheDocument();
+    expect(screen.getByText("The context note is available in the staff thread.")).toBeInTheDocument();
+    expect(screen.queryByText("staff_context_delivered")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "View source question" })).toHaveAttribute("href", metadata.source_url);
+    expect(screen.getByRole("link", { name: "Open staff thread" })).toHaveAttribute("href", metadata.staff_thread_url);
+    expect(screen.queryByRole("button", { name: "Send Response" })).not.toBeInTheDocument();
+    expect(makeAuthenticatedRequestMock).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Record approval" }));
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(makeAuthenticatedRequestMock).toHaveBeenCalledTimes(1);
+    expect(makeAuthenticatedRequestMock).toHaveBeenCalledWith("/admin/escalations/42/respond", expect.objectContaining({ method: "POST" }));
+    expect(screen.queryByRole("button", { name: /Create FAQ/ })).not.toBeInTheDocument();
+    expect(onUpdated).toHaveBeenCalledTimes(1);
+  });
+
+  test("reject closes the internal case without calling respond", async () => {
+    render(<EscalationReviewPanel escalation={createEscalation({ channel: "matrix", channel_metadata: metadata })} open onUpdated={jest.fn()} onOpenChange={jest.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Reject note" }));
+    await waitFor(() => expect(makeAuthenticatedRequestMock).toHaveBeenCalledWith("/admin/escalations/42/close", { method: "POST" }));
+    expect(makeAuthenticatedRequestMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("an edited reviewed case stays an internal review and rejects unsafe metadata links", () => {
+    render(<EscalationReviewPanel escalation={createEscalation({ channel: "matrix", channel_metadata: { ...metadata, source_url: "javascript:alert(1)", staff_thread_url: "https://matrix.to.evil.test/#/room" }, status: "responded", staff_answer: "Staff edited this internal note." })} open onUpdated={jest.fn()} onOpenChange={jest.fn()} />);
+    expect(screen.getByText("Reviewed")).toBeInTheDocument();
+    expect(screen.getByText("Recorded internal review")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Create FAQ|Send Response|Record approval/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "View source question" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Open staff thread" })).not.toBeInTheDocument();
+  });
+});

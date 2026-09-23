@@ -14,8 +14,9 @@ from app.channels.models import ChannelType, IncomingMessage, UserContext
 from app.channels.plugins.matrix.room_filter import (
     is_responder_room_allowed,
     normalize_room_ids,
+    resolve_allowed_context_source_rooms,
 )
-from app.channels.policy import is_generation_enabled
+from app.channels.policy import is_generation_enabled, is_staff_context_enabled
 from app.channels.response_dispatcher import ChannelResponseDispatcher
 from app.channels.staff import resolve_channel_staff_resolver
 from app.channels.trust_monitor.executor import run_in_trust_monitor_executor
@@ -119,11 +120,16 @@ class MatrixMessageHandler:
 
         room_id = str(getattr(room, "room_id", "") or "").strip()
         settings = getattr(getattr(channel, "runtime", None), "settings", None)
-        if not is_responder_room_allowed(settings, room_id):
+        context_source = is_staff_context_enabled(
+            self.autoresponse_policy_service, self.channel_id
+        ) and room_id in resolve_allowed_context_source_rooms(settings)
+        if not context_source and not is_responder_room_allowed(settings, room_id):
             return
         allowed_staff_rooms = self.staff_command_room_ids
         if not room_id or (
-            room_id not in self.allowed_room_ids and room_id not in allowed_staff_rooms
+            not context_source
+            and room_id not in self.allowed_room_ids
+            and room_id not in allowed_staff_rooms
         ):
             logger.debug(
                 "Ignoring Matrix message from unsupported room room_id=%s",
@@ -157,7 +163,7 @@ class MatrixMessageHandler:
             return
         if not is_generation_enabled(self.autoresponse_policy_service, self.channel_id):
             return
-        if room_id not in self.allowed_room_ids:
+        if not context_source and room_id not in self.allowed_room_ids:
             return
 
         orchestrator = self._get_orchestrator()

@@ -2,7 +2,9 @@
 
 from datetime import datetime, timedelta, timezone
 
+import aiosqlite
 import pytest
+from app.channels.staff_assist.context_runtime import ContextReviewStore
 from app.models.escalation import (
     DuplicateEscalationError,
     EscalationCreate,
@@ -453,3 +455,57 @@ class TestEscalationRepositoryMaintenance:
         assert count == 1
         fetched = await escalation_repository.get_by_message_id("msg-001")
         assert fetched is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("status", "resolved_at"),
+        [
+            (EscalationStatus.CLOSED, "closed_at"),
+            (EscalationStatus.RESPONDED, "responded_at"),
+        ],
+    )
+    async def test_purge_old_removes_only_expired_context_attempts(
+        self, escalation_repository, status, resolved_at
+    ):
+        await escalation_repository.initialize()
+        store = ContextReviewStore(escalation_repository.db_path)
+        cases = [
+            await escalation_repository.create(
+                _make_create(
+                    message_id=message_id,
+                    channel="matrix",
+                    channel_metadata={"response_kind": "public_context"},
+                )
+            )
+            for message_id in ("expired", "recent", "pending")
+        ]
+        for case in cases:
+            assert await store.reserve(case.id)
+        threshold = datetime.now(timezone.utc) - timedelta(days=30)
+        async with aiosqlite.connect(escalation_repository.db_path) as db:
+            await db.execute(
+                "UPDATE escalations SET created_at = ?",
+                ((threshold - timedelta(days=60)).isoformat(),),
+            )
+            await db.commit()
+        for case, resolution in (
+            (cases[0], threshold - timedelta(days=1)),
+            (cases[1], threshold + timedelta(days=1)),
+        ):
+            await escalation_repository.update(
+                case.id,
+                EscalationUpdate(status=status, **{resolved_at: resolution}),
+            )
+
+        assert await escalation_repository.purge_old(threshold) == 1
+
+        async with aiosqlite.connect(escalation_repository.db_path) as db:
+            cursor = await db.execute(
+                "SELECT escalation_id FROM matrix_context_attempts ORDER BY escalation_id"
+            )
+            assert await cursor.fetchall() == [(cases[1].id,), (cases[2].id,)]
+            cursor = await db.execute("PRAGMA foreign_key_check")
+            assert await cursor.fetchall() == []
+        assert await escalation_repository.get_by_id(cases[0].id) is None
+        assert await escalation_repository.get_by_id(cases[1].id) is not None
+        assert await escalation_repository.get_by_id(cases[2].id) is not None

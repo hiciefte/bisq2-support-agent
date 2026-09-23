@@ -48,27 +48,19 @@ class TestHistoryNegation:
 
     def test_not_on_bisq1_is_not_a_bisq1_signal(self, detector):
         result = detector._detect_version_in_history_content("i'm not on bisq 1")
-        assert result is not None
-        version, confidence = result
-        assert version == "Bisq 2"
-        assert confidence < 0.80
+        assert result is None
 
     def test_dont_use_bisq1_is_not_a_bisq1_signal(self, detector):
         result = detector._detect_version_in_history_content("i don't use bisq 1")
-        assert result is not None
-        assert result[0] == "Bisq 2"
+        assert result is None
 
     def test_no_longer_on_bisq1_is_not_a_bisq1_signal(self, detector):
         result = detector._detect_version_in_history_content("i am no longer on bisq 1")
-        assert result is not None
-        assert result[0] == "Bisq 2"
+        assert result is None
 
-    def test_not_using_bisq2_is_weak_bisq1_signal(self, detector):
+    def test_not_using_bisq2_does_not_establish_bisq1(self, detector):
         result = detector._detect_version_in_history_content("i'm not using bisq 2")
-        assert result is not None
-        version, confidence = result
-        assert version == "Bisq 1"
-        assert confidence < 0.80
+        assert result is None
 
     def test_negated_bisq1_with_positive_bisq2_mention(self, detector):
         result = detector._detect_version_in_history_content(

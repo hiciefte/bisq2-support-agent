@@ -4,6 +4,7 @@ Wraps existing Matrix integration into channel plugin architecture.
 """
 
 import asyncio
+import inspect
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,13 +16,12 @@ from app.channels.models import (
     ChannelCapability,
     ChannelType,
     OutgoingMessage,
-    ResponseMetadata,
     SendResult,
-    UserContext,
 )
 from app.channels.plugins.matrix.room_filter import (
     is_responder_room_allowed,
     normalize_room_ids,
+    resolve_allowed_context_source_rooms,
     resolve_allowed_reaction_rooms,
     resolve_allowed_responder_rooms,
     restrict_to_responder_rooms,
@@ -31,6 +31,7 @@ from app.channels.plugins.support_markdown import (
     compose_support_answer_markdown,
     serialize_sources_for_tracking,
 )
+from app.channels.policy import allows_source_delivery, is_staff_context_enabled
 from app.channels.registry import register_channel
 from app.channels.staff import (
     StaffResolver,
@@ -331,6 +332,15 @@ class MatrixChannel(ChannelBase):
         # handler starts Matrix sync, so wiring after start leaves a real race.
         await self._wire_trust_monitor_alerts()
 
+        # Reopen the existing worker before sync can ingest new questions.
+        # Durable attempt claims still prevent replay of interrupted cases.
+        context_runtime = self.runtime.resolve_optional("matrix_context_runtime")
+        start_context = getattr(context_runtime, "start", None)
+        if callable(start_context):
+            result = start_context()
+            if inspect.isawaitable(result):
+                await result
+
         # Wire message handler if registered (push message flow)
         message_handler = self.runtime.resolve_optional("matrix_message_handler")
         if message_handler:
@@ -382,6 +392,12 @@ class MatrixChannel(ChannelBase):
 
     async def stop(self, *, strict: bool = False) -> None:
         """Stop the channel without racing a send or session rotation."""
+        context_runtime = self.runtime.resolve_optional("matrix_context_runtime")
+        close = getattr(context_runtime, "close", None)
+        if callable(close):
+            result = close()
+            if inspect.isawaitable(result):
+                await result
         async with self._session_lifecycle_lock:
             await self._stop_unlocked(strict=strict)
 
@@ -518,50 +534,8 @@ class MatrixChannel(ChannelBase):
         if publisher is None or not hasattr(publisher, "matrix_notifier"):
             return
 
-        settings = getattr(self.runtime, "settings", None)
-        policy_service = self.runtime.resolve_optional("trust_monitor_policy_service")
-
         async def _notify_staff_room(finding: Any) -> bool:
-            from app.channels.trust_monitor.alert_formatting import (
-                format_trust_alert_for_matrix,
-            )
-
-            policy_target = ""
-            if policy_service is not None:
-                policy_target = str(
-                    getattr(
-                        policy_service.get_policy(),
-                        "matrix_staff_room_id",
-                        "",
-                    )
-                    or ""
-                ).strip()
-            target = (
-                policy_target
-                or str(getattr(settings, "MATRIX_STAFF_ROOM", "") or "").strip()
-            )
-            if not target:
-                return False
-            message = OutgoingMessage(
-                message_id=f"trust-{finding.id}",
-                in_reply_to="",
-                channel=ChannelType.MATRIX,
-                answer=format_trust_alert_for_matrix(finding),
-                user=UserContext(
-                    user_id="trust-monitor",
-                    session_id=None,
-                    channel_user_id="trust-monitor",
-                    auth_token=None,
-                ),
-                metadata=ResponseMetadata(
-                    processing_time_ms=0.0,
-                    rag_strategy="trust_monitor",
-                    model_name="trust-monitor",
-                    confidence_score=None,
-                    version_confidence=None,
-                ),
-            )
-            return bool(await self.send_message(target, message))
+            return bool(await self._send_trust_monitor_alert(finding))
 
         publisher.matrix_notifier = _notify_staff_room
         bind_loop = getattr(publisher, "bind_loop", None)
@@ -620,13 +594,163 @@ class MatrixChannel(ChannelBase):
         self.runtime.register("proactive_scanner", scanner, allow_override=True)
         self._logger.info("Proactive impersonation scanner started")
 
+    def allows_source_delivery(self) -> bool:
+        """General sends may not escape a staff-only policy, including approval."""
+        return allows_source_delivery(
+            self.runtime.resolve_optional("channel_autoresponse_policy_service"),
+            "matrix",
+        )
+
+    async def _send_trust_monitor_alert(self, finding: Any) -> SendResult:
+        """Deliver a trust finding only to its configured, allowlisted staff room."""
+        from app.channels.trust_monitor.alert_formatting import (
+            format_trust_alert_for_matrix,
+        )
+
+        async with self._session_lifecycle_lock:
+            settings = getattr(self.runtime, "settings", None)
+            if not (
+                getattr(settings, "MATRIX_SYNC_ENABLED", False) is True
+                and self._is_connected
+            ):
+                return SendResult(sent=False, error="matrix_channel_inactive")
+            try:
+                service = self.runtime.resolve_optional("trust_monitor_policy_service")
+                policy = service.get_policy() if service is not None else None
+                target = str(
+                    getattr(policy, "matrix_staff_room_id", "")
+                    or getattr(settings, "MATRIX_STAFF_ROOM", "")
+                    or ""
+                ).strip()
+                public_rooms = normalize_room_ids(
+                    getattr(policy, "matrix_public_room_ids", None)
+                ) | normalize_room_ids(
+                    getattr(settings, "TRUST_MONITOR_MATRIX_PUBLIC_ROOMS", None)
+                )
+                if (
+                    not target.startswith("!")
+                    or ":" not in target
+                    or any(char.isspace() for char in target)
+                    or target in resolve_allowed_context_source_rooms(settings)
+                    or target in public_rooms
+                    or not is_responder_room_allowed(settings, target)
+                ):
+                    return SendResult(sent=False, error="trust_destination_invalid")
+                client = self.runtime.resolve_optional("matrix_client")
+                if client is None:
+                    return SendResult(sent=False, error="matrix_client_unavailable")
+                content = build_matrix_message_content(
+                    format_trust_alert_for_matrix(finding), msgtype="m.notice"
+                )
+                response = await asyncio.wait_for(
+                    client.room_send(
+                        room_id=target,
+                        message_type="m.room.message",
+                        content=content,
+                        tx_id=f"trust-{finding.id}",
+                        ignore_unverified_devices=bool(
+                            getattr(
+                                settings, "MATRIX_SYNC_IGNORE_UNVERIFIED_DEVICES", True
+                            )
+                        ),
+                    ),
+                    timeout=self.MATRIX_OP_TIMEOUT_SECONDS,
+                )
+            except Exception:
+                self._logger.exception("Trust monitor staff delivery failed")
+                return SendResult(sent=False, error="trust_delivery_failed")
+            event_id = getattr(response, "event_id", None)
+            if isinstance(event_id, str) and event_id:
+                return SendResult(sent=True, external_message_id=event_id)
+            return SendResult(sent=False, error="trust_delivery_failed")
+
+    async def send_staff_context(
+        self,
+        markdown: str,
+        *,
+        transaction_id: str,
+        thread_root_event_id: str | None = None,
+        expected_room_id: str | None = None,
+    ) -> SendResult:
+        """Publish only to the configured staff destination, never a caller target."""
+        async with self._session_lifecycle_lock:
+            settings = getattr(self.runtime, "settings", None)
+            if not (
+                getattr(settings, "MATRIX_SYNC_ENABLED", False) is True
+                and self._is_connected
+            ):
+                return SendResult(sent=False, error="matrix_channel_inactive")
+            service = self.runtime.resolve_optional(
+                "channel_autoresponse_policy_service"
+            )
+            if not is_staff_context_enabled(service, "matrix"):
+                return SendResult(sent=False, error="staff_context_disabled")
+            target = str(getattr(settings, "MATRIX_STAFF_ROOM", "") or "").strip()
+            if expected_room_id is not None and target != expected_room_id:
+                return SendResult(sent=False, error="staff_context_destination_changed")
+            if (
+                not target.startswith("!")
+                or ":" not in target
+                or any(char.isspace() for char in target)
+                or target in resolve_allowed_context_source_rooms(settings)
+            ):
+                return SendResult(sent=False, error="staff_context_destination_invalid")
+            if (
+                not isinstance(markdown, str)
+                or not markdown.strip()
+                or not transaction_id
+            ):
+                return SendResult(sent=False, error="staff_context_content_invalid")
+            if (
+                thread_root_event_id is not None
+                and not thread_root_event_id.startswith("$")
+            ):
+                return SendResult(sent=False, error="staff_context_thread_invalid")
+            client = self.runtime.resolve_optional("matrix_client")
+            if client is None:
+                return SendResult(sent=False, error="matrix_client_unavailable")
+            content = build_matrix_message_content(markdown, msgtype="m.notice")
+            if thread_root_event_id is not None:
+                content["m.relates_to"] = {
+                    "rel_type": "m.thread",
+                    "event_id": thread_root_event_id,
+                    "is_falling_back": True,
+                    "m.in_reply_to": {"event_id": thread_root_event_id},
+                }
+            try:
+                response = await asyncio.wait_for(
+                    client.room_send(
+                        room_id=target,
+                        message_type="m.room.message",
+                        content=content,
+                        tx_id=transaction_id,
+                        ignore_unverified_devices=bool(
+                            getattr(
+                                settings, "MATRIX_SYNC_IGNORE_UNVERIFIED_DEVICES", True
+                            )
+                        ),
+                    ),
+                    timeout=self.MATRIX_OP_TIMEOUT_SECONDS,
+                )
+            except Exception:
+                self._logger.exception("Staff context delivery failed")
+                return SendResult(sent=False, error="staff_context_delivery_failed")
+            event_id = getattr(response, "event_id", None)
+            if isinstance(event_id, str) and event_id:
+                return SendResult(sent=True, external_message_id=event_id)
+            return SendResult(sent=False, error="staff_context_delivery_failed")
+
     async def send_message(self, target: str, message: OutgoingMessage) -> SendResult:
         """Send a response while holding the shared Matrix lifecycle lock."""
+        if not self.allows_source_delivery():
+            return SendResult(sent=False, error="matrix_staff_review_only")
         if not is_responder_room_allowed(
             getattr(self.runtime, "settings", None), target
         ):
             return SendResult(sent=False, error="matrix_room_out_of_scope")
         async with self._session_lifecycle_lock:
+            if not self.allows_source_delivery():
+                return SendResult(sent=False, error="matrix_staff_review_only")
             return await self._send_message_unlocked(target, message)
 
     async def _send_message_unlocked(
@@ -804,11 +928,15 @@ class MatrixChannel(ChannelBase):
 
     async def send_reaction(self, room_id: str, event_id: str, key: str) -> bool:
         """Send a reaction while holding the shared Matrix lifecycle lock."""
+        if not self.allows_source_delivery():
+            return False
         if not is_responder_room_allowed(
             getattr(self.runtime, "settings", None), room_id
         ):
             return False
         async with self._session_lifecycle_lock:
+            if not self.allows_source_delivery():
+                return False
             return await self._send_reaction_unlocked(room_id, event_id, key)
 
     async def _send_reaction_unlocked(
