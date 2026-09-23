@@ -16,6 +16,7 @@ from app.channels.models import (
     UserContext,
 )
 from app.models.escalation import Escalation
+from app.services.escalation.escalation_service import is_staff_context_case
 
 logger = logging.getLogger(__name__)
 
@@ -67,10 +68,7 @@ class ResponseDelivery:
             # Get delivery target from metadata
             metadata = escalation.channel_metadata or {}
             if escalation.channel == "matrix":
-                if (
-                    metadata.get("response_kind") == "public_context"
-                    or metadata.get("delivery_audience") == "staff_room"
-                ):
+                if is_staff_context_case(escalation):
                     return False
                 allows_source = getattr(adapter, "allows_source_delivery", None)
                 if callable(allows_source) and allows_source() is False:

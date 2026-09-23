@@ -164,7 +164,7 @@ class TestMatrixChannelLifecycle:
             )
         )
         channel = MatrixChannel(runtime)
-        channel.send_message = AsyncMock(
+        channel._send_trust_monitor_alert = AsyncMock(
             return_value=SendResult(sent=False, error="transport down")
         )
         monkeypatch.setattr(

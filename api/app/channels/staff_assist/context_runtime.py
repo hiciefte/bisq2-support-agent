@@ -168,6 +168,17 @@ class MatrixContextRuntime:
     """Generate one cited note, persist it, and publish only a staff thread."""
 
     CONTEXT_READ_TIMEOUT_SECONDS = 30.0
+    PRETRANSPORT_REFUSALS = frozenset(
+        {
+            "matrix_channel_inactive",
+            "staff_context_disabled",
+            "staff_context_destination_changed",
+            "staff_context_destination_invalid",
+            "staff_context_content_invalid",
+            "staff_context_thread_invalid",
+            "matrix_client_unavailable",
+        }
+    )
 
     def __init__(self, runtime: Any) -> None:
         self.runtime = runtime
@@ -298,6 +309,25 @@ class MatrixContextRuntime:
     ) -> bool:
         if not await self._case_is_open(case_id):
             return False
+        from app.channels.plugins.matrix.room_filter import (
+            resolve_allowed_context_source_rooms,
+        )
+
+        staff_room = str(
+            getattr(self.runtime.settings, "MATRIX_STAFF_ROOM", "") or ""
+        ).strip()
+        # Match the transport guard before retrieval or paid generation. Keep
+        # this destination pinned so a later change is refused at send time.
+        if (
+            not staff_room.startswith("!")
+            or ":" not in staff_room
+            or any(char.isspace() for char in staff_room)
+            or staff_room in resolve_allowed_context_source_rooms(self.runtime.settings)
+        ):
+            await store.update(
+                case_id, status="deferred", reason="staff_context_destination_invalid"
+            )
+            return False
         if (
             getattr(getattr(incoming, "classification", None), "topic_risk", None)
             == "high"
@@ -385,7 +415,6 @@ class MatrixContextRuntime:
                 case_id, status="deferred", reason=reason or "review_or_policy_changed"
             )
             return False
-        staff_room = str(getattr(self.runtime.settings, "MATRIX_STAFF_ROOM", "") or "")
         room_id = incoming.channel_metadata["room_id"]
         root = (
             f"Support question · staff review #{case_id}\n\n"
@@ -446,9 +475,9 @@ class MatrixContextRuntime:
                 staff_note_event_id=note_id,
             )
             return True
-        except PublicationSuppressed:
+        except PublicationSuppressed as exc:
             await store.update(
-                case_id, status="deferred", reason="review_or_scope_changed"
+                case_id, status="deferred", reason=str(exc) or "review_or_scope_changed"
             )
             return False
         except Exception:
@@ -486,7 +515,11 @@ class MatrixContextRuntime:
                 "room_id"
             ) not in resolve_allowed_context_source_rooms(self.runtime.settings):
                 raise PublicationSuppressed
-            return await channel.send_staff_context(text, **kwargs)
+            result = await channel.send_staff_context(text, **kwargs)
+            reason = getattr(result, "error", None)
+            if not result and reason in self.PRETRANSPORT_REFUSALS:
+                raise PublicationSuppressed(reason)
+            return result
         finally:
             await service._release_delivery_lock(case_id, lock)
 

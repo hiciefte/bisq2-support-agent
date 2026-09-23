@@ -892,7 +892,12 @@ class Settings(BaseSettings):
             raise ValueError(
                 "MATRIX_CONTEXT_SOURCE_ROOMS must contain exact Matrix room IDs"
             )
-        return cls.parse_matrix_responder_rooms(v) or []
+        try:
+            return cls.parse_matrix_responder_rooms(v) or []
+        except ValueError as exc:
+            raise ValueError(
+                "MATRIX_CONTEXT_SOURCE_ROOMS must contain exact Matrix room IDs"
+            ) from exc
 
     @field_validator("MATRIX_RESPONDER_ROOMS", mode="before")
     @classmethod

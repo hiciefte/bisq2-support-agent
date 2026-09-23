@@ -14,7 +14,12 @@ from fastapi.testclient import TestClient
 
 @pytest.mark.parametrize(
     "metadata",
-    [{"response_kind": "public_context"}, {"delivery_audience": "staff_room"}],
+    [
+        {"response_kind": "public_context"},
+        {"delivery_audience": "staff_room"},
+        {"response_kind": "public_context", "delivery_audience": "source_room"},
+        {"response_kind": "answer", "delivery_audience": "staff_room"},
+    ],
 )
 @pytest.mark.parametrize("path", ["/response", "/events", "/rate"])
 def test_internal_case_not_publicly_available(metadata, path):

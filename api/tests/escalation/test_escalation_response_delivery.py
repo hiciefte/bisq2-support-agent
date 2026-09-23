@@ -90,6 +90,38 @@ class TestResponseDeliveryMatrix:
     """Test Matrix channel delivery behavior."""
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "metadata",
+        [
+            {"response_kind": "public_context"},
+            {"delivery_audience": "staff_room"},
+            {"response_kind": "public_context", "delivery_audience": "staff_room"},
+            {"response_kind": "public_context", "delivery_audience": "source_room"},
+            {"response_kind": "answer", "delivery_audience": "staff_room"},
+        ],
+    )
+    async def test_either_internal_marker_blocks_delivery(self, metadata):
+        from app.services.escalation.response_delivery import ResponseDelivery
+
+        adapter = MagicMock()
+        adapter.allows_source_delivery.return_value = True
+        adapter.send_message = AsyncMock(return_value=True)
+        registry = MagicMock()
+        registry.get.return_value = adapter
+        escalation = _make_escalation(
+            channel="matrix",
+            channel_metadata={"room_id": "!room:example.org", **metadata},
+        )
+
+        assert (
+            await ResponseDelivery(registry).deliver(escalation, "Internal note")
+            is False
+        )
+
+        adapter.get_delivery_target.assert_not_called()
+        adapter.send_message.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_matrix_delivery_sends_to_room(self):
         """Matrix delivery calls send_message on adapter."""
         from app.services.escalation.response_delivery import ResponseDelivery

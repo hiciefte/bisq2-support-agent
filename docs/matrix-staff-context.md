@@ -27,7 +27,11 @@ off preserves the audience of existing cases.
 
 Configure approved group rooms in `MATRIX_CONTEXT_SOURCE_ROOMS` and a distinct
 staff destination in `MATRIX_STAFF_ROOM`. This read scope never expands
-`MATRIX_RESPONDER_ROOMS`. The bot must already be joined and able to decrypt the
+`MATRIX_RESPONDER_ROOMS`; that allowlist does not gate staff-context delivery.
+Select **Off** in the Matrix runtime policy to stop new context notes. Clearing
+`MATRIX_CONTEXT_SOURCE_ROOMS` and recreating the API disables intake. An empty
+responder allowlist or the legacy autonomous-delivery switch alone does not stop
+staff-context notes. The bot must already be joined and able to decrypt the
 staff room with its existing identity. Staff membership checks use configured
 trusted IDs, never display names or claims in a message.
 

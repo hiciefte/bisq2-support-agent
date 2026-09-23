@@ -286,3 +286,138 @@ async def test_start_reopens_context_before_message_ingress(tmp_path):
     channel.join_room = AsyncMock(return_value=True)
     await channel.start()
     assert calls == ["context", "handler"]
+
+
+def setup_trust_publisher(tmp_path):
+    service, runtime, client, channel = setup_boundary(tmp_path)
+    publisher = SimpleNamespace(matrix_notifier=None, bind_loop=MagicMock())
+    runtime.register("trust_monitor_service", SimpleNamespace(publisher=publisher))
+    policy = SimpleNamespace(
+        matrix_staff_room_id=STAFF, matrix_public_room_ids=[SOURCE]
+    )
+    runtime.register(
+        "trust_monitor_policy_service", SimpleNamespace(get_policy=lambda: policy)
+    )
+    finding = SimpleNamespace(
+        id=42,
+        detector_key="staff_name_collision",
+        score=0.95,
+        evidence_summary={},
+        suspect_display_name="Synthetic suspect",
+        suspect_actor_id="@suspect:example.invalid",
+        channel_id="matrix",
+    )
+    return service, runtime, client, channel, publisher, policy, finding
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("generation_enabled", [True, False])
+async def test_trust_alert_keeps_staff_delivery_in_context_mode(
+    tmp_path, generation_enabled
+):
+    service, runtime, client, channel, publisher, policy, finding = (
+        setup_trust_publisher(tmp_path)
+    )
+    service.set_policy("matrix", generation_enabled=generation_enabled)
+    target = "!truststaff:example.invalid"
+    policy.matrix_staff_room_id = target
+    runtime.settings.MATRIX_RESPONDER_ROOMS = [target]
+    runtime.settings.MATRIX_SYNC_IGNORE_UNVERIFIED_DEVICES = False
+    channel.send_message = AsyncMock(side_effect=AssertionError("generic send"))
+    channel.send_staff_context = AsyncMock(side_effect=AssertionError("context send"))
+    await channel._wire_trust_monitor_alerts()
+    assert await publisher.matrix_notifier(finding)
+    assert await publisher.matrix_notifier(finding)
+    for call in client.room_send.await_args_list:
+        sent = call.kwargs
+        assert sent["room_id"] == target
+        assert sent["tx_id"] == "trust-42"
+        assert sent["ignore_unverified_devices"] is False
+        assert sent["content"]["msgtype"] == "m.notice"
+        assert "Trust monitor alert" in sent["content"]["body"]
+        assert "<strong>" in sent["content"]["formatted_body"]
+        assert "m.relates_to" not in sent["content"]
+    channel.send_message.assert_not_awaited()
+    channel.send_staff_context.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "condition",
+    [
+        "source",
+        "public",
+        "direct_user",
+        "malformed",
+        "missing",
+        "out_of_scope",
+        "empty_scope",
+        "sync_off",
+        "disconnected",
+        "policy_error",
+        "no_client",
+    ],
+)
+async def test_trust_alert_rechecks_staff_scope_and_lifecycle(tmp_path, condition):
+    _, runtime, client, channel, publisher, policy, finding = setup_trust_publisher(
+        tmp_path
+    )
+    await channel._wire_trust_monitor_alerts()
+    if condition in {"source", "direct_user", "malformed", "missing", "out_of_scope"}:
+        policy.matrix_staff_room_id = {
+            "source": SOURCE,
+            "direct_user": "@direct:example.invalid",
+            "malformed": "!bad",
+            "missing": "",
+            "out_of_scope": "!unknown:example.invalid",
+        }[condition]
+        runtime.settings.MATRIX_STAFF_ROOM = ""
+    elif condition == "public":
+        policy.matrix_public_room_ids = [STAFF]
+    elif condition == "empty_scope":
+        runtime.settings.MATRIX_RESPONDER_ROOMS = []
+    elif condition == "sync_off":
+        runtime.settings.MATRIX_SYNC_ENABLED = False
+    elif condition == "disconnected":
+        channel._is_connected = False
+    elif condition == "policy_error":
+        runtime.register(
+            "trust_monitor_policy_service",
+            SimpleNamespace(
+                get_policy=MagicMock(side_effect=RuntimeError("unavailable"))
+            ),
+            allow_override=True,
+        )
+    elif condition == "no_client":
+        runtime.unregister("matrix_client")
+    assert not await publisher.matrix_notifier(finding)
+    client.room_send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["exception", "timeout", "response_error"])
+async def test_trust_alert_transport_failure_is_not_retried_or_redirected(
+    tmp_path, failure
+):
+    _, _, client, channel, publisher, _, finding = setup_trust_publisher(tmp_path)
+    if failure == "response_error":
+        client.room_send.return_value = SimpleNamespace(message="failed")
+    else:
+        client.room_send.side_effect = (
+            TimeoutError("uncertain")
+            if failure == "timeout"
+            else RuntimeError("failed")
+        )
+    await channel._wire_trust_monitor_alerts()
+    assert not await publisher.matrix_notifier(finding)
+    client.room_send.assert_awaited_once()
+    assert client.room_send.await_args.kwargs["room_id"] == STAFF
+
+
+@pytest.mark.asyncio
+async def test_trust_alert_preserves_configured_staff_fallback(tmp_path):
+    _, _, client, channel, publisher, policy, finding = setup_trust_publisher(tmp_path)
+    policy.matrix_staff_room_id = ""
+    await channel._wire_trust_monitor_alerts()
+    assert await publisher.matrix_notifier(finding)
+    assert client.room_send.await_args.kwargs["room_id"] == STAFF

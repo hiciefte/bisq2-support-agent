@@ -329,17 +329,26 @@ async def test_source_change_during_generation_preserves_note_but_suppresses_sen
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "failure", ["root_false", "root_timeout", "note_false", "note_timeout"]
+    "failure",
+    [
+        "root_false",
+        "root_timeout",
+        "root_delivery_failed",
+        "note_false",
+        "note_timeout",
+        "note_delivery_failed",
+    ],
 )
 async def test_uncertain_or_partial_delivery_is_durable_and_never_retried(
     runtime_case, failure
 ):
     bundle = runtime_case
-    failed = (
-        TimeoutError("Ambiguous remote send")
-        if failure.endswith("timeout")
-        else SendResult(False)
-    )
+    if failure.endswith("timeout"):
+        failed = TimeoutError("Ambiguous remote send")
+    elif failure.endswith("delivery_failed"):
+        failed = SendResult(False, error="staff_context_delivery_failed")
+    else:
+        failed = SendResult(False)
     bundle.sender.side_effect = (
         [SendResult(True, "$staff-root"), failed]
         if failure.startswith("note")
@@ -351,6 +360,83 @@ async def test_uncertain_or_partial_delivery_is_durable_and_never_retried(
     assert bundle.sender.await_count == expected_sends
     if expected_sends == 2:
         assert case.channel_metadata["staff_root_event_id"] == "$staff-root"
+    restarted = MatrixContextRuntime(bundle.runtime)
+    assert await restarted.process(bundle.incoming, bundle.channel) is False
+    await restarted.drain()
+    assert bundle.sender.await_count == expected_sends
+    bundle.llm.invoke.assert_called_once()
+    no_public_delivery(bundle)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "destination",
+    [
+        None,
+        "",
+        "   ",
+        "!missing-server",
+        "@user:example.org",
+        "!bad room:example.org",
+        SOURCE_ROOM,
+    ],
+)
+async def test_invalid_staff_destination_defers_before_retrieval_or_provider(
+    runtime_case, destination
+):
+    bundle = runtime_case
+    bundle.runtime.settings.MATRIX_STAFF_ROOM = destination
+    case = await run(bundle)
+    assert case.channel_metadata["context_status"] == "deferred"
+    assert (
+        case.channel_metadata["context_reason"] == "staff_context_destination_invalid"
+    )
+    bundle.client.room_context.assert_not_awaited()
+    bundle.retrieve.assert_not_called()
+    bundle.llm.invoke.assert_not_called()
+    bundle.sender.assert_not_awaited()
+    no_public_delivery(bundle)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["root", "note"])
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "matrix_channel_inactive",
+        "staff_context_disabled",
+        "staff_context_destination_changed",
+        "staff_context_destination_invalid",
+        "staff_context_content_invalid",
+        "staff_context_thread_invalid",
+        "matrix_client_unavailable",
+    ],
+)
+async def test_known_staff_send_refusal_is_deferred_and_preserves_partial_root(
+    runtime_case, phase, reason
+):
+    bundle = runtime_case
+    refused = SendResult(False, error=reason)
+    bundle.sender.side_effect = (
+        [SendResult(True, "$staff-root"), refused] if phase == "note" else [refused]
+    )
+    case = await run(bundle)
+    assert case.channel_metadata["context_status"] == "deferred"
+    assert case.channel_metadata["context_reason"] == reason
+    assert case.ai_draft_answer.startswith("AI context · ")
+    assert (
+        case.channel_metadata["staff_root_transaction_id"] == f"context-{case.id}-root"
+    )
+    assert (
+        case.channel_metadata["staff_note_transaction_id"] == f"context-{case.id}-note"
+    )
+    assert "staff_note_event_id" not in case.channel_metadata
+    expected_sends = 2 if phase == "note" else 1
+    if phase == "note":
+        assert case.channel_metadata["staff_root_event_id"] == "$staff-root"
+        assert case.channel_metadata["staff_thread_url"].endswith("/$staff-root")
+    else:
+        assert "staff_root_event_id" not in case.channel_metadata
     restarted = MatrixContextRuntime(bundle.runtime)
     assert await restarted.process(bundle.incoming, bundle.channel) is False
     await restarted.drain()

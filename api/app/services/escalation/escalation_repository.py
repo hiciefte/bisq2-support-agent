@@ -530,6 +530,7 @@ class EscalationRepository:
         - responded escalations use `responded_at`
         """
         async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("PRAGMA foreign_keys = ON")
             cursor = await db.execute(
                 """
                 DELETE FROM escalations
