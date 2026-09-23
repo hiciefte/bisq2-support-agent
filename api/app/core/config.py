@@ -169,6 +169,7 @@ class Settings(BaseSettings):
     MATRIX_SYNC_ROOMS: str | list[str] = ""  # Room IDs to monitor
     # Unset preserves legacy scope; explicitly empty disables all live rooms.
     MATRIX_RESPONDER_ROOMS: Annotated[str | list[str] | None, NoDecode] = None
+    MATRIX_CONTEXT_SOURCE_ROOMS: Annotated[str | list[str], NoDecode] = []
     MATRIX_STAFF_ROOM: str = ""  # Room ID for staff escalation notifications
     MATRIX_SYNC_SESSION_FILE: str = "matrix_session.json"
     MATRIX_SYNC_IGNORE_UNVERIFIED_DEVICES: bool = True
@@ -883,6 +884,15 @@ class Settings(BaseSettings):
         if v > 30 * 24 * 3600:  # 30 days
             raise ValueError("ADMIN_SESSION_MAX_AGE must be ≤ 30 days")
         return v
+
+    @field_validator("MATRIX_CONTEXT_SOURCE_ROOMS", mode="before")
+    @classmethod
+    def parse_matrix_context_source_rooms(cls, v: str | list[str]) -> list[str]:
+        if v is None:
+            raise ValueError(
+                "MATRIX_CONTEXT_SOURCE_ROOMS must contain exact Matrix room IDs"
+            )
+        return cls.parse_matrix_responder_rooms(v) or []
 
     @field_validator("MATRIX_RESPONDER_ROOMS", mode="before")
     @classmethod

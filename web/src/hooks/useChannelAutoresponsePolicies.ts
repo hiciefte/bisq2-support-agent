@@ -18,6 +18,8 @@ type ChannelPolicyPatch = Partial<
     | "enabled"
     | "generation_enabled"
     | "ai_response_mode"
+    | "response_kind"
+    | "delivery_audience"
     | "hitl_approval_timeout_seconds"
     | "draft_assistant_enabled"
     | "knowledge_amplifier_enabled"
@@ -139,6 +141,8 @@ export function useChannelAutoresponsePolicies(initialPolicies: ChannelAutorespo
       typeof normalizedPatch.enabled !== "boolean"
       && typeof normalizedPatch.generation_enabled !== "boolean"
       && typeof normalizedPatch.ai_response_mode !== "string"
+      && typeof normalizedPatch.response_kind !== "string"
+      && typeof normalizedPatch.delivery_audience !== "string"
       && typeof normalizedPatch.hitl_approval_timeout_seconds !== "number"
       && typeof normalizedPatch.draft_assistant_enabled !== "boolean"
       && typeof normalizedPatch.knowledge_amplifier_enabled !== "boolean"
@@ -246,6 +250,23 @@ export function useChannelAutoresponsePolicies(initialPolicies: ChannelAutorespo
 
   const setChannelMode = useCallback(
     async (channelId: ChannelId, mode: ChannelResponseMode) => {
+      if (channelId === "matrix") {
+        if (mode === "auto") {
+          setError("Matrix public auto-send is unavailable. Use staff context review.");
+          return false;
+        }
+        return updateChannelPolicy(channelId, {
+          generation_enabled: mode === "review",
+          enabled: false,
+          ai_response_mode: "hitl",
+          response_kind: "public_context",
+          delivery_audience: "staff_room",
+          acknowledgment_mode: "none",
+          escalation_user_notice_mode: "none",
+          public_escalation_notice_enabled: false,
+          escalation_notification_channel: "staff_room",
+        });
+      }
       if (mode === "off") {
         return updateChannelPolicy(channelId, {
           generation_enabled: false,

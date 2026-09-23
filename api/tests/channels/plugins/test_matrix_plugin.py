@@ -559,7 +559,9 @@ class TestMatrixChannelMessageHandling:
         mock_client.rooms = {"!room:matrix.org": MagicMock()}
 
         runtime = MagicMock(spec=ChannelRuntime)
-        runtime.resolve_optional = MagicMock(return_value=mock_client)
+        runtime.resolve_optional = MagicMock(
+            side_effect=lambda key: mock_client if key == "matrix_client" else None
+        )
 
         channel = MatrixChannel(runtime)
 
@@ -598,7 +600,9 @@ class TestMatrixChannelMessageHandling:
         mock_client.join = AsyncMock(return_value=MagicMock(room_id="!room:matrix.org"))
 
         runtime = MagicMock(spec=ChannelRuntime)
-        runtime.resolve_optional = MagicMock(return_value=mock_client)
+        runtime.resolve_optional = MagicMock(
+            side_effect=lambda key: mock_client if key == "matrix_client" else None
+        )
 
         channel = MatrixChannel(runtime)
 
@@ -623,7 +627,9 @@ class TestMatrixChannelMessageHandling:
         mock_client.rooms = {"!room:matrix.org": MagicMock()}
 
         runtime = MagicMock(spec=ChannelRuntime)
-        runtime.resolve_optional = MagicMock(return_value=mock_client)
+        runtime.resolve_optional = MagicMock(
+            side_effect=lambda key: mock_client if key == "matrix_client" else None
+        )
         runtime.settings = SimpleNamespace(MATRIX_RESPONDER_ROOMS=None)
         runtime.settings.MATRIX_SYNC_IGNORE_UNVERIFIED_DEVICES = False
 
@@ -648,7 +654,9 @@ class TestMatrixChannelMessageHandling:
         mock_client.rooms = {"!room:matrix.org": MagicMock()}
 
         runtime = MagicMock(spec=ChannelRuntime)
-        runtime.resolve_optional = MagicMock(return_value=mock_client)
+        runtime.resolve_optional = MagicMock(
+            side_effect=lambda key: mock_client if key == "matrix_client" else None
+        )
 
         channel = MatrixChannel(runtime)
 
@@ -694,7 +702,9 @@ class TestMatrixChannelMessageHandling:
         mock_client.room_send = AsyncMock(return_value=MockRoomSendError())
 
         runtime = MagicMock(spec=ChannelRuntime)
-        runtime.resolve_optional = MagicMock(return_value=mock_client)
+        runtime.resolve_optional = MagicMock(
+            side_effect=lambda key: mock_client if key == "matrix_client" else None
+        )
 
         channel = MatrixChannel(runtime)
 
@@ -713,7 +723,9 @@ class TestMatrixChannelMessageHandling:
         mock_client.room_send = AsyncMock(return_value=mock_response)
 
         runtime = MagicMock(spec=ChannelRuntime)
-        runtime.resolve_optional = MagicMock(return_value=mock_client)
+        runtime.resolve_optional = MagicMock(
+            side_effect=lambda key: mock_client if key == "matrix_client" else None
+        )
 
         channel = MatrixChannel(runtime)
 
@@ -761,7 +773,9 @@ class TestMatrixChannelRoomManagement:
         mock_client.join = AsyncMock(return_value=mock_response)
 
         runtime = MagicMock(spec=ChannelRuntime)
-        runtime.resolve_optional = MagicMock(return_value=mock_client)
+        runtime.resolve_optional = MagicMock(
+            side_effect=lambda key: mock_client if key == "matrix_client" else None
+        )
 
         channel = MatrixChannel(runtime)
         result = await channel.join_room("!room:matrix.org")
@@ -795,7 +809,9 @@ class TestMatrixChannelRoomManagement:
         mock_client.join = AsyncMock(return_value=mock_error)
 
         runtime = MagicMock(spec=ChannelRuntime)
-        runtime.resolve_optional = MagicMock(return_value=mock_client)
+        runtime.resolve_optional = MagicMock(
+            side_effect=lambda key: mock_client if key == "matrix_client" else None
+        )
 
         channel = MatrixChannel(runtime)
         result = await channel.join_room("!room:matrix.org")
@@ -814,7 +830,9 @@ class TestMatrixChannelRoomManagement:
         mock_client.room_leave = AsyncMock(return_value=mock_response)
 
         runtime = MagicMock(spec=ChannelRuntime)
-        runtime.resolve_optional = MagicMock(return_value=mock_client)
+        runtime.resolve_optional = MagicMock(
+            side_effect=lambda key: mock_client if key == "matrix_client" else None
+        )
 
         channel = MatrixChannel(runtime)
         result = await channel.leave_room("!room:matrix.org")
@@ -848,7 +866,9 @@ class TestMatrixChannelRoomManagement:
         mock_client.room_leave = AsyncMock(return_value=mock_error)
 
         runtime = MagicMock(spec=ChannelRuntime)
-        runtime.resolve_optional = MagicMock(return_value=mock_client)
+        runtime.resolve_optional = MagicMock(
+            side_effect=lambda key: mock_client if key == "matrix_client" else None
+        )
 
         channel = MatrixChannel(runtime)
         result = await channel.leave_room("!room:matrix.org")

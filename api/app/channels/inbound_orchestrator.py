@@ -91,6 +91,26 @@ class InboundMessageOrchestrator:
                     canonical.event_id,
                 )
                 return False
+            # Context review has one durable, staff-only path. It must not fall
+            # through to legacy answer generation on zero-delay, capacity, or
+            # missing-arbitration paths.
+            if self.channel_id == "matrix" and self.autoresponse_policy_service:
+                policy = self.autoresponse_policy_service.get_policy("matrix")
+                if getattr(policy, "response_kind", "answer") == "public_context":
+                    runtime = getattr(self.channel, "runtime", None)
+                    context_runtime = (
+                        runtime.resolve_optional("matrix_context_runtime")
+                        if runtime
+                        else None
+                    )
+                    if context_runtime is None:
+                        logger.error(
+                            "Matrix context runtime is unavailable; no delivery"
+                        )
+                        return False
+                    sent = await context_runtime.process(incoming, self.channel)
+                    await self._update_thread_state(canonical, incoming=incoming)
+                    return bool(sent)
             arbitration = self._resolve_arbitration_service()
             if arbitration is not None:
                 thread_id, room_or_conversation_id = self._derive_arbitration_keys(

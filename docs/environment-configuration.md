@@ -212,6 +212,17 @@ The Matrix integration uses lane-specific names to separate support-channel inge
     *   Description: Dedicated Matrix staff room for escalation notifications ("needs human attention" notices) and staff actions.
     *   Required: **Recommended** (escalation notices are lost if this is empty)
     *   Note: In local testing, this can be set to the same room as `MATRIX_ALERT_ROOM`.
+*   **`MATRIX_CONTEXT_SOURCE_ROOMS`**
+    *   Description: Exact, comma-separated group-room IDs admitted as read-only
+        question sources by Matrix staff-context mode. These rooms do not join
+        the responder delivery allowlist. Empty by default; invalid IDs reject
+        startup. The bot must already belong to these rooms and the staff room.
+    *   Staff-context delivery uses only `MATRIX_STAFF_ROOM`, which must differ
+        from every context source. Review mode, generation, Matrix sync and a
+        connected client are also required. Environment changes require API
+        recreation; adding this variable alone activates no channel.
+    *   See [Matrix staff-context operation](matrix-staff-context.md) for review,
+        uncertainty, and rollout boundaries.
 *   **`MATRIX_CHATOPS_ENABLED`**
     *   Description: Enables Matrix `!case` command handling in staff rooms.
     *   Default: `false`

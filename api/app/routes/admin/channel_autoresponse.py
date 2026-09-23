@@ -28,6 +28,8 @@ class ChannelAutoResponsePolicyResponse(BaseModel):
     enabled: bool
     generation_enabled: bool
     ai_response_mode: str
+    response_kind: str = "answer"
+    delivery_audience: str = "source_room"
     hitl_approval_timeout_seconds: int
     draft_assistant_enabled: bool
     knowledge_amplifier_enabled: bool
@@ -60,6 +62,8 @@ class UpdateChannelAutoResponsePolicyRequest(BaseModel):
     enabled: bool | None = None
     generation_enabled: bool | None = None
     ai_response_mode: str | None = None
+    response_kind: str | None = None
+    delivery_audience: str | None = None
     hitl_approval_timeout_seconds: int | None = None
     draft_assistant_enabled: bool | None = None
     knowledge_amplifier_enabled: bool | None = None
@@ -105,6 +109,8 @@ def _to_response(
         enabled=policy.enabled,
         generation_enabled=policy.generation_enabled,
         ai_response_mode=policy.ai_response_mode,
+        response_kind=policy.response_kind,
+        delivery_audience=policy.delivery_audience,
         hitl_approval_timeout_seconds=policy.hitl_approval_timeout_seconds,
         draft_assistant_enabled=policy.draft_assistant_enabled,
         knowledge_amplifier_enabled=policy.knowledge_amplifier_enabled,
@@ -183,6 +189,8 @@ def update_channel_autoresponse_policy(
         payload.enabled is None
         and payload.generation_enabled is None
         and payload.ai_response_mode is None
+        and payload.response_kind is None
+        and payload.delivery_audience is None
         and payload.hitl_approval_timeout_seconds is None
         and payload.draft_assistant_enabled is None
         and payload.knowledge_amplifier_enabled is None
@@ -219,6 +227,8 @@ def update_channel_autoresponse_policy(
             enabled=payload.enabled,
             generation_enabled=payload.generation_enabled,
             ai_response_mode=payload.ai_response_mode,
+            response_kind=payload.response_kind,
+            delivery_audience=payload.delivery_audience,
             hitl_approval_timeout_seconds=payload.hitl_approval_timeout_seconds,
             draft_assistant_enabled=payload.draft_assistant_enabled,
             knowledge_amplifier_enabled=payload.knowledge_amplifier_enabled,
@@ -245,10 +255,9 @@ def update_channel_autoresponse_policy(
             mandatory_escalation_topics=payload.mandatory_escalation_topics,
             timer_jitter_max_seconds=payload.timer_jitter_max_seconds,
         )
-    except ValueError:
-        supported = ", ".join(service.supported_channels)
+    except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unsupported channel_id '{channel_id}'. Supported channels: {supported}",
+            detail=str(exc),
         ) from None
     return _to_response(updated)

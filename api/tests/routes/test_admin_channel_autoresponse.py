@@ -144,3 +144,29 @@ def test_returns_503_when_service_missing() -> None:
 
     response = client.get("/admin/channels/autoresponse")
     assert response.status_code == 503
+
+
+def test_context_policy_round_trip_and_validation(tmp_path):
+    service = ChannelAutoResponsePolicyService(str(tmp_path / "policy.db"))
+    client = TestClient(_build_test_app(service))
+    payload = {
+        "generation_enabled": True,
+        "enabled": False,
+        "response_kind": "public_context",
+        "delivery_audience": "staff_room",
+        "ai_response_mode": "hitl",
+    }
+    response = client.put("/admin/channels/autoresponse/matrix", json=payload)
+    assert response.status_code == 200
+    assert {key: response.json()[key] for key in payload} == payload
+    assert (
+        client.get("/admin/channels/autoresponse/matrix").json()["delivery_audience"]
+        == "staff_room"
+    )
+    assert (
+        client.put(
+            "/admin/channels/autoresponse/matrix",
+            json={"ai_response_mode": "autonomous"},
+        ).status_code
+        == 400
+    )

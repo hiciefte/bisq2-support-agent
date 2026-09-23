@@ -14,6 +14,7 @@ from app.channels.plugins.matrix.room_filter import (
     is_responder_room_allowed,
     normalize_room_ids,
 )
+from app.channels.policy import allows_source_delivery
 from app.channels.reactions import (
     ReactionEvent,
     ReactionHandlerBase,
@@ -449,6 +450,11 @@ class MatrixReactionHandler(ReactionHandlerBase):
         root_event_id: str,
         body: str,
     ) -> None:
+        if not allows_source_delivery(
+            self.runtime.resolve_optional("channel_autoresponse_policy_service"),
+            "matrix",
+        ):
+            return
         client = self.runtime.resolve_optional("matrix_client")
         if client is None:
             return

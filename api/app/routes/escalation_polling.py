@@ -127,13 +127,21 @@ async def _localize_staff_answer(
 async def _get_escalation_or_404(service, message_id: str):
     escalation = await service.repository.get_by_message_id(message_id)
 
-    if not escalation:
+    if not escalation or _is_internal_context(escalation):
         logger.debug(f"Message ID not found: {message_id}")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"status": "not_found"},
         )
     return escalation
+
+
+def _is_internal_context(escalation) -> bool:
+    metadata = escalation.channel_metadata or {}
+    return (
+        metadata.get("response_kind") == "public_context"
+        or metadata.get("delivery_audience") == "staff_room"
+    )
 
 
 async def _build_user_poll_response(
@@ -143,6 +151,8 @@ async def _build_user_poll_response(
     message_id: str,
     settings,
 ) -> UserPollResponse:
+    if _is_internal_context(escalation):
+        raise HTTPException(status_code=404, detail={"status": "not_found"})
     signing_key = _get_rating_signing_key(settings)
     rater_id = _derive_rater_id(request)
     localized_staff_answer = await _localize_staff_answer(
@@ -312,7 +322,7 @@ async def stream_escalation_events(
         broker = _get_event_broker(request, service)
         if broker is None:
             escalation = await service.repository.get_by_message_id(message_id)
-            if escalation is None:
+            if escalation is None or _is_internal_context(escalation):
                 return
             response = await _build_user_poll_response(
                 request=request,
@@ -325,7 +335,7 @@ async def stream_escalation_events(
 
         async with broker.subscribe(message_id) as queue:
             escalation = await service.repository.get_by_message_id(message_id)
-            if escalation is None:
+            if escalation is None or _is_internal_context(escalation):
                 return
 
             response = await _build_user_poll_response(
@@ -397,7 +407,7 @@ async def rate_staff_answer(
     try:
         escalation = await service.repository.get_by_message_id(message_id)
 
-        if not escalation:
+        if not escalation or _is_internal_context(escalation):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Escalation not found",

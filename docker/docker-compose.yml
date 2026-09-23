@@ -224,6 +224,7 @@ services:
       - MATRIX_SYNC_ROOMS=${MATRIX_SYNC_ROOMS:-}
       # Bare pass-through preserves unset (legacy) versus explicit empty (deny).
       - MATRIX_RESPONDER_ROOMS
+      - MATRIX_CONTEXT_SOURCE_ROOMS=${MATRIX_CONTEXT_SOURCE_ROOMS:-}
       - MATRIX_STAFF_ROOM=${MATRIX_STAFF_ROOM:-}
       - MATRIX_CHATOPS_ENABLED=${MATRIX_CHATOPS_ENABLED:-false}
       - MATRIX_CHATOPS_ROOM_IDS=${MATRIX_CHATOPS_ROOM_IDS:-}

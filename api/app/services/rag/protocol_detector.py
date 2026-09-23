@@ -56,6 +56,21 @@ def _compile_negation_pattern(version_pattern: str) -> "re.Pattern[str]":
 _BISQ1_NEGATION_RE = _compile_negation_pattern(_BISQ1_MENTION_PATTERN)
 _BISQ2_NEGATION_RE = _compile_negation_pattern(_BISQ2_MENTION_PATTERN)
 
+# Treat a healthy app as a comparator only when another clause reports a
+# problem. Keep the predicate next to the product so it cannot reach across
+# an affected app's clause ("Bisq 1 fails, but Bisq 2 works fine").
+_WORKING_PRODUCT_RE = re.compile(
+    rf"(?:{_BISQ1_MENTION_PATTERN}|{_BISQ2_MENTION_PATTERN}|\bbisq\s+easy\b)"
+    r"\s+(?:still\s+)?(?:runs?|works?|opens?|connects?)"
+    r"(?:\s+(?:just\s+)?(?:fine|ok|okay|normally))?(?=\s*[,.;!?]|\s*$)"
+)
+_PRODUCT_REFERENCE_RE = re.compile(r"\bbisq(?:\s*(?:[12]|easy))?\b")
+_SUPPORT_PROBLEM_RE = re.compile(
+    r"\b(?:fails?|failed|failing|errors?|crash(?:es|ed|ing)?|stuck|missing"
+    r"|hang(?:s|ing)?|hung|(?:0|zero)\s+(?:peers|connections)|tim(?:e[sd]?|ing)\s+out"
+    r"|disappeared|problems?|cannot|not|never)\b|n['’]t\b"
+)
+
 # "switched/moved/migrated from bisq X to bisq Y" -> signal for Y
 _VERSION_SWITCH_RE = re.compile(
     rf"\b(?:switch(?:ed|ing)?|mov(?:ed|ing)|migrat(?:ed|ing))(?:\s+over)?\s+from\s+"
@@ -353,6 +368,8 @@ class ProtocolDetector:
         if self._is_product_comparison(question_lower):
             return ("Unknown", 0.0, None)
 
+        question_lower = self.product_detection_text(question_lower)
+
         # 1. Check for explicit version mentions (highest confidence)
         explicit_version = self._check_explicit_mentions(question_lower)
         if explicit_version:
@@ -371,7 +388,9 @@ class ProtocolDetector:
             return (*keyword_version, None)  # No clarification needed
 
         # 3. Check chat history for context
-        history_version = self._check_chat_history(chat_history)
+        history_version = self._check_chat_history(
+            chat_history, excluded_versions=self._negated_versions(question.lower())
+        )
         if history_version:
             return (*history_version, None)  # No clarification needed
 
@@ -406,6 +425,10 @@ class ProtocolDetector:
         """
         text_lower = text.lower()
 
+        if self._is_product_comparison(text_lower):
+            return ("Unknown", 0.0)
+        text_lower = self.product_detection_text(text_lower)
+
         # Check for explicit mentions first
         explicit = self._check_explicit_mentions(text_lower)
         if explicit:
@@ -420,14 +443,48 @@ class ProtocolDetector:
     # INTERNAL HELPERS
     # =========================================================================
 
+    @classmethod
+    def product_detection_text(cls, text: str) -> str:
+        """Keep product evidence about the issue, excluding healthy comparators.
+
+        This deliberately recognizes only adjacent positive working predicates
+        in declarative clauses. Questions and negated working statements remain
+        evidence; a working comparison alone never establishes the other app.
+        Shared with retrieval classification to avoid reintroducing discarded
+        product references downstream.
+        """
+        text = text.lower()
+        if cls._is_product_comparison(text):
+            return text
+        references = {
+            re.sub(r"\s+", "", match.group()).replace("bisqeasy", "bisq2")
+            for match in _PRODUCT_REFERENCE_RE.finditer(text)
+        }
+        has_comparator = len(references) > 1 or re.search(
+            r"\bother\s+(?:apps?|applications?|programs?)\b", text
+        )
+        clauses = re.split(r"(?<=[.!?;\n])|\b(?:but|while|whereas|and)\b", text)
+        if has_comparator and any(
+            _SUPPORT_PROBLEM_RE.search(clause) for clause in clauses
+        ):
+            text = " ".join(
+                clause
+                for clause in clauses
+                if not (
+                    _WORKING_PRODUCT_RE.search(clause)
+                    and "?" not in clause
+                    and not _SUPPORT_PROBLEM_RE.search(clause)
+                )
+            )
+        # Excluding one product is not positive evidence for the other product.
+        text = _BISQ1_NEGATION_RE.sub(" ", text)
+        return _BISQ2_NEGATION_RE.sub(" ", text)
+
     def _check_explicit_mentions(self, text: str) -> Optional[Tuple[str, float]]:
         """Check for explicit version mentions."""
         has_bisq1 = self._has_bisq1_mention(text)
         has_bisq2 = self._has_bisq2_mention(text)
         if has_bisq1 and has_bisq2:
-            comparator_target = self._target_from_comparator_phrase(text)
-            if comparator_target is not None:
-                return comparator_target
             return None
         if has_bisq1:
             if self._has_domain_context(text, self.BISQ2_DOMAIN_CONTEXT_KEYWORDS):
@@ -442,9 +499,10 @@ class ProtocolDetector:
     def _has_mixed_explicit_mentions(self, text: str) -> bool:
         return self._has_bisq1_mention(text) and self._has_bisq2_mention(text)
 
-    def _is_product_comparison(self, text: str) -> bool:
-        has_both_products = self._has_bisq1_mention(text) and (
-            self._has_bisq2_mention(text) or re.search(r"\bbisq\s+easy\b", text)
+    @classmethod
+    def _is_product_comparison(cls, text: str) -> bool:
+        has_both_products = cls._has_bisq1_mention(text) and (
+            cls._has_bisq2_mention(text) or re.search(r"\bbisq\s+easy\b", text)
         )
         has_grouped_versions = re.search(
             r"\bboth\s+versions\b|\bversions?\s+of\s+bisq\b"
@@ -471,24 +529,6 @@ class ProtocolDetector:
     def _has_domain_context(text: str, keywords: Tuple[str, ...]) -> bool:
         return any(keyword in text for keyword in keywords)
 
-    def _target_from_comparator_phrase(self, text: str) -> Optional[Tuple[str, float]]:
-        """Infer the target version when the other version is only a comparator."""
-        comparator = r"(?:connects?|works?|runs?|opens?)"
-        ok_state = r"(?:just\s+)?fine|ok|okay|normally"
-        bisq1_ok = re.search(
-            rf"(?:\bbisq\s*1\b|\bbisq1\b).{{0,80}}\b{comparator}\b.{{0,40}}\b(?:{ok_state})\b",
-            text,
-        )
-        bisq2_ok = re.search(
-            rf"(?:\bbisq\s*2\b|\bbisq2\b).{{0,80}}\b{comparator}\b.{{0,40}}\b(?:{ok_state})\b",
-            text,
-        )
-        if bisq1_ok and self._has_bisq2_mention(text):
-            return ("Bisq 2", 0.90)
-        if bisq2_ok and self._has_bisq1_mention(text):
-            return ("Bisq 1", 0.90)
-        return None
-
     def _check_keywords(self, text: str) -> Tuple[str, float]:
         """Score based on version-specific keywords."""
         bisq1_score = sum(1 for kw in self.BISQ1_KEYWORDS if kw in text)
@@ -504,10 +544,24 @@ class ProtocolDetector:
 
         return ("Unknown", 0.0)
 
-    def _check_chat_history(self, chat_history: List) -> Optional[Tuple[str, float]]:
+    @staticmethod
+    def _negated_versions(text: str) -> set[str]:
+        return {
+            version
+            for version, pattern in (
+                ("Bisq 1", _BISQ1_NEGATION_RE),
+                ("Bisq 2", _BISQ2_NEGATION_RE),
+            )
+            if pattern.search(text)
+        }
+
+    def _check_chat_history(
+        self, chat_history: List, excluded_versions: Optional[set[str]] = None
+    ) -> Optional[Tuple[str, float]]:
         """Check recent chat history for version context."""
         if not chat_history:
             return None
+        excluded_versions = set(excluded_versions or ())
         recent = chat_history[-5:]
         user_messages: List[str] = []
         assistant_messages: List[str] = []
@@ -522,14 +576,15 @@ class ProtocolDetector:
 
         # Prefer user signals over assistant prompts.
         for content in reversed(user_messages):
+            excluded_versions.update(self._negated_versions(content))
             detected = self._detect_version_in_history_content(content)
-            if detected is not None:
+            if detected is not None and detected[0] not in excluded_versions:
                 return detected
 
         # Fallback to assistant context only if user signals are absent.
         for content in reversed(assistant_messages):
             detected = self._detect_version_in_history_content(content)
-            if detected is not None:
+            if detected is not None and detected[0] not in excluded_versions:
                 return detected
 
         return None
@@ -572,8 +627,7 @@ class ProtocolDetector:
 
         Uses word-boundary matching with negation and switch-phrase handling:
         - "I switched from Bisq 1 to Bisq 2" counts as a Bisq 2 signal.
-        - "I'm not on Bisq 1" is weak evidence for Bisq 2 (and vice versa),
-          never a positive signal for the negated version.
+        - Negated versions and working comparators are not positive evidence.
         - Messages mentioning both versions without a switch phrase stay
           ambiguous and are skipped.
         """
@@ -581,10 +635,9 @@ class ProtocolDetector:
         if switch_target is not None:
             return (switch_target, 0.80)
 
-        negated_bisq1 = bool(_BISQ1_NEGATION_RE.search(content))
-        negated_bisq2 = bool(_BISQ2_NEGATION_RE.search(content))
-        has_bisq1 = self._has_bisq1_mention(content) and not negated_bisq1
-        has_bisq2 = self._has_bisq2_mention(content) and not negated_bisq2
+        content = self.product_detection_text(content)
+        has_bisq1 = self._has_bisq1_mention(content)
+        has_bisq2 = self._has_bisq2_mention(content)
 
         if has_bisq1 and has_bisq2:
             return None
@@ -592,13 +645,6 @@ class ProtocolDetector:
             return ("Bisq 1", 0.80)
         if has_bisq2:
             return ("Bisq 2", 0.80)
-
-        # A negated version without a positive mention of the other version
-        # is weak evidence for the other version.
-        if negated_bisq1 and not negated_bisq2:
-            return ("Bisq 2", 0.70)
-        if negated_bisq2 and not negated_bisq1:
-            return ("Bisq 1", 0.70)
 
         # Check for keyword patterns in history
         bisq1_found = any(kw in content for kw in self.BISQ1_KEYWORDS[:5])

@@ -276,3 +276,72 @@ def test_invalid_channel_raises_value_error(tmp_path) -> None:
 
     with pytest.raises(ValueError):
         service.get_policy("unknown")
+
+
+def test_context_policy_persists_and_preserves_legacy_channels(tmp_path):
+    path = str(tmp_path / "policy.db")
+    service = ChannelAutoResponsePolicyService(path)
+    before_web = service.get_policy("web")
+    before_bisq = service.get_policy("bisq2")
+    service.set_policy(
+        "matrix",
+        generation_enabled=True,
+        enabled=False,
+        ai_response_mode="hitl",
+        response_kind="public_context",
+        delivery_audience="staff_room",
+    )
+    restored = ChannelAutoResponsePolicyService(path)
+    policy = restored.get_policy("matrix")
+    assert (
+        policy.response_kind,
+        policy.delivery_audience,
+        policy.ai_response_mode,
+    ) == ("public_context", "staff_room", "hitl")
+    assert policy.generation_enabled and not policy.enabled
+    assert restored.get_policy("web") == before_web
+    assert restored.get_policy("bisq2") == before_bisq
+    disabled = restored.set_policy("matrix", generation_enabled=False)
+    assert disabled.delivery_audience == "staff_room" and not disabled.enabled
+
+
+@pytest.mark.parametrize(
+    "channel,kind,audience,mode",
+    [
+        ("web", "public_context", "staff_room", "hitl"),
+        ("matrix", "public_context", "source_room", "hitl"),
+        ("matrix", "public_context", "staff_room", "autonomous"),
+        ("matrix", "answer", "staff_room", "hitl"),
+        ("matrix", "invalid", "source_room", "hitl"),
+    ],
+)
+def test_reject_unsupported_context_policy_combinations(
+    tmp_path, channel, kind, audience, mode
+):
+    service = ChannelAutoResponsePolicyService(str(tmp_path / "policy.db"))
+    with pytest.raises(ValueError, match="Staff context requires"):
+        service.set_policy(
+            channel,
+            response_kind=kind,
+            delivery_audience=audience,
+            ai_response_mode=mode,
+        )
+
+
+def test_old_policy_schema_migrates_to_legacy_delivery_defaults(tmp_path):
+    import sqlite3
+
+    path = str(tmp_path / "policy.db")
+    service = ChannelAutoResponsePolicyService(path)
+    service.set_policy("matrix", generation_enabled=True, enabled=True)
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "ALTER TABLE channel_autoresponse_policy DROP COLUMN response_kind"
+        )
+        conn.execute(
+            "ALTER TABLE channel_autoresponse_policy DROP COLUMN delivery_audience"
+        )
+    restored = ChannelAutoResponsePolicyService(path).get_policy("matrix")
+    assert restored.enabled and restored.generation_enabled
+    assert restored.response_kind == "answer"
+    assert restored.delivery_audience == "source_room"

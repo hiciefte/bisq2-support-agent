@@ -8,6 +8,8 @@ export interface ChannelAutoresponsePolicy {
   enabled: boolean;
   generation_enabled: boolean;
   ai_response_mode: "autonomous" | "hitl";
+  response_kind: "answer" | "public_context";
+  delivery_audience: "source_room" | "staff_room";
   hitl_approval_timeout_seconds: number;
   draft_assistant_enabled: boolean;
   knowledge_amplifier_enabled: boolean;

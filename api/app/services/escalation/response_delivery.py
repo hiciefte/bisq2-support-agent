@@ -66,6 +66,15 @@ class ResponseDelivery:
         try:
             # Get delivery target from metadata
             metadata = escalation.channel_metadata or {}
+            if escalation.channel == "matrix":
+                if (
+                    metadata.get("response_kind") == "public_context"
+                    or metadata.get("delivery_audience") == "staff_room"
+                ):
+                    return False
+                allows_source = getattr(adapter, "allows_source_delivery", None)
+                if callable(allows_source) and allows_source() is False:
+                    return False
             target = adapter.get_delivery_target(metadata)
             user_metadata: dict[str, str] = {}
             if escalation.channel == "bisq2":

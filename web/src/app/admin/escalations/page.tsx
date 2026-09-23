@@ -35,6 +35,7 @@ import { QueuePageHeader } from "@/components/admin/queue/QueuePageHeader"
 import { QueueTabs } from "@/components/admin/queue/QueueTabs"
 import { QueueCommandBar } from "@/components/admin/queue/QueueCommandBar"
 import { EscalationReviewPanel } from './EscalationReviewPanel'
+import { isStaffContextCase, staffContextMetadata, staffContextStatusLabel } from "@/lib/staff-context"
 import { normalizeRoutingReasonSourceCount } from "@/lib/escalation-routing"
 
 // --- Types ---
@@ -313,7 +314,7 @@ export default function EscalationsPage() {
     { key: 'all' as const, label: 'All Cases', count: counts?.total ?? 0, icon: Users },
     { key: 'pending' as const, label: 'Pending', count: counts?.pending ?? 0, icon: AlertCircle },
     { key: 'in_review' as const, label: 'In Review', count: counts?.in_review ?? 0, icon: Eye },
-    { key: 'responded' as const, label: 'Responded', count: counts?.responded ?? 0, icon: BadgeCheck },
+    { key: 'responded' as const, label: 'Responded / reviewed', count: counts?.responded ?? 0, icon: BadgeCheck },
     { key: 'closed' as const, label: 'Closed', count: counts?.closed ?? 0, icon: Clock },
   ]
 
@@ -537,7 +538,7 @@ export default function EscalationsPage() {
       <AdminQueueShell showVectorStoreBanner shortcutHints={shortcutHints}>
       <QueuePageHeader
         title="Escalation Queue"
-        description="Review, respond, and close escalated support cases across channels."
+        description="Review escalations and staff-only AI context across channels."
         lastUpdatedLabel={lastUpdatedAt ? `Updated ${formatTimeAgo(lastUpdatedAt.toISOString())}` : null}
         isRefreshing={isRefreshing}
         onRefresh={() => { void refreshData() }}
@@ -562,7 +563,7 @@ export default function EscalationsPage() {
                 <span className="font-medium text-foreground">In Review:</span> actively handled by support staff.
               </p>
               <p>
-                <span className="font-medium text-foreground">Responded/Closed:</span> delivered response or finalized case.
+                <span className="font-medium text-foreground">Responded / reviewed:</span> a reply or internal review was recorded. Staff context reviews cannot publish publicly. Closed cases include rejected notes.
               </p>
             </PopoverContent>
           </Popover>
@@ -666,8 +667,8 @@ export default function EscalationsPage() {
                 {activeTab === 'all' && 'All escalated questions'}
                 {activeTab === 'pending' && 'Awaiting staff review'}
                 {activeTab === 'in_review' && 'Currently being reviewed'}
-                {activeTab === 'responded' && 'Staff response provided'}
-                {activeTab === 'closed' && 'Resolved and archived'}
+                {activeTab === 'responded' && 'Responses and internal reviews recorded'}
+                {activeTab === 'closed' && 'Closed and archived cases'}
                 <span className="ml-1 tabular-nums">
                   · {totalCount} {totalCount === 1 ? 'item' : 'items'}
                 </span>
@@ -725,15 +726,19 @@ export default function EscalationsPage() {
             <div className="space-y-2">
               {escalations.map((escalation, index) => {
                 const channelBadge = getChannelBadge(escalation.channel)
+                const isStaffContext = isStaffContextCase(escalation.channel_metadata)
+                const context = staffContextMetadata(escalation.channel_metadata)
                 const statusBadge = getStatusBadge(escalation.status)
+                if (isStaffContext && escalation.status === "responded") statusBadge.label = "Reviewed"
                 const priorityBadge = getPriorityBadge(escalation.priority)
                 const ageBadge = getEscalationAgeBadge(escalation.created_at, escalation.status)
                 const isKeyboardSelected = index === selectedEscalationIndex
                 const caseTags = [
                   { label: statusBadge.label, className: statusBadge.className },
+                  ...(context ? [{ label: "Staff-only context", className: "bg-muted text-muted-foreground" }, { label: staffContextStatusLabel(context.context_status), className: "bg-muted text-muted-foreground" }] : []),
                   { label: `Priority: ${priorityBadge.label}`, className: priorityBadge.className },
                   ...(ageBadge ? [{ label: ageBadge.label, className: ageBadge.className }] : []),
-                  ...(typeof escalation.confidence_score === "number"
+                  ...(!isStaffContext && typeof escalation.confidence_score === "number"
                     ? [{
                       label: `${(escalation.confidence_score * 100).toFixed(0)}% confidence`,
                       className: escalation.confidence_score < 0.3

@@ -23,7 +23,10 @@ from app.models.escalation import (
     EscalationUpdate,
     UserPollResponse,
 )
-from app.services.escalation.feedback_metrics import compute_hybrid_distance
+from app.services.escalation.feedback_metrics import (
+    compute_edit_distance,
+    compute_hybrid_distance,
+)
 from app.services.faq.duplicate_guard import DuplicateFAQError, find_similar_faqs
 from prometheus_client import Counter, Histogram
 
@@ -45,6 +48,15 @@ ESCALATION_RESPONSE_TIME = Histogram(
     "Time from creation to staff response",
     buckets=[60, 300, 600, 1800, 3600, 7200, 14400, 43200, 86400],
 )
+
+
+def is_staff_context_case(escalation: Escalation) -> bool:
+    """Keep either persisted internal marker out of user delivery and learning."""
+    metadata = escalation.channel_metadata or {}
+    return (
+        metadata.get("response_kind") == "public_context"
+        or metadata.get("delivery_audience") == "staff_room"
+    )
 
 
 class EscalationService:
@@ -237,7 +249,7 @@ class EscalationService:
     async def respond_to_escalation(
         self, escalation_id: int, staff_answer: str, staff_id: str
     ) -> Escalation:
-        """Save staff response, deliver to user, record learning."""
+        """Save a review; only ordinary user responses deliver and learn."""
         lock = await self._acquire_delivery_lock(escalation_id)
         try:
             return await self._respond_to_escalation_locked(
@@ -254,26 +266,31 @@ class EscalationService:
         if escalation is None:
             raise EscalationNotFoundError(f"Escalation {escalation_id} not found")
 
+        internal_review = is_staff_context_case(escalation)
         is_replacement = False
         # Same answer is idempotent; a failed answer may be replaced and retried.
         if (
             escalation.status == EscalationStatus.RESPONDED
             and escalation.staff_id == staff_id
         ):
-            delivery_pending = escalation.channel != "web" and (
-                escalation.delivery_status
-                in {
-                    EscalationDeliveryStatus.PENDING,
-                    EscalationDeliveryStatus.FAILED,
-                }
+            delivery_pending = (
+                not internal_review
+                and escalation.channel != "web"
+                and (
+                    escalation.delivery_status
+                    in {
+                        EscalationDeliveryStatus.PENDING,
+                        EscalationDeliveryStatus.FAILED,
+                    }
+                )
             )
             if str(escalation.staff_answer or "") == staff_answer:
                 if delivery_pending:
                     return await self._retry_saved_delivery(escalation)
                 return escalation
-            if escalation.channel == "web":
-                # Web clients poll the already-persisted response; preserve the
-                # historical idempotent contract for duplicate submissions.
+            if escalation.channel == "web" or internal_review:
+                # Preserve a completed internal review, like the already-saved
+                # web response, on duplicate submissions by its owner.
                 return escalation
             if not delivery_pending:
                 raise EscalationInvalidStateError(
@@ -305,11 +322,17 @@ class EscalationService:
                 )
 
         now = datetime.now(timezone.utc)
-        edit_distance = await compute_hybrid_distance(
-            escalation.ai_draft_answer,
-            staff_answer,
-            embeddings=self.embeddings,
-        )
+        if internal_review:
+            # Internal review must not invoke embeddings or feed learning.
+            edit_distance = compute_edit_distance(
+                escalation.ai_draft_answer, staff_answer
+            )
+        else:
+            edit_distance = await compute_hybrid_distance(
+                escalation.ai_draft_answer,
+                staff_answer,
+                embeddings=self.embeddings,
+            )
 
         updated = await self.repository.update(
             escalation_id,
@@ -321,7 +344,7 @@ class EscalationService:
                 edit_distance=edit_distance,
                 delivery_status=(
                     EscalationDeliveryStatus.NOT_REQUIRED
-                    if escalation.channel == "web"
+                    if escalation.channel == "web" or internal_review
                     else EscalationDeliveryStatus.PENDING
                 ),
                 delivery_error="",
@@ -346,6 +369,9 @@ class EscalationService:
                 "replacement": is_replacement,
             },
         )
+
+        if internal_review:
+            return updated
 
         updated = await self._attempt_delivery(
             updated,
@@ -393,6 +419,10 @@ class EscalationService:
 
     async def _retry_saved_delivery(self, escalation: Escalation) -> Escalation:
         """Retry a loaded escalation while its per-case lock is held."""
+        if is_staff_context_case(escalation):
+            raise EscalationInvalidStateError(
+                "Internal staff context reviews do not deliver user responses"
+            )
         if escalation.channel == "web":
             return escalation
         if escalation.delivery_status == EscalationDeliveryStatus.DELIVERED:
@@ -411,6 +441,10 @@ class EscalationService:
         channel: str | None = None,
     ) -> Escalation:
         """Attempt one delivery after durably recording its pending state."""
+        if is_staff_context_case(escalation):
+            raise EscalationInvalidStateError(
+                "Internal staff context reviews do not deliver user responses"
+            )
         channel = str(channel or escalation.channel)
         if channel == "web":
             if self.response_delivery is None:
@@ -516,6 +550,8 @@ class EscalationService:
         trusted: bool,
     ) -> bool:
         """Persist staff-answer rating and optionally feed trusted learning."""
+        if is_staff_context_case(escalation):
+            return False
         normalized_rating = 1 if int(rating) > 0 else 0
         updated = await self.repository.update_rating(
             escalation.message_id,
@@ -620,6 +656,11 @@ class EscalationService:
         if escalation is None:
             raise EscalationNotFoundError(f"Escalation {escalation_id} not found")
 
+        if is_staff_context_case(escalation):
+            raise EscalationInvalidStateError(
+                "Internal staff context reviews cannot generate FAQs"
+            )
+
         if self.faq_service is None:
             raise RuntimeError("FAQ service not configured")
 
@@ -671,7 +712,15 @@ class EscalationService:
     # ------------------------------------------------------------------
 
     async def close_escalation(self, escalation_id: int) -> Escalation:
-        """Close an escalation."""
+        """Close after any in-flight case delivery or response has finished."""
+        lock = await self._acquire_delivery_lock(escalation_id)
+        try:
+            return await self._close_escalation_locked(escalation_id)
+        finally:
+            await self._release_delivery_lock(escalation_id, lock)
+
+    async def _close_escalation_locked(self, escalation_id: int) -> Escalation:
+        """Persist rejection while holding the same lock as case delivery."""
         escalation = await self.repository.get_by_id(escalation_id)
         if escalation is None:
             raise EscalationNotFoundError(f"Escalation {escalation_id} not found")
@@ -747,7 +796,7 @@ class EscalationService:
     async def get_user_response(self, message_id: str) -> Optional[UserPollResponse]:
         """Get staff response for web polling."""
         escalation = await self.repository.get_by_message_id(message_id)
-        if escalation is None:
+        if escalation is None or is_staff_context_case(escalation):
             return None
 
         if escalation.status in (

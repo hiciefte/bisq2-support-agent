@@ -368,6 +368,8 @@ async def generate_faq(
         )
         logger.info(f"FAQ generated from escalation {escalation_id}: {result}")
         return result
+    except EscalationInvalidStateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except EscalationNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
