@@ -716,7 +716,11 @@ class TestBootstrapperReactionWiring:
         """Bootstrap registers sent_message_tracker in runtime."""
         from app.channels.bootstrapper import ChannelBootstrapper
 
-        settings = MagicMock()
+        settings = MagicMock(
+            MATRIX_CONTEXT_TRIAL_ID="",
+            MATRIX_CONTEXT_TRIAL_START_AT="",
+            MATRIX_CONTEXT_TRIAL_END_AT="",
+        )
         settings.CHANNEL_PLUGINS = []
         settings.WEB_CHANNEL_ENABLED = False
         settings.MATRIX_SYNC_ENABLED = False
@@ -734,7 +738,11 @@ class TestBootstrapperReactionWiring:
         """Bootstrap registers reaction_processor in runtime."""
         from app.channels.bootstrapper import ChannelBootstrapper
 
-        settings = MagicMock()
+        settings = MagicMock(
+            MATRIX_CONTEXT_TRIAL_ID="",
+            MATRIX_CONTEXT_TRIAL_START_AT="",
+            MATRIX_CONTEXT_TRIAL_END_AT="",
+        )
         settings.CHANNEL_PLUGINS = []
         settings.WEB_CHANNEL_ENABLED = False
         settings.MATRIX_SYNC_ENABLED = False
@@ -753,7 +761,11 @@ class TestBootstrapperReactionWiring:
         from app.channels.bootstrapper import ChannelBootstrapper
         from app.channels.reactions import ReactionProcessor, SentMessageTracker
 
-        settings = MagicMock()
+        settings = MagicMock(
+            MATRIX_CONTEXT_TRIAL_ID="",
+            MATRIX_CONTEXT_TRIAL_START_AT="",
+            MATRIX_CONTEXT_TRIAL_END_AT="",
+        )
         settings.CHANNEL_PLUGINS = []
         settings.WEB_CHANNEL_ENABLED = False
         settings.MATRIX_SYNC_ENABLED = False
@@ -776,7 +788,11 @@ class TestBootstrapperReactionWiring:
         """Production reaction services fail fast without a stable hash salt."""
         from app.channels.bootstrapper import ChannelBootstrapper
 
-        settings = MagicMock()
+        settings = MagicMock(
+            MATRIX_CONTEXT_TRIAL_ID="",
+            MATRIX_CONTEXT_TRIAL_START_AT="",
+            MATRIX_CONTEXT_TRIAL_END_AT="",
+        )
         settings.CHANNEL_PLUGINS = []
         settings.WEB_CHANNEL_ENABLED = False
         settings.MATRIX_SYNC_ENABLED = False

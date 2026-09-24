@@ -146,7 +146,11 @@ class TestChannelBaseSetupMethods:
         from app.channels.runtime import ChannelRuntime
 
         runtime = MagicMock(spec=ChannelRuntime)
-        settings = MagicMock()
+        settings = MagicMock(
+            MATRIX_CONTEXT_TRIAL_ID="",
+            MATRIX_CONTEXT_TRIAL_START_AT="",
+            MATRIX_CONTEXT_TRIAL_END_AT="",
+        )
 
         # Should not raise
         MockChannelForBootstrap.setup_dependencies(runtime, settings)
@@ -160,7 +164,11 @@ class TestChannelBaseSetupMethods:
         from app.channels.runtime import ChannelRuntime
 
         runtime = MagicMock(spec=ChannelRuntime)
-        settings = MagicMock()
+        settings = MagicMock(
+            MATRIX_CONTEXT_TRIAL_ID="",
+            MATRIX_CONTEXT_TRIAL_START_AT="",
+            MATRIX_CONTEXT_TRIAL_END_AT="",
+        )
 
         MockChannelWithDeps.setup_dependencies(runtime, settings)
 
@@ -250,7 +258,11 @@ class TestChannelBootstrapper:
         """Bootstrapper creates ChannelRuntime with settings and rag_service."""
         from app.channels.bootstrapper import ChannelBootstrapper
 
-        settings = MagicMock()
+        settings = MagicMock(
+            MATRIX_CONTEXT_TRIAL_ID="",
+            MATRIX_CONTEXT_TRIAL_START_AT="",
+            MATRIX_CONTEXT_TRIAL_END_AT="",
+        )
         rag_service = MagicMock()
 
         bootstrapper = ChannelBootstrapper(settings, rag_service)
@@ -262,7 +274,11 @@ class TestChannelBootstrapper:
         """bootstrap() returns BootstrapResult with runtime and registry."""
         from app.channels.bootstrapper import ChannelBootstrapper
 
-        settings = MagicMock()
+        settings = MagicMock(
+            MATRIX_CONTEXT_TRIAL_ID="",
+            MATRIX_CONTEXT_TRIAL_START_AT="",
+            MATRIX_CONTEXT_TRIAL_END_AT="",
+        )
         settings.CHANNEL_PLUGINS = []  # No plugins to load
         settings.WEB_CHANNEL_ENABLED = False
         settings.MATRIX_SYNC_ENABLED = False
@@ -286,7 +302,11 @@ class TestChannelBootstrapper:
         """bootstrap() wires code-evidence grounding into staff assist."""
         from app.channels.bootstrapper import ChannelBootstrapper
 
-        settings = MagicMock()
+        settings = MagicMock(
+            MATRIX_CONTEXT_TRIAL_ID="",
+            MATRIX_CONTEXT_TRIAL_START_AT="",
+            MATRIX_CONTEXT_TRIAL_END_AT="",
+        )
         settings.CHANNEL_PLUGINS = []
         settings.WEB_CHANNEL_ENABLED = False
         settings.MATRIX_SYNC_ENABLED = False
@@ -308,7 +328,11 @@ class TestChannelBootstrapper:
     def test_bootstrap_injects_launch_control_into_arbitration(self, tmp_path):
         from app.channels.bootstrapper import ChannelBootstrapper
 
-        settings = MagicMock()
+        settings = MagicMock(
+            MATRIX_CONTEXT_TRIAL_ID="",
+            MATRIX_CONTEXT_TRIAL_START_AT="",
+            MATRIX_CONTEXT_TRIAL_END_AT="",
+        )
         settings.CHANNEL_PLUGINS = []
         settings.WEB_CHANNEL_ENABLED = False
         settings.MATRIX_SYNC_ENABLED = False
@@ -336,7 +360,11 @@ class TestChannelBootstrapper:
         from app.channels.bootstrapper import ChannelBootstrapper
         from app.channels.staff_assist import StaffAssistService
 
-        settings = MagicMock()
+        settings = MagicMock(
+            MATRIX_CONTEXT_TRIAL_ID="",
+            MATRIX_CONTEXT_TRIAL_START_AT="",
+            MATRIX_CONTEXT_TRIAL_END_AT="",
+        )
         settings.CHANNEL_PLUGINS = []
         settings.WEB_CHANNEL_ENABLED = False
         settings.MATRIX_SYNC_ENABLED = False
@@ -363,7 +391,11 @@ class TestChannelBootstrapper:
         """MATRIX_SYNC_ENABLED should enable matrix channel loading."""
         from app.channels.bootstrapper import ChannelBootstrapper
 
-        settings = MagicMock()
+        settings = MagicMock(
+            MATRIX_CONTEXT_TRIAL_ID="",
+            MATRIX_CONTEXT_TRIAL_START_AT="",
+            MATRIX_CONTEXT_TRIAL_END_AT="",
+        )
         settings.CHANNEL_PLUGINS = []
         settings.WEB_CHANNEL_ENABLED = False
         settings.MATRIX_SYNC_ENABLED = True
@@ -385,7 +417,11 @@ class TestChannelBootstrapper:
         # Register a test channel type
         _CHANNEL_TYPES["test_enabled"] = MockChannelForBootstrap
 
-        settings = MagicMock()
+        settings = MagicMock(
+            MATRIX_CONTEXT_TRIAL_ID="",
+            MATRIX_CONTEXT_TRIAL_START_AT="",
+            MATRIX_CONTEXT_TRIAL_END_AT="",
+        )
         settings.CHANNEL_PLUGINS = []
         settings.WEB_CHANNEL_ENABLED = False
         settings.MATRIX_SYNC_ENABLED = False
@@ -409,7 +445,11 @@ class TestChannelBootstrapper:
         """bootstrap() skips channels that have no registered class."""
         from app.channels.bootstrapper import ChannelBootstrapper
 
-        settings = MagicMock()
+        settings = MagicMock(
+            MATRIX_CONTEXT_TRIAL_ID="",
+            MATRIX_CONTEXT_TRIAL_START_AT="",
+            MATRIX_CONTEXT_TRIAL_END_AT="",
+        )
         settings.CHANNEL_PLUGINS = []
         settings.WEB_CHANNEL_ENABLED = False
         settings.MATRIX_SYNC_ENABLED = False
@@ -444,7 +484,11 @@ class TestChannelBootstrapper:
 
         _CHANNEL_TYPES["setup_test"] = ChannelWithMockedSetup
 
-        settings = MagicMock()
+        settings = MagicMock(
+            MATRIX_CONTEXT_TRIAL_ID="",
+            MATRIX_CONTEXT_TRIAL_START_AT="",
+            MATRIX_CONTEXT_TRIAL_END_AT="",
+        )
         settings.CHANNEL_PLUGINS = []
         rag_service = MagicMock()
 
@@ -469,7 +513,11 @@ class TestChannelBootstrapper:
 
         _CHANNEL_TYPES["failing_setup"] = ChannelWithFailingSetup
 
-        settings = MagicMock()
+        settings = MagicMock(
+            MATRIX_CONTEXT_TRIAL_ID="",
+            MATRIX_CONTEXT_TRIAL_START_AT="",
+            MATRIX_CONTEXT_TRIAL_END_AT="",
+        )
         settings.CHANNEL_PLUGINS = []
         rag_service = MagicMock()
 
@@ -488,7 +536,11 @@ class TestChannelBootstrapper:
         """bootstrap() imports modules from CHANNEL_PLUGINS config."""
         from app.channels.bootstrapper import ChannelBootstrapper
 
-        settings = MagicMock()
+        settings = MagicMock(
+            MATRIX_CONTEXT_TRIAL_ID="",
+            MATRIX_CONTEXT_TRIAL_START_AT="",
+            MATRIX_CONTEXT_TRIAL_END_AT="",
+        )
         settings.CHANNEL_PLUGINS = ["os", "sys"]  # Use stdlib modules for test
         settings.WEB_CHANNEL_ENABLED = False
         settings.MATRIX_SYNC_ENABLED = False

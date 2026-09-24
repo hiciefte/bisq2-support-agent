@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any, Literal
 from urllib.parse import quote
@@ -23,8 +24,13 @@ from app.channels.policy import (
 )
 from app.channels.security import PIIDetector
 from app.channels.staff import resolve_channel_staff_resolver
+from app.channels.staff_assist.context_trial import (
+    ContextTrial,
+    ContextTrialStore,
+    utc_now,
+)
 from app.channels.staff_assist.public_context import (
-    PUBLIC_CONTEXT_PROMPT,
+    STAFF_CONTEXT_PROMPT,
     PublicContextRequest,
     PublicContextService,
     PublicEvidence,
@@ -182,14 +188,63 @@ class MatrixContextRuntime:
 
     def __init__(self, runtime: Any) -> None:
         self.runtime = runtime
+        from app.services.bisq_network_status_service import BisqNetworkStatusService
+
+        self._network_status_service = BisqNetworkStatusService()
         self._tasks: set[asyncio.Task] = set()
         self._closed = False
+        self._trial = ContextTrial.from_settings(runtime.settings)
+        self._expiry_task: asyncio.Task | None = None
 
     def start(self) -> None:
         """Accept new events after shutdown without replaying reserved cases."""
         if self._closed and any(not task.done() for task in self._tasks):
             raise RuntimeError("Context workers have not finished stopping")
         self._closed = False
+        self._schedule_expiry()
+
+    def _schedule_expiry(self) -> None:
+        if self._trial and (self._expiry_task is None or self._expiry_task.done()):
+            self._expiry_task = asyncio.create_task(self._expire_trial())
+
+    async def _expire_trial(self) -> None:
+        assert self._trial is not None
+        await asyncio.sleep(max(0, (self._trial.end_at - utc_now()).total_seconds()))
+        policy = self.runtime.resolve_optional("channel_autoresponse_policy_service")
+        try:
+            if policy is not None:
+                policy.set_policy("matrix", generation_enabled=False, enabled=False)
+        except Exception:
+            logger.exception("Could not persist Matrix trial expiry policy")
+        finally:
+            await self.close()
+
+    def _trial_store(self) -> ContextTrialStore:
+        assert self._trial is not None
+        service = self.runtime.resolve_optional("escalation_service")
+        return ContextTrialStore(service.repository.db_path, self._trial)
+
+    async def _trial_reason(self, case_id: int | None = None) -> str | None:
+        if self._trial is None:
+            return None
+        if self._closed:
+            return "context_trial_stopped"
+        try:
+            current = ContextTrial.from_settings(self.runtime.settings)
+        except (TypeError, ValueError):
+            return "context_trial_configuration_changed"
+        if current != self._trial:
+            return "context_trial_configuration_changed"
+        return await self._trial_store().check(case_id)
+
+    async def check_trial_delivery(self, transaction_id: str) -> str | None:
+        """Called again inside the publisher lifecycle lock before transport."""
+        if self._trial is None:
+            return None
+        match = re.fullmatch(r"context-(\d+)-(?:root|note)", transaction_id)
+        if match is None:
+            return "context_trial_case_not_reserved"
+        return await self._trial_reason(int(match.group(1)))
 
     async def drain(self) -> None:
         """Wait for in-flight work (used by deterministic integration tests)."""
@@ -199,6 +254,10 @@ class MatrixContextRuntime:
     async def close(self) -> None:
         """Stop workers; persisted interrupted cases remain available in Admin."""
         self._closed = True
+        expiry = self._expiry_task
+        if expiry is not None and expiry is not asyncio.current_task():
+            expiry.cancel()
+            await asyncio.gather(expiry, return_exceptions=True)
         tasks = list(self._tasks)
         for task in tasks:
             task.cancel()
@@ -243,12 +302,24 @@ class MatrixContextRuntime:
                     "source_url": matrix_link(room_id, incoming.message_id),
                     "context_status": "preparing",
                     "context_reason": "context_preparing",
+                    "model_called": False,
+                    "model_call_status": "not_started",
+                    **(
+                        {"context_trial_id": self._trial.trial_id}
+                        if self._trial
+                        else {}
+                    ),
                 },
             )
         )
         store = ContextReviewStore(service.repository.db_path)
         if not await store.reserve(case.id):
             return False
+        reason = await self._trial_reason()
+        if reason:
+            await store.update(case.id, status="deferred", reason=reason)
+            return False
+        self._schedule_expiry()
         if self._closed:
             await store.update(case.id, status="deferred", reason="runtime_stopped")
             return False
@@ -283,6 +354,14 @@ class MatrixContextRuntime:
                 return
             await self._prepare_and_publish(
                 incoming, channel, case_id, store, question, policy_service
+            )
+        except PublicationSuppressed as exc:
+            await store.update(
+                case_id,
+                status="deferred",
+                reason=str(exc),
+                model_called=False,
+                model_call_status="not_started",
             )
         except asyncio.CancelledError:
             # Never turn an interrupted send into an automatically retryable case.
@@ -345,8 +424,29 @@ class MatrixContextRuntime:
                 case_id, status="needs_human", reason="generation_unavailable"
             )
             return False
+        if self._trial is not None:
+            reason = await self._trial_reason() or await self._trial_store().reserve(
+                case_id
+            )
+            if reason:
+                await store.update(case_id, status="deferred", reason=reason)
+                return False
+        reason = await self._trial_reason(case_id)
+        if reason:
+            await store.update(case_id, status="deferred", reason=reason)
+            return False
+
+        def retrieve_documents(query):
+            if self._trial:
+                reason = (
+                    "context_trial_stopped" if self._closed else self._trial.reason()
+                )
+                if reason:
+                    raise PublicationSuppressed(reason)
+            return retriever.retrieve_with_scores(query)
+
         documents, _ = await rag._run_retriever_call(
-            rag.retriever, retriever.retrieve_with_scores, question
+            rag.retriever, retrieve_documents, question
         )
         if not await self._case_is_open(case_id) or not is_staff_context_enabled(
             policy_service, "matrix"
@@ -355,24 +455,123 @@ class MatrixContextRuntime:
                 case_id, status="deferred", reason="review_or_policy_changed"
             )
             return False
-        evidence = select_public_evidence(documents)
+        from app.channels.staff_assist.evidence_resolver import StaffEvidenceResolver
+
+        async def allow_live_read() -> bool:
+            return (
+                not self._closed
+                and not await self._trial_reason(case_id)
+                and await self._case_is_open(case_id)
+                and is_staff_context_enabled(policy_service, "matrix")
+            )
+
+        resolver = StaffEvidenceResolver(
+            faq_service=getattr(rag, "faq_service", None),
+            public_faq_service=self.runtime.resolve_optional("public_faq_service"),
+            grounding_service=self.runtime.resolve_optional(
+                "staff_grounding_brief_service"
+            ),
+            network_status_service=self._network_status_service,
+            bisq_service=(
+                getattr(rag, "bisq_mcp_service", None)
+                if getattr(rag, "mcp_enabled", False)
+                else None
+            ),
+            before_live_read=allow_live_read,
+            llm_wiki_loader=getattr(rag, "llm_wiki_loader", None),
+            llm_wiki_dir=getattr(self.runtime.settings, "LLM_WIKI_DIR_PATH", None),
+        )
+        resolved = await resolver.resolve(question=question, documents=documents)
+        if not await self._case_is_open(case_id) or not is_staff_context_enabled(
+            policy_service, "matrix"
+        ):
+            await store.update(
+                case_id,
+                status="deferred",
+                reason="review_or_policy_changed",
+                model_called=False,
+                model_call_status="not_started",
+            )
+            return False
+        evidence = resolved.evidence
         request = PublicContextRequest(
-            question=question, recent_messages=snapshot, evidence=evidence
+            question=question,
+            recent_messages=snapshot,
+            evidence=evidence,
+            audience="staff_only",
         )
         evidence_json = [entry.model_dump() for entry in evidence]
         versions: dict[str, Any] = {
             "evidence_version": _digest(evidence_json),
             "evidence_snapshot": evidence_json,
-            "generation_version": _digest(PUBLIC_CONTEXT_PROMPT),
+            "generation_version": _digest(STAFF_CONTEXT_PROMPT),
+            "evidence_diagnostics": resolved.diagnostics,
+            "staff_grounding_brief": resolved.internal_grounding,
             "model_name": str(getattr(self.runtime.settings, "OPENAI_MODEL", "")),
             "source_context_version": _digest([m.model_dump() for m in snapshot]),
             "source_context_snapshot": [m.model_dump() for m in snapshot],
         }
         await store.update(
-            case_id, status="preparing", reason="generation_reserved", **versions
+            case_id,
+            status="preparing",
+            reason="generation_reserved",
+            model_called=None,
+            model_call_status="reserved",
+            **versions,
         )
-        preview = await asyncio.to_thread(
-            PublicContextService(rag.llm).preview, request
+        reason = await self._trial_reason(case_id)
+        if reason:
+            await store.update(
+                case_id,
+                status="deferred",
+                reason=reason,
+                model_called=False,
+                model_call_status="not_started",
+            )
+            return False
+
+        def generate_preview():
+            # A queued executor thread may start after the async check.
+            if self._closed or not is_staff_context_enabled(policy_service, "matrix"):
+                raise PublicationSuppressed("review_or_policy_changed")
+            reason = (
+                ("context_trial_stopped" if self._closed else self._trial.reason())
+                if self._trial
+                else None
+            )
+            if reason:
+                raise PublicationSuppressed(reason)
+            return PublicContextService(rag.llm).preview(request)
+
+        preview = await asyncio.to_thread(generate_preview)
+        usage = preview.usage
+        if hasattr(usage, "model_dump"):
+            usage = usage.model_dump()
+        counters = {}
+        for name in (
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+            "input_tokens",
+            "output_tokens",
+        ):
+            value = (
+                usage.get(name)
+                if isinstance(usage, dict)
+                else getattr(usage, name, None)
+            )
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                counters[name] = value
+        versions.update(
+            model_called=preview.model_called,
+            model_call_status=(
+                "outcome_unknown"
+                if preview.model_called
+                and preview.decision.reason == "generation_unavailable"
+                else "completed" if preview.model_called else "not_started"
+            ),
+            model_usage=counters or None,
+            model_decision=preview.decision.model_dump(),
         )
         if not preview.rendered_note:
             # Model silence is not evidence the customer's issue was resolved.
@@ -390,11 +589,7 @@ class MatrixContextRuntime:
             )
             return False
         used = set(preview.decision.source_ids)
-        sources = [
-            {"title": e.title, "url": e.url, "content": e.content, "type": "wiki"}
-            for e in evidence
-            if e.id in used
-        ]
+        sources = [{**e.model_dump(), "type": e.kind} for e in evidence if e.id in used]
         await store.update(
             case_id,
             status="awaiting_review",
@@ -515,9 +710,15 @@ class MatrixContextRuntime:
                 "room_id"
             ) not in resolve_allowed_context_source_rooms(self.runtime.settings):
                 raise PublicationSuppressed
+            reason = await self.check_trial_delivery(kwargs.get("transaction_id", ""))
+            if reason:
+                raise PublicationSuppressed(reason)
             result = await channel.send_staff_context(text, **kwargs)
             reason = getattr(result, "error", None)
-            if not result and reason in self.PRETRANSPORT_REFUSALS:
+            if not result and (
+                reason in self.PRETRANSPORT_REFUSALS
+                or (isinstance(reason, str) and reason.startswith("context_trial_"))
+            ):
                 raise PublicationSuppressed(reason)
             return result
         finally:
@@ -551,6 +752,10 @@ class MatrixContextRuntime:
         if str(getattr(event, "body", "") or "").strip() != incoming.question:
             return [], "source_changed_or_redacted"
         timestamp = getattr(event, "server_timestamp", 0)
+        if self._trial and (
+            not timestamp or timestamp / 1000 < self._trial.start_at.timestamp()
+        ):
+            return [], "context_trial_before_activation"
         if (
             not timestamp
             or datetime.now(timezone.utc).timestamp() - timestamp / 1000 > 3600

@@ -125,6 +125,11 @@ class MatrixChannel(ChannelBase):
         session_path = Path(str(settings.MATRIX_SYNC_SESSION_PATH)).expanduser()
         store_dir = session_path.parent / f"{session_path.stem}_store"
         encryption_enabled = bool(ENCRYPTION_ENABLED)
+        restore_only = bool(getattr(settings, "MATRIX_CONTEXT_TRIAL_ID", ""))
+        if restore_only and (not encryption_enabled or not store_dir.is_dir()):
+            raise RuntimeError(
+                "Matrix trial requires the existing encryption store and E2EE support"
+            )
         client_kwargs: dict[str, Any] = {
             "config": AsyncClientConfig(
                 store_sync_tokens=True,
@@ -134,9 +139,12 @@ class MatrixChannel(ChannelBase):
 
         if encryption_enabled:
             try:
-                store_dir.mkdir(parents=True, exist_ok=True)
+                if not restore_only:
+                    store_dir.mkdir(parents=True, exist_ok=True)
                 client_kwargs["store_path"] = str(store_dir)
             except OSError:
+                if restore_only:
+                    raise
                 logger.warning(
                     "Disabling Matrix E2EE store because store path creation failed: %s",
                     store_dir,
@@ -156,6 +164,7 @@ class MatrixChannel(ChannelBase):
             client=matrix_client,
             password=matrix_password,
             session_file=settings.MATRIX_SYNC_SESSION_PATH,
+            restore_only=restore_only,
         )
         matrix_connection_manager = ConnectionManager(
             client=matrix_client,
@@ -717,6 +726,16 @@ class MatrixChannel(ChannelBase):
                     "is_falling_back": True,
                     "m.in_reply_to": {"event_id": thread_root_event_id},
                 }
+            context_runtime = self.runtime.resolve_optional("matrix_context_runtime")
+            if context_runtime is None:
+                if getattr(settings, "MATRIX_CONTEXT_TRIAL_ID", ""):
+                    return SendResult(
+                        sent=False, error="context_trial_runtime_unavailable"
+                    )
+            else:
+                reason = await context_runtime.check_trial_delivery(transaction_id)
+                if reason:
+                    return SendResult(sent=False, error=reason)
             try:
                 response = await asyncio.wait_for(
                     client.room_send(
