@@ -121,7 +121,7 @@ to creating a new login/device.
 
 Time and reservation checks run before retrieval, model generation, and both
 staff sends. A local expiry task turns Matrix generation off and cancels pending
-context workers. No Codex polling loop is needed. Already-started network/model
+context workers. Already-started network/model
 operations may finish after cancellation and remain uncertain until reconciled;
 they are never automatically retried. A process that is down at expiration still
 rejects expired work after restart. Filling the cap denies further paid admission;

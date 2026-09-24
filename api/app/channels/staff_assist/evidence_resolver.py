@@ -127,7 +127,9 @@ class StaffEvidenceResolver:
                 if kind == "wiki":
                     source = self._wiki(document, metadata)
                 elif kind == "faq":
-                    source = self._faq(str(metadata.get("id") or ""))
+                    source = await asyncio.to_thread(
+                        self._faq, str(metadata.get("id") or "")
+                    )
                 elif kind == "llm_wiki":
                     current = current_compiled.get(str(metadata.get("id")))
                     if current is not None and not _private(current.metadata):
@@ -147,7 +149,7 @@ class StaffEvidenceResolver:
                     if source.kind == "llm_wiki":
                         for ref in source.source_refs:
                             if ref.startswith("faq:"):
-                                faq = self._faq(ref[4:])
+                                faq = await asyncio.to_thread(self._faq, ref[4:])
                                 if faq is not None:
                                     candidates.append(faq)
                 else:

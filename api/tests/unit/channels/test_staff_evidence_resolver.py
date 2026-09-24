@@ -1,6 +1,7 @@
 """Real source publication and provenance boundaries for staff-context notes."""
 
 import json
+import threading
 from types import SimpleNamespace as NS
 from unittest.mock import AsyncMock, Mock
 
@@ -74,6 +75,48 @@ def answer(
             )
         )
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("through_compiled_reference", [False, True])
+async def test_faq_authority_and_publication_reads_do_not_block_event_loop(
+    through_compiled_reference,
+):
+    loop_thread = threading.get_ident()
+    reads = []
+    row = NS(
+        id="42", verified=True, question="Where is support?", answer="Use Support."
+    )
+    public_row = {
+        "id": row.id,
+        "question": row.question,
+        "answer": row.answer,
+        "slug": SlugManager().generate_slug(row.question, row.id),
+    }
+
+    def read(name, value):
+        def lookup(_):
+            assert threading.get_ident() != loop_thread
+            reads.append(name)
+            return value
+
+        return lookup
+
+    page = compiled(source_refs=["faq:42"])
+    resolver = compiled_resolver(
+        page,
+        faq_service=NS(get_faq_by_id=read("authority", row)),
+        public_faq_service=NS(
+            get_faq_by_id=read("public_id", public_row),
+            get_faq_by_slug=read("public_slug", public_row),
+        ),
+    )
+    result = await resolver.resolve(
+        question="Support?",
+        documents=[page if through_compiled_reference else document("faq", id="42")],
+    )
+    assert reads == ["authority", "public_id", "public_slug"]
+    assert any(source.kind == "faq" for source in result.evidence)
 
 
 @pytest.mark.asyncio
