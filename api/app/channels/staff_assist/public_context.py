@@ -12,7 +12,7 @@ import re
 from typing import Any, Literal
 from urllib.parse import quote, unquote, urlparse
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 PUBLIC_CONTEXT_PROMPT = """You prepare a short AI context note for a public Bisq
 support conversation with human support staff. You assist the existing discussion.
@@ -87,11 +87,26 @@ class PublicEvidence(_StrictModel):
     content: str = Field(min_length=1, max_length=16000)
     url: str
     audience: Literal["public"] = "public"
+    kind: Literal["wiki", "faq", "monitoring"] = "wiki"
+    source_refs: list[str] = Field(default_factory=list, max_length=30)
+    provenance: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("url")
     @classmethod
     def public_bisq_source(cls, value: str) -> str:
+        from app.channels.plugins.support_markdown import BISQ2_FAQ_ONION_BASE_URL
+        from app.services.faq.slug_manager import SlugManager
+
         parsed = urlparse(value)
+        faq_origin = urlparse(BISQ2_FAQ_ONION_BASE_URL)
+        faq_url = (
+            parsed.scheme == faq_origin.scheme
+            and parsed.netloc == faq_origin.netloc
+            and parsed.path.startswith("/faq/")
+            and SlugManager().validate_slug(parsed.path.removeprefix("/faq/"))
+            and not parsed.query
+            and not parsed.fragment
+        )
         allowed = {
             "bisq.wiki",
             "bisq.network",
@@ -107,8 +122,8 @@ class PublicEvidence(_StrictModel):
             and not any(part in {".", ".."} for part in decoded_path.split("/"))
         )
         if (
-            parsed.scheme != "https"
-            or (parsed.hostname not in allowed and not github)
+            (not faq_url and parsed.scheme != "https")
+            or (not faq_url and parsed.hostname not in allowed and not github)
             or parsed.username
             or parsed.password
             or parsed.port not in (None, 443)
@@ -116,6 +131,44 @@ class PublicEvidence(_StrictModel):
         ):
             raise ValueError("Evidence requires a public Bisq source URL")
         return value
+
+
+class StaffEvidence(_StrictModel):
+    """Internal evidence with honest provenance, never a fabricated public link."""
+
+    id: str = Field(min_length=1, max_length=80, pattern=r"^[a-zA-Z0-9_-]+$")
+    title: str = Field(min_length=1, max_length=160)
+    content: str = Field(min_length=1, max_length=16000)
+    kind: Literal["llm_wiki", "code_fact", "live_tool"]
+    audience: Literal["staff_only"] = "staff_only"
+    url: None = None
+    source_refs: list[str] = Field(default_factory=list, max_length=30)
+    provenance: dict[str, Any] = Field(default_factory=dict)
+
+
+ContextEvidence = PublicEvidence | StaffEvidence
+
+STAFF_CONTEXT_PROMPT = (
+    PUBLIC_CONTEXT_PROMPT.replace("for a public Bisq", "for a staff-only Bisq")
+    .replace(
+        "Use only supplied public evidence for facts, and return its IDs in source_ids.\n"
+        "Do not treat a prior AI answer as evidence. Do not use private code facts.",
+        "Use only supplied evidence for facts, and return its IDs in source_ids. "
+        "Reviewed internal LLM-wiki guidance is usable staff evidence; it is not a "
+        "public webpage. Its page-level references do not establish that every claim "
+        "appears in each original source. Cite the internal page for compiled claims, "
+        "and cite an original public source only when its supplied content supports "
+        "the claim. Code facts are staff investigation evidence with explicit source "
+        "release scope, not proof of the user's release or cause. Live tool results "
+        "are timestamped observations from the configured node, not whole-network "
+        "truth. Preserve unavailable, stale and partial coverage. Do not treat a prior "
+        "AI answer as evidence.",
+    )
+    .replace(
+        "the renderer adds the\nAI label and verified public links.",
+        "the renderer adds the\nAI label, public links and labeled internal provenance.",
+    )
+)
 
 
 class RoomMessage(_StrictModel):
@@ -126,7 +179,8 @@ class RoomMessage(_StrictModel):
 class PublicContextRequest(_StrictModel):
     question: str = Field(min_length=1, max_length=4000)
     recent_messages: list[RoomMessage] = Field(default_factory=list, max_length=20)
-    evidence: list[PublicEvidence] = Field(default_factory=list, max_length=8)
+    evidence: list[ContextEvidence] = Field(default_factory=list, max_length=8)
+    audience: Literal["public", "staff_only"] = "public"
     staff_active: bool = False
     already_resolved: bool = False
     recent_bot_reply: bool = False
@@ -134,10 +188,18 @@ class PublicContextRequest(_StrictModel):
 
     @field_validator("evidence")
     @classmethod
-    def unique_ids(cls, value: list[PublicEvidence]) -> list[PublicEvidence]:
+    def unique_ids(cls, value: list[ContextEvidence]) -> list[ContextEvidence]:
         if len({item.id for item in value}) != len(value):
             raise ValueError("Evidence IDs must be unique")
         return value
+
+    @model_validator(mode="after")
+    def enforce_audience(self) -> "PublicContextRequest":
+        if self.audience == "public" and any(
+            source.audience != "public" for source in self.evidence
+        ):
+            raise ValueError("Internal evidence requires staff-only context")
+        return self
 
 
 class PublicContextDecision(_StrictModel):
@@ -220,11 +282,19 @@ class PublicContextService:
             if getattr(request, field):
                 return _silence(field)
         if not request.evidence:
-            return _silence("no_public_evidence")
+            return _silence(
+                "no_eligible_evidence"
+                if request.audience == "staff_only"
+                else "no_public_evidence"
+            )
         try:
             response = self.llm.invoke(
                 json.dumps(request.model_dump(), ensure_ascii=False),
-                system_content=PUBLIC_CONTEXT_PROMPT,
+                system_content=(
+                    STAFF_CONTEXT_PROMPT
+                    if request.audience == "staff_only"
+                    else PUBLIC_CONTEXT_PROMPT
+                ),
             )
         except Exception:
             return _silence("generation_unavailable", model_called=True)
@@ -256,12 +326,40 @@ class PublicContextService:
                 return _silence(
                     "clarification_suppressed", model_called=True, usage=usage
                 )
-            links = [
-                f"[{_markdown_literal(' '.join(sources[key].title.split()))}]("
-                + quote(sources[key].url, safe=":/?#[]@!$&'()*+,;=%")
-                + ")"
-                for key in decision.source_ids
-            ]
+            links = []
+            for key in decision.source_ids:
+                source = sources[key]
+                title = _markdown_literal(" ".join(source.title.split()))
+                if source.url:
+                    citation = (
+                        f"[{title}]("
+                        + quote(source.url, safe=":/?#[]@!$&'()*+,;=%")
+                        + ")"
+                    )
+                else:
+                    labels = {
+                        "llm_wiki": "Internal LLM wiki",
+                        "code_fact": "Staff code evidence",
+                        "live_tool": "Live tool observation",
+                    }
+                    citation = f"{labels[source.kind]}: {title}"
+                    status = source.provenance.get("status")
+                    if source.kind == "llm_wiki" and status in {"reviewed", "active"}:
+                        citation += f" ({status})"
+                    if source.kind == "code_fact":
+                        releases = source.provenance.get("applies_to_versions") or []
+                        if releases:
+                            citation += (
+                                " (source release: "
+                                + _markdown_literal(
+                                    ", ".join(str(release) for release in releases)
+                                )
+                                + ")"
+                            )
+                        else:
+                            citation += " (source release unconfirmed)"
+                if citation not in links:
+                    links.append(citation)
             # Only deterministic citations are Markdown; model prose stays literal.
             paragraph = " ".join(text.split())
             plain_text = _markdown_literal(paragraph)

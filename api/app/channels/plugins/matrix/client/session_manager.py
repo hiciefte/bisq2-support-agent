@@ -3,6 +3,8 @@
 import json
 import logging
 import os
+import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -38,6 +40,7 @@ class SessionManager:
     Provides automatic session restoration across container restarts,
     atomic file writes to prevent corruption, and graceful fallback to
     password-based login when session files are invalid or missing.
+    Bounded trials use restore-only mode to preserve the existing device/store.
 
     Attributes:
         client: Matrix AsyncClient instance
@@ -50,6 +53,8 @@ class SessionManager:
         client: "AsyncClient",
         password: str,
         session_file: str = "/data/matrix_session.json",
+        *,
+        restore_only: bool = False,
     ):
         """Initialize session manager.
 
@@ -57,6 +62,8 @@ class SessionManager:
             client: Matrix AsyncClient instance
             password: User password for authentication
             session_file: Path to session persistence file (default: /data/matrix_session.json)
+            restore_only: Require the existing session and encryption database;
+                never fall back to password login or replace the device.
         """
         if not NIO_AVAILABLE:
             raise ImportError(
@@ -66,6 +73,7 @@ class SessionManager:
         self.client = client
         self.password = password
         self.session_file = Path(session_file)
+        self.restore_only = restore_only
 
     async def login(self) -> None:
         """Login with password or restore from session file.
@@ -74,6 +82,7 @@ class SessionManager:
         restored tokens against the homeserver to detect stale/revoked
         tokens early. Falls back to password-based login if session file
         is missing, invalid, or token has expired.
+        In restore-only mode, any restoration or validation failure stops login.
 
         Raises:
             Exception: If login fails after all attempts
@@ -90,6 +99,12 @@ class SessionManager:
                 )
                 return
             else:
+                if self.restore_only:
+                    matrix_session_restores_total.labels(result="failure").inc()
+                    raise MatrixAuthenticationError(
+                        "Existing Matrix identity could not be validated; "
+                        "trial authentication will not create a new device"
+                    )
                 # Token invalid, clear credentials and fall through to fresh login
                 logger.warning(
                     f"Restored token is invalid/expired for {self.client.user_id}, "
@@ -98,6 +113,11 @@ class SessionManager:
                 matrix_session_restores_total.labels(result="failure").inc()
                 self.client.access_token = None
                 self.client.device_id = None
+
+        if self.restore_only:
+            raise MatrixAuthenticationError(
+                "Trial authentication requires the existing Matrix session"
+            )
 
         # Fall back to password login
         logger.info(
@@ -137,6 +157,12 @@ class SessionManager:
             response = await self.client.whoami()
 
             if isinstance(response, WhoamiResponse):
+                if self.restore_only and (
+                    response.user_id != self.client.user_id
+                    or response.device_id != self.client.device_id
+                ):
+                    logger.warning("Restored Matrix identity does not match whoami")
+                    return False
                 logger.debug(f"Token validated successfully for {response.user_id}")
                 return True
             elif isinstance(response, WhoamiError):
@@ -176,6 +202,41 @@ class SessionManager:
                 )
                 matrix_session_restores_total.labels(result="failure").inc()
                 return False
+
+            if self.restore_only and not all(
+                isinstance(config[field], str) and config[field].strip()
+                for field in required_fields
+            ):
+                return False
+
+            if self.restore_only:
+                store_path = getattr(self.client, "store_path", None)
+                if not isinstance(store_path, (str, Path)) or not store_path:
+                    return False
+                database_name = f"{config['user_id']}_{config['device_id']}.db"
+                if Path(database_name).name != database_name:
+                    return False
+                database_path = Path(store_path) / database_name
+                if not database_path.is_file():
+                    return False
+                with database_path.open("rb") as database:
+                    if database.read(16) != b"SQLite format 3\x00":
+                        return False
+                try:
+                    with closing(
+                        sqlite3.connect(
+                            database_path.resolve().as_uri() + "?mode=ro", uri=True
+                        )
+                    ) as database:
+                        account = database.execute(
+                            "SELECT length(account) FROM accounts "
+                            "WHERE user_id=? AND device_id=?",
+                            (config["user_id"], config["device_id"]),
+                        ).fetchone()
+                    if not account or not account[0]:
+                        return False
+                except sqlite3.Error:
+                    return False
 
             # Guard against restoring a session that belongs to a different user.
             # This can happen when operators rotate accounts but reuse session paths.

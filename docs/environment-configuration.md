@@ -233,6 +233,18 @@ The Matrix integration uses lane-specific names to separate support-channel inge
 *   **`MATRIX_CHATOPS_ENABLED`**
     *   Description: Enables Matrix `!case` command handling in staff rooms.
     *   Default: `false`
+*   **`MATRIX_CONTEXT_TRIAL_ID`**, **`MATRIX_CONTEXT_TRIAL_START_AT`**,
+    **`MATRIX_CONTEXT_TRIAL_END_AT`**, **`MATRIX_CONTEXT_TRIAL_MAX_CASES`**
+    *   Optional staff-context trial descriptor. ID and dates default empty;
+        the case cap defaults to 10. Dates must include a timezone, the window
+        must be at most 48 hours, and the cap must be 1–10.
+    *   A durable reservation is spent before paid retrieval and is never
+        replenished by silence, failure, restart, or deleting a review case.
+        The start timestamp excludes older source messages; the end time is
+        checked before retrieval, generation, and every staff send.
+    *   The same ID cannot be reused with changed rooms, dates, or cap.
+        Trial login is restoration-only; keep the existing identity/store.
+        See [Matrix staff-context operation](matrix-staff-context.md).
 *   **`MATRIX_CHATOPS_ROOM_IDS`**
     *   Description: Comma-separated Matrix room IDs where ChatOps commands are accepted.
     *   Required: Yes (when `MATRIX_CHATOPS_ENABLED=true`)

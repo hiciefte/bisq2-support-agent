@@ -16,6 +16,7 @@ from app.channels.staff_assist.context_runtime import (
 from app.models.escalation import EscalationFilters, EscalationStatus
 from app.services.escalation.escalation_repository import EscalationRepository
 from app.services.escalation.escalation_service import EscalationService
+from app.services.faq.slug_manager import SlugManager
 from langchain_core.documents import Document
 
 pytestmark = pytest.mark.unit
@@ -288,9 +289,105 @@ async def test_no_public_evidence_retains_case_without_model_or_send(runtime_cas
     bundle.retrieve.return_value = ([public_doc(type="faq")], [0.9])
     case = await run(bundle)
     assert case.channel_metadata["context_status"] == "needs_human"
-    assert case.channel_metadata["context_reason"] == "no_public_evidence"
+    assert case.channel_metadata["context_reason"] == "no_eligible_evidence"
     bundle.llm.invoke.assert_not_called()
     bundle.sender.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_code_grounding_is_supplied_before_context_generation(runtime_case):
+    bundle = runtime_case
+    calls = []
+    fact = {
+        "id": "code-example",
+        "audience": "staff_only",
+        "claim": "The source release documents a mediation entry point.",
+        "support_use": "Check the installed release before applying this detail.",
+        "source_refs": ["code:bisq2@abcdef123456:support/Service.java:10-12"],
+        "freshness_class": "release_bound",
+        "applies_to_versions": ["2.1.13"],
+        "protocol": "bisq_easy",
+    }
+
+    def ground(**kwargs):
+        calls.append("grounding")
+        return {
+            "evidence": [fact],
+            "uncertainties": [
+                "User release is unconfirmed; this does not diagnose the case."
+            ],
+        }
+
+    def generate(payload, **kwargs):
+        calls.append("generation")
+        prompt = json.loads(payload)
+        assert prompt["audience"] == "staff_only"
+        code = next(
+            source for source in prompt["evidence"] if source["kind"] == "code_fact"
+        )
+        assert json.loads(code["content"])["source_releases"] == ["2.1.13"]
+        return NS(
+            content=json.dumps(
+                {
+                    "action": "note",
+                    "text": "The Bisq 2 source release documents a mediation entry point; the user's installed release remains unconfirmed.",
+                    "source_ids": [code["id"]],
+                    "reason": "Scoped staff investigation evidence.",
+                }
+            )
+        )
+
+    bundle.services["staff_grounding_brief_service"] = NS(build=ground)
+    bundle.llm.invoke.side_effect = generate
+    case = await run(bundle)
+    assert calls == ["grounding", "generation"]
+    assert case.sources[0]["type"] == "code_fact"
+    assert case.sources[0]["audience"] == "staff_only"
+    assert "Staff code evidence" in case.ai_draft_answer
+    assert "Service.java" not in case.ai_draft_answer
+    assert (
+        case.channel_metadata["staff_grounding_brief"]["evidence"][0]["id"]
+        == "code-example"
+    )
+    no_public_delivery(bundle)
+
+
+@pytest.mark.asyncio
+async def test_verified_faq_enters_context_generation_with_real_source_kind(
+    runtime_case,
+):
+    bundle = runtime_case
+    bundle.rag.faq_service = NS(
+        get_faq_by_id=lambda _: NS(
+            id="42",
+            verified=True,
+            question="How does mediation work?",
+            answer="The trade screen provides an entry point.",
+            protocol="multisig_v1",
+        )
+    )
+    published = {
+        "id": "42",
+        "question": "How does mediation work?",
+        "answer": "The trade screen provides an entry point.",
+        "slug": SlugManager().generate_slug("How does mediation work?", "42"),
+    }
+    bundle.services["public_faq_service"] = NS(
+        get_faq_by_id=lambda _: published,
+        get_faq_by_slug=lambda _: published,
+    )
+    bundle.retrieve.return_value = ([public_doc(type="faq", id="42")], [0.9])
+    case = await run(bundle)
+    prompt = json.loads(bundle.llm.invoke.call_args.args[0])
+    assert prompt["evidence"][0]["kind"] == "faq"
+    assert prompt["evidence"][0]["url"].endswith(
+        "/faq/" + SlugManager().generate_slug("How does mediation work?", "42")
+    )
+    assert case.sources[0]["type"] == "faq"
+    assert (
+        case.channel_metadata["evidence_snapshot"][0]["provenance"]["verified"] is True
+    )
+    no_public_delivery(bundle)
 
 
 @pytest.mark.asyncio

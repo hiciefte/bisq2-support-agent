@@ -170,6 +170,10 @@ class Settings(BaseSettings):
     # Unset preserves legacy scope; explicitly empty disables all live rooms.
     MATRIX_RESPONDER_ROOMS: Annotated[str | list[str] | None, NoDecode] = None
     MATRIX_CONTEXT_SOURCE_ROOMS: Annotated[str | list[str], NoDecode] = []
+    MATRIX_CONTEXT_TRIAL_ID: str = ""
+    MATRIX_CONTEXT_TRIAL_START_AT: str = ""
+    MATRIX_CONTEXT_TRIAL_END_AT: str = ""
+    MATRIX_CONTEXT_TRIAL_MAX_CASES: int = 10
     MATRIX_STAFF_ROOM: str = ""  # Room ID for staff escalation notifications
     MATRIX_SYNC_SESSION_FILE: str = "matrix_session.json"
     MATRIX_SYNC_IGNORE_UNVERIFIED_DEVICES: bool = True
@@ -1344,6 +1348,13 @@ class Settings(BaseSettings):
                 raise ValueError(f"{name} must be >= 1")
         if self.TRUST_MONITOR_READ_TO_REPLY_RATIO_THRESHOLD <= 0:
             raise ValueError("TRUST_MONITOR_READ_TO_REPLY_RATIO_THRESHOLD must be > 0")
+        return self
+
+    @model_validator(mode="after")
+    def validate_matrix_context_trial(self) -> "Settings":
+        from app.channels.staff_assist.context_trial import ContextTrial
+
+        ContextTrial.from_settings(self)
         return self
 
     @model_validator(mode="after")

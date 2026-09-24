@@ -415,6 +415,7 @@ async def lifespan(app: FastAPI):
         rag_service=rag_service,
         shared_services={
             "feedback_service": feedback_service,
+            "public_faq_service": public_faq_service,
             "channel_autoresponse_policy_service": app.state.channel_autoresponse_policy_service,
             "channel_launch_control_service": app.state.channel_launch_control_service,
             "trust_monitor_policy_service": app.state.trust_monitor_policy_service,
