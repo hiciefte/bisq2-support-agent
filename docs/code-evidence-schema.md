@@ -155,3 +155,87 @@ The loader reads this file on each staff-grounding request, so an atomic data-fi
 replacement needs no index rebuild or service restart after the code is deployed.
 Keep its provenance manifest with the deployment evidence. No source fact becomes
 public knowledge without the separate reviewed LLM Wiki promotion process.
+
+### Product and release selection
+
+The staff resolver derives product and explicit version from accumulated user
+incident text, not a retrieved article's release. Repository filtering is
+independent of protocol: a Bisq 2 `protocol=all` Tor fact cannot become Bisq 1
+implementation evidence. Exact error phrases (`match_terms`) and complete code
+identifiers rank ahead of whole-token lexical matches.
+
+A supplied version requires an exact release match. Without one, code and release
+notes use the latest available stable source release for that product and state
+that the installed version is unconfirmed. Older snapshots remain available for
+users who identify an older version. One response does not combine code snapshots
+from multiple releases of the same product. A source match does not establish the
+cause of an individual trade failure.
+
+### Recent release snapshots and upkeep
+
+`app.scripts.refresh_release_evidence` uses the existing deterministic extractor.
+It discovers the latest three stable official GitHub releases for both products,
+verifies each remote tag's full commit, checks out that tag in dedicated clean
+source mirrors, and prepares a new artifact directory. It makes no model calls
+and never writes production data. Run it from `api/`:
+
+```bash
+python -m app.scripts.refresh_release_evidence \
+  --bisq-checkout /isolated/bisq \
+  --bisq2-checkout /isolated/bisq2 \
+  --previous-code /reviewed/code_evidence.jsonl \
+  --previous-notes /reviewed/release_notes.jsonl \
+  --output /new/release-evidence
+```
+
+For initial preparation, omit absent `--previous-*` files. Checkouts must be
+isolated disposable mirrors: this command changes their checked-out tag and
+fetches public tags. It refuses dirty source and an existing output directory.
+`--discovery-cache` and `--offline` reproduce an already reviewed snapshot; the
+report explicitly marks remote verification absent in offline mode.
+
+The output is a review package:
+
+- `code_evidence.jsonl`: curated facts with exact commit, file, line range, file
+  hash, repository and release applicability. Multi-file facts check every
+  source reference against the same commit.
+- `release_notes.jsonl`: official release text with repository, tag, source commit,
+  publication date, exact official release URL and body SHA256. Runtime validates
+  these fields and retrieves bounded relevant excerpts.
+- `coverage.json`: artifact hashes, included releases and optional coverage gaps.
+- `official-release-responses.json`: public discovery responses for audit.
+
+Claims are reused only while their complete reviewed source excerpt still
+matches. Required-family changes stop preparation before output; optional changed
+spans are reported and omitted. Changed source requires review of the recipe,
+claim and regression. Historical snapshots from the previous package are
+preserved; changed commits for existing tags are rejected. Release notes remain
+attributed release statements, not confirmation of a fix on a user's installation.
+There is no request-time GitHub fetch or whole-codebase embedding.
+
+The initial coverage is deliberately limited:
+
+| Product | Curated families | Initial recent releases |
+| --- | --- | --- |
+| Bisq 1 | Trade phases; deposit-state predicate; offer states; wallet/SPV replay trigger; mediation acceptance versus payout; exact mediated-payout address validation chain | 1.10.8, 1.10.7, 1.10.6 |
+| Bisq 2 | Payment states; reputation amount and offer limits; market-price dependency; mediation request/history/authorization/pending response; take-offer errors; Tor bootstrap; reputation authorization specifications where unchanged | 2.1.13, 2.1.12, 2.1.11 |
+
+Bisq 2 2.1.11 lacks the two later reviewed reputation-authorization spans; they
+are omitted. Bisq 1 DAO recovery, refund/arbitration internals and wallet repair
+procedures are not covered. These facts do not provide complete codebase coverage.
+
+The `Prepare upstream release evidence` GitHub Actions workflow checks official
+releases every six hours and supports manual dispatch. Its schedule takes effect
+once this workflow is merged into the default branch and Actions is enabled.
+Unchanged tag commits, release text and extraction rules reuse the existing
+candidate artifact; changed inputs prepare a new candidate with coverage. A tag
+change between discovery and preparation prevents artifact publication. The job
+uses public sources and has no provider or production credentials.
+
+This automates **preparation**, not approval or installation. Review coverage and
+retrieval regressions, then merge any retained older release snapshots and install
+**both** runtime JSONL files together through the controlled knowledge-data rollout.
+The CI artifact covers the current three releases per product; it does not read or
+replace the production corpus. Verify hashes and exact-version queries before
+staff generation resumes. A merged workflow, a successful preparation, and an
+installed package are distinct states and must be reported separately.

@@ -23,6 +23,12 @@ from app.channels.staff_assist.public_context import (
     StaffEvidence,
 )
 from app.services.faq.slug_manager import SlugManager
+from app.services.rag.code_evidence import (
+    canonical_code_repo,
+    code_repo_for_context,
+    explicit_product,
+    explicit_user_version,
+)
 from app.services.rag.source_refs import is_precise_code_source_ref
 
 
@@ -84,6 +90,7 @@ class StaffEvidenceResolver:
         *,
         faq_service: Any = None,
         public_faq_service: Any = None,
+        public_knowledge_service: Any = None,
         grounding_service: Any = None,
         network_status_service: Any = None,
         bisq_service: Any = None,
@@ -93,6 +100,7 @@ class StaffEvidenceResolver:
     ) -> None:
         self.faq_service = faq_service
         self.public_faq_service = public_faq_service
+        self.public_knowledge_service = public_knowledge_service
         self.grounding_service = grounding_service
         self.network_status_service = network_status_service
         self.bisq_service = bisq_service
@@ -101,8 +109,16 @@ class StaffEvidenceResolver:
         self.llm_wiki_dir = llm_wiki_dir
 
     async def resolve(
-        self, *, question: str, documents: list[Any], scores: list[float] | None = None
+        self,
+        *,
+        question: str,
+        documents: list[Any],
+        scores: list[float] | None = None,
+        product: str | None = None,
+        user_version: str | None = None,
     ) -> EvidenceBundle:
+        product = product or explicit_product(question)
+        user_version = user_version or explicit_user_version(question)
         bundle = EvidenceBundle()
         candidates: list[ContextEvidence] = []
         current_compiled: dict[str, Any] = {}
@@ -147,6 +163,7 @@ class StaffEvidenceResolver:
                     # FAQ refs resolve to actual published FAQ text. They remain
                     # independent evidence; the compiled body is not attributed to them.
                     if source.kind == "llm_wiki":
+                        candidates.extend(await self._public_compiled(source, bundle))
                         for ref in source.source_refs:
                             if ref.startswith("faq:"):
                                 faq = await asyncio.to_thread(self._faq, ref[4:])
@@ -162,6 +179,8 @@ class StaffEvidenceResolver:
                 brief = await asyncio.to_thread(
                     self.grounding_service.build,
                     question=question,
+                    product=product,
+                    user_version=user_version,
                     knowledge_sources=[
                         {
                             **source.model_dump(),
@@ -172,7 +191,50 @@ class StaffEvidenceResolver:
                 )
                 if isinstance(brief, dict):
                     bundle.internal_grounding = brief
-                    candidates.extend(self._code(question, brief))
+                    for note in brief.get("release_notes", [])[:1]:
+                        repo = code_repo_for_context(
+                            product, brief.get("likely_protocol")
+                        )
+                        if repo != note.get("repo") or (
+                            user_version
+                            and note.get("source_version")
+                            != user_version.removeprefix("v")
+                        ):
+                            continue
+                        candidates.append(
+                            PublicEvidence(
+                                id=_identifier(
+                                    "release",
+                                    note["repo"] + note["tag"] + note["body_sha256"],
+                                ),
+                                kind="release_note",
+                                title=f"{'Bisq 1' if note['repo'] == 'bisq' else 'Bisq 2'} {note['tag']} ({note['published_at'][:10]})",
+                                content=json.dumps(
+                                    {
+                                        "excerpt": note["body"],
+                                        "source_release": note["source_version"],
+                                        "user_version": user_version,
+                                        "limitation": note["limitation"],
+                                    }
+                                ),
+                                url=note["url"],
+                                provenance={
+                                    key: note[key]
+                                    for key in (
+                                        "repo",
+                                        "tag",
+                                        "commit",
+                                        "published_at",
+                                        "body_sha256",
+                                    )
+                                },
+                            )
+                        )
+                    candidates.extend(
+                        self._code(
+                            question, brief, product=product, user_version=user_version
+                        )
+                    )
             except Exception:
                 bundle.diagnostics.append("code_grounding_unavailable")
         # Retain source diversity before filling remaining slots in retrieval order.
@@ -193,6 +255,42 @@ class StaffEvidenceResolver:
             for index, source in enumerate(selected[:8])
         ]
         return bundle
+
+    async def _public_compiled(
+        self, source: ContextEvidence, bundle: EvidenceBundle
+    ) -> list[PublicEvidence]:
+        if self.public_knowledge_service is None:
+            return []
+        page_id = source.provenance.get("page_id")
+        try:
+            projection = await asyncio.to_thread(
+                self.public_knowledge_service.get_public_projection, page_id
+            )
+            if not projection or projection.get("page_id") != page_id:
+                return []
+            # Public authority rereads the exact approved projection. Page-level
+            # bibliography is deliberately absent from these section citations.
+            return [
+                PublicEvidence(
+                    id=_identifier(
+                        "guide", str(page_id) + section["id"] + projection["revision"]
+                    ),
+                    kind="support_guide",
+                    title=projection["title"] + ": " + section["title"],
+                    content=section["content"],
+                    url=section["url"],
+                    provenance={
+                        "page_id": page_id,
+                        "section": section["id"],
+                        "protocol": projection.get("protocol"),
+                        "revision": projection["revision"],
+                    },
+                )
+                for section in projection["sections"]
+            ]
+        except Exception:
+            bundle.diagnostics.append("public_compiled_authority_unavailable")
+            return []
 
     @staticmethod
     def _wiki(document: Any, metadata: dict[str, Any]) -> PublicEvidence | None:
@@ -305,10 +403,17 @@ class StaffEvidenceResolver:
         )
 
     @staticmethod
-    def _code(question: str, brief: dict[str, Any]) -> list[StaffEvidence]:
-        from app.services.rag.code_evidence import explicit_user_version
-
-        version = explicit_user_version(question)
+    def _code(
+        question: str,
+        brief: dict[str, Any],
+        *,
+        product: str | None = None,
+        user_version: str | None = None,
+    ) -> list[StaffEvidence]:
+        version = user_version or explicit_user_version(question)
+        repo = code_repo_for_context(
+            product or explicit_product(question), brief.get("likely_protocol")
+        )
         evidence = []
         for fact in brief.get("evidence", [])[:3]:
             refs = fact.get("source_refs")
@@ -317,6 +422,8 @@ class StaffEvidenceResolver:
                 or not isinstance(refs, list)
                 or not refs
             ):
+                continue
+            if repo is not None and canonical_code_repo(fact.get("repo")) != repo:
                 continue
             if not all(is_precise_code_source_ref(ref) for ref in refs):
                 continue

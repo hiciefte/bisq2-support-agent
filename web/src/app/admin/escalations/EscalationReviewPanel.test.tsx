@@ -161,6 +161,33 @@ describe('EscalationReviewPanel grounding brief', () => {
     )
   })
 
+  test('distinguishes later incident updates from the existing AI attempt', async () => {
+    render(
+      <EscalationReviewPanel
+        escalation={createEscalation({
+          channel: "matrix",
+          question: "Payout signing failed. I have also resynced five times.",
+          channel_metadata: {
+            response_kind: "public_context",
+            context_status: "delivery_uncertain",
+            incident_late_update_status: "needs_review_no_additional_generation",
+            incident_generation_question: "Payout signing failed.",
+          },
+        })}
+        open
+        onOpenChange={jest.fn()}
+        onUpdated={jest.fn()}
+      />
+    )
+    expect(await screen.findByText("New incident context needs review")).toBeInTheDocument()
+    expect(screen.getByText("Staff-room delivery uncertain")).toBeInTheDocument()
+    expect(screen.getByText("Current incident context")).toBeInTheDocument()
+    expect(screen.getByText(/No additional AI note was generated or sent/)).toBeInTheDocument()
+    fireEvent.click(screen.getByText("Context used for the existing AI attempt"))
+    expect(screen.getByText("Payout signing failed.")).toBeVisible()
+    expect(screen.getByText("Payout signing failed. I have also resynced five times.")).toBeVisible()
+  })
+
   test('loads and displays staff-only code grounding in the review flow', async () => {
     render(
       <EscalationReviewPanel

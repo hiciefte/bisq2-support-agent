@@ -52,9 +52,21 @@ class InboundMessageOrchestrator:
             incoming,
             thread_id=canonical.thread_id,
         )
+        context_mode = False
+        if self.channel_id == "matrix" and self.autoresponse_policy_service:
+            context_mode = (
+                getattr(
+                    self.autoresponse_policy_service.get_policy("matrix"),
+                    "response_kind",
+                    "answer",
+                )
+                == "public_context"
+            )
         classification = getattr(incoming, "classification", None)
-        if classification is not None and not bool(
-            getattr(classification, "should_process", True)
+        if (
+            not context_mode
+            and classification is not None
+            and not bool(getattr(classification, "should_process", True))
         ):
             logger.debug(
                 "Skipping inbound event after shared classification channel=%s thread=%s event=%s reasons=%s",

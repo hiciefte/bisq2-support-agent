@@ -9,10 +9,74 @@ from app.channels.staff_assist.public_context import (
     PUBLIC_CONTEXT_PROMPT,
     PublicContextRequest,
     PublicContextService,
+    PublicEvidence,
+    StaffEvidence,
 )
 from pydantic import ValidationError
 
 pytestmark = pytest.mark.unit
+
+
+def test_support_guide_links_are_typed_and_section_bound():
+    from app.services.public_knowledge_service import support_guide_url
+
+    url = support_guide_url("synthetic-guide") + "#canonical-support-answer"
+    evidence = PublicEvidence(
+        id="public-doc",
+        title="Guide",
+        content="Reviewed answer",
+        kind="support_guide",
+        url=url,
+    )
+    result = PublicContextService(llm_output()).preview(request(evidence=[evidence]))
+    assert f"Reviewed support guide: [Guide]({url})" in result.rendered_note
+    for invalid_url in (
+        url.split("#")[0],
+        url.replace("canonical-support-answer", "review-notes"),
+        "https://bisq.wiki/Support",
+    ):
+        with pytest.raises(ValidationError):
+            PublicEvidence(**{**evidence.model_dump(), "url": invalid_url})
+
+
+def test_internal_guide_and_code_links_stay_staff_only():
+    from app.services.public_knowledge_service import support_guide_url
+
+    guide = StaffEvidence(
+        id="public-doc",
+        title="Guide",
+        content="Internal guidance",
+        kind="llm_wiki",
+        provenance={"page_id": "synthetic-guide", "status": "reviewed"},
+    )
+    result = PublicContextService(llm_output()).preview(
+        request(audience="staff_only", evidence=[guide])
+    )
+    assert support_guide_url("synthetic-guide", internal=True) in result.rendered_note
+    assert "Internal support guide" in result.rendered_note
+    with pytest.raises(ValidationError):
+        request(evidence=[guide])
+    code = StaffEvidence(
+        id="public-doc",
+        title="Source",
+        content="A fact",
+        kind="code_fact",
+        source_refs=[
+            "code:other@" + "a" * 40 + ":private/file:1-2",
+            "code:bisq2@" + "a" * 40 + ":../private:1-2",
+            "code:bisq2@" + "a" * 40 + ":core/src/File.java:10-20",
+        ],
+    )
+    result = PublicContextService(llm_output()).preview(
+        request(audience="staff_only", evidence=[code])
+    )
+    assert (
+        "https://github.com/bisq-network/bisq2/blob/"
+        + "a" * 40
+        + "/core/src/File.java#L10-L20"
+        in result.rendered_note
+    )
+    assert "private" not in result.rendered_note
 
 
 def request(**overrides):
@@ -429,3 +493,26 @@ def test_staff_code_records_are_not_public_evidence():
                 }
             ]
         )
+
+
+def test_release_note_citation_keeps_official_product_version_and_url():
+    from markdown_it import MarkdownIt
+
+    evidence = PublicEvidence(
+        id="public-doc",
+        title="Bisq 2 v2.1.14 release notes",
+        content="Reviewed release information",
+        kind="release_note",
+        url="https://github.com/bisq-network/bisq2/releases/tag/v2.1.14",
+    )
+    result = PublicContextService(llm_output()).preview(request(evidence=[evidence]))
+    rendered = MarkdownIt("commonmark").render(result.rendered_note)
+    assert "Release notes: " in rendered
+    assert ">Bisq 2 v2.1.14 release notes</a>" in rendered
+    for url in (
+        "https://github.com/other/bisq2/releases/tag/v2.1.14",
+        "https://github.com/bisq-network/bisq2/blob/main/README.md",
+        "https://github.com/bisq-network/bisq2/releases/tag/v2.1.14?raw=1",
+    ):
+        with pytest.raises(ValidationError):
+            PublicEvidence(**{**evidence.model_dump(), "url": url})

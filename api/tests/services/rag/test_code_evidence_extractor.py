@@ -443,3 +443,107 @@ def test_byte_identical_eol_checkout_is_accepted(tmp_path: Path) -> None:
     script.write_bytes(b"@echo modified\r\n")
     with pytest.raises(ValueError, match="dirty"):
         CodeEvidenceExtractor(repo_path=tmp_path, repo="bisq2", commit=commit).extract()
+
+
+def test_formatted_bisq1_error_requires_complete_pinned_validation_chain(tmp_path):
+    fixture = json.loads(
+        (
+            Path(__file__).parents[2]
+            / "fixtures/code_evidence/bisq1_mediation_sources.json"
+        ).read_text()
+    )
+    for name, body in fixture["files"].items():
+        _write(tmp_path / name, body)
+    commit = _commit_source(tmp_path)
+    _git(tmp_path, "tag", "v1.10.8")
+    records = CodeEvidenceExtractor(
+        repo_path=tmp_path, repo="bisq", commit=commit, release_tag="v1.10.8"
+    ).extract()
+    fact = next(
+        r
+        for r in records
+        if r.symbol == "SignMediatedPayoutTx.checkMediatedPayoutAddresses"
+    )
+    assert fact.protocol == "multisig_v1"
+    assert "sellerPayoutAddressString must not be null" in fact.match_terms
+    assert len(fact.source_refs) == 3
+    assert CodeEvidenceFreshnessChecker(tmp_path).check([fact]).valid == 1
+    forged = replace(
+        fact,
+        source_refs=fact.source_refs + [f"code:bisq@{commit}:missing/File.java:1-1"],
+    )
+    assert CodeEvidenceFreshnessChecker(tmp_path).check([forged]).stale == 1
+    helper = tmp_path / "core/src/main/java/bisq/core/util/Validator.java"
+    helper.write_text(
+        helper.read_text().replace('"%s must not be null"', '"%s is unavailable"')
+    )
+    changed = _commit_source(tmp_path)
+    _git(tmp_path, "tag", "v1.10.9")
+    updated = CodeEvidenceExtractor(
+        repo_path=tmp_path, repo="bisq", commit=changed, release_tag="v1.10.9"
+    ).extract()
+    assert not any(r.symbol == fact.symbol for r in updated)
+
+
+def test_required_symbol_failure_does_not_overwrite_previous_artifact(tmp_path):
+    from app.scripts.generate_code_evidence import main
+
+    source = tmp_path / "source"
+    _write(
+        source / "Limits.java",
+        "class Limits { public static final int MAX_TRADES = 2; }",
+    )
+    _commit_source(source)
+    _git(source, "tag", "v2.1.13")
+    output = tmp_path / "existing.jsonl"
+    output.write_text("previous artifact\n")
+    with pytest.raises(ValueError, match="Required source coverage unavailable"):
+        main(
+            [
+                "--repo-path",
+                str(source),
+                "--repo",
+                "bisq2",
+                "--release-tag",
+                "v2.1.13",
+                "--require-symbol",
+                "missing",
+                "--output",
+                str(output),
+            ]
+        )
+    assert output.read_text() == "previous artifact\n"
+
+
+@pytest.mark.parametrize(
+    "alias,canonical,tag",
+    [
+        ("bisq", "bisq", "v1.10.8"),
+        ("bisq1", "bisq", "v1.10.8"),
+        ("bisq-network/bisq", "bisq", "v1.10.8"),
+        ("bisq2", "bisq2", "v2.1.13"),
+        ("bisq-network/bisq2", "bisq2", "v2.1.13"),
+    ],
+)
+def test_reviewed_recipes_accept_supported_repository_aliases(
+    tmp_path, alias, canonical, tag
+):
+    import app.services.rag.code_evidence_extractor as module
+
+    recipes = json.loads(
+        Path(module.__file__).with_name("code_evidence_recipes.json").read_text()
+    )
+    recipe = next(row for row in recipes if row["repo"] == canonical)
+    _write(tmp_path / recipe["path"], recipe["excerpt"])
+    commit = _commit_source(tmp_path)
+    _git(tmp_path, "tag", tag)
+    records = CodeEvidenceExtractor(
+        repo_path=tmp_path, repo=alias, commit=commit, release_tag=tag
+    ).extract()
+    record = next(row for row in records if row.id.endswith(":" + recipe["name"]))
+    assert record.repo == canonical
+    assert record.id.startswith(canonical + ":")
+    assert all(
+        ref.startswith(f"code:{canonical}@{commit}:") for ref in record.source_refs
+    )
+    assert CodeEvidenceFreshnessChecker(tmp_path).check([record]).valid == 1

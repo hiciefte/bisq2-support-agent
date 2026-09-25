@@ -175,7 +175,11 @@ async def test_mixed_public_and_compiled_evidence_keeps_internal_page_unlinked()
     )
     llm = answer([internal.id])
     preview = PublicContextService(llm).preview(request)
-    assert "Internal LLM wiki: Support (reviewed)" in preview.rendered_note
+    assert "Internal support guide: [Support](" in preview.rendered_note
+    assert (
+        "/admin/knowledge-updates/pages/reviewed-playbook) (reviewed)"
+        in preview.rendered_note
+    )
     assert "https://" not in preview.rendered_note
     assert "wiki:Support" not in preview.rendered_note
     assert "page-level references" in llm.invoke.call_args.kwargs["system_content"]
@@ -236,7 +240,7 @@ async def test_reviewed_external_primary_provenance_is_internal_evidence_not_pub
         )
     )
     assert ref not in preview.rendered_note
-    assert "Internal LLM wiki" in preview.rendered_note
+    assert "Internal support guide" in preview.rendered_note
 
 
 @pytest.mark.asyncio
@@ -356,6 +360,7 @@ async def test_monitoring_preserves_unknown_stale_and_limited_coverage(
 async def test_wrong_release_code_is_excluded_and_matching_code_retains_scope():
     fact = {
         "id": "fact",
+        "repo": "bisq2",
         "audience": "staff_only",
         "claim": "A scoped implementation fact.",
         "source_refs": ["code:bisq2@abcdef123456:module/File.java:10-12"],
@@ -451,3 +456,62 @@ def test_identical_public_links_are_rendered_once():
     request = PublicContextRequest(question="Support?", evidence=evidence)
     preview = PublicContextService(answer(["e1", "e2"])).preview(request)
     assert preview.rendered_note.count("https://bisq.wiki/Support") == 1
+
+
+@pytest.mark.asyncio
+async def test_public_guide_uses_only_reread_approved_section_not_bibliography():
+    from app.channels.plugins.support_markdown import BISQ2_FAQ_ONION_BASE_URL
+
+    url = (
+        BISQ2_FAQ_ONION_BASE_URL.rstrip("/")
+        + "/knowledge/reviewed-playbook#canonical-support-answer"
+    )
+    public = NS(
+        get_public_projection=Mock(
+            return_value={
+                "page_id": "reviewed-playbook",
+                "title": "Support",
+                "protocol": "multisig_v1",
+                "revision": "reviewed-hash",
+                "sections": [
+                    {
+                        "id": "canonical-support-answer",
+                        "title": "Canonical Support Answer",
+                        "content": "Exact public section.",
+                        "url": url,
+                    }
+                ],
+            }
+        )
+    )
+    resolver = compiled_resolver(compiled(), public_knowledge_service=public)
+    result = await resolver.resolve(question="Bisq 1 support?", documents=[compiled()])
+    guide = next(e for e in result.evidence if e.kind == "support_guide")
+    assert guide.content == "Exact public section."
+    assert guide.url == url
+    assert guide.provenance["revision"] == "reviewed-hash"
+    assert "wiki:Support" not in guide.content
+    public.get_public_projection.assert_called_once_with("reviewed-playbook")
+    public.get_public_projection.return_value = None
+    result = await resolver.resolve(question="Bisq 1 support?", documents=[compiled()])
+    assert [e.kind for e in result.evidence] == ["llm_wiki"]
+
+
+@pytest.mark.asyncio
+async def test_code_product_guard_rechecks_even_mocked_grounding():
+    fact = {
+        "id": "tor",
+        "repo": "bisq2",
+        "audience": "staff_only",
+        "claim": "Tor bootstrap timeout",
+        "source_refs": ["code:bisq2@abcdef123456:module/File.java:10-12"],
+        "protocol": "all",
+    }
+    grounding = NS(
+        build=Mock(return_value={"evidence": [fact], "likely_protocol": "all"})
+    )
+    result = await StaffEvidenceResolver(grounding_service=grounding).resolve(
+        question="Bisq 1 Tor timeout", documents=[]
+    )
+    assert result.evidence == []
+    assert grounding.build.call_args.kwargs["product"] == "bisq1"

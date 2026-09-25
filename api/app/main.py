@@ -37,6 +37,7 @@ from app.routes import (
     metrics_update,
     onion_verify,
     public_faqs,
+    public_knowledge,
     scheduler,
 )
 from app.routes.admin import include_admin_routers
@@ -58,6 +59,7 @@ from app.services.mcp.mcp_http_server import router as mcp_router
 from app.services.mcp.mcp_http_server import set_bisq_service
 from app.services.privacy_retention_service import PrivacyRetentionService
 from app.services.public_faq_service import PublicFAQService
+from app.services.public_knowledge_service import PublicKnowledgeService
 from app.services.rag.embeddings_provider import OpenAIEmbeddingsProvider
 from app.services.rag.learning_engine import LearningEngine
 from app.services.simplified_rag_service import SimplifiedRAGService
@@ -301,6 +303,10 @@ async def lifespan(app: FastAPI):
     unified_db_path = os.path.join(settings.DATA_DIR, "unified_training.db")
     unified_repo = KnowledgeCandidateRepository(unified_db_path)
     app.state.unified_repository = unified_repo
+    public_knowledge_service = PublicKnowledgeService(
+        settings.LLM_WIKI_DIR_PATH, unified_db_path
+    )
+    app.state.public_knowledge_service = public_knowledge_service
     learning_engine = LearningEngine(repository=unified_repo)
     app.state.learning_engine = learning_engine
     app.state.privacy_retention_service = PrivacyRetentionService(settings)
@@ -419,6 +425,7 @@ async def lifespan(app: FastAPI):
         shared_services={
             "feedback_service": feedback_service,
             "public_faq_service": public_faq_service,
+            "public_knowledge_service": public_knowledge_service,
             "channel_autoresponse_policy_service": app.state.channel_autoresponse_policy_service,
             "channel_launch_control_service": app.state.channel_launch_control_service,
             "trust_monitor_policy_service": app.state.trust_monitor_policy_service,
@@ -840,6 +847,8 @@ app.include_router(scheduler.router)
 app.include_router(
     public_faqs.router, tags=["Public FAQs"]
 )  # Public FAQ endpoints (no auth required)
+app.include_router(public_knowledge.router)
+app.include_router(public_knowledge.admin_router)
 app.include_router(
     escalation_polling.router, tags=["Escalations"]
 )  # User polling endpoint (no auth required)

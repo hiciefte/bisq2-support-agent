@@ -30,6 +30,12 @@ from app.services.channel_launch_control_service import LAUNCH_CONTROLLED_CHANNE
 logger = logging.getLogger(__name__)
 
 
+def accumulate_question(texts: list[str], *, max_chars: int = 3600) -> str:
+    """Use the same bounded message separator for delayed group-channel inputs."""
+    question = "\n---\n".join(text for text in texts if text.strip())
+    return question[-max_chars:]
+
+
 @dataclass
 class _ThreadEntry:
     thread_id: str
@@ -55,9 +61,9 @@ class _ThreadEntry:
     def build_incoming(self, max_accumulated_chars: int) -> IncomingMessage:
         """Create one synthetic IncomingMessage from accumulated user messages."""
         texts = [text for text in self.accumulated_texts if text.strip()]
-        question = "\n---\n".join(texts) if texts else self.latest_incoming.question
-        if len(question) > max_accumulated_chars:
-            question = question[-max_accumulated_chars:]
+        question = accumulate_question(
+            texts or [self.latest_incoming.question], max_chars=max_accumulated_chars
+        )
 
         return self.latest_incoming.model_copy(
             update={

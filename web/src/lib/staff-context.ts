@@ -5,6 +5,8 @@ export interface StaffContextMetadata {
     staff_thread_url: string | null;
     evidence_version: string;
     generation_version: string;
+    late_update_requires_review?: boolean;
+    generation_question?: string;
 }
 
 export function isStaffContextCase(metadata?: Record<string, unknown> | null): boolean {
@@ -34,6 +36,8 @@ export function staffContextMetadata(metadata?: Record<string, unknown> | null):
         staff_thread_url: matrixLink(metadata.staff_thread_url),
         evidence_version: text("evidence_version"),
         generation_version: text("generation_version"),
+        late_update_requires_review: metadata.incident_late_update_status === "needs_review_no_additional_generation",
+        generation_question: text("incident_generation_question"),
     };
 }
 
@@ -69,6 +73,9 @@ export function staffContextReasonLabel(reason: string): string {
         source_stale: "The source question is too old for automatic context delivery.",
         source_changed_or_redacted: "The source question changed or was removed. Staff review is needed.",
         source_context_incomplete: "Recent conversation context could not be fully checked.",
+        incident_context_capacity_reached: "This incident has more context than can be checked automatically. Staff review is needed.",
+        incident_source_context_incomplete: "The complete incident could not be checked against the source messages. Staff review is needed.",
+        incident_updated_after_generation: "New incident information arrived after the AI context was prepared. The note was withheld for review.",
         staff_identity_unavailable: "Staff participation could not be checked.",
     };
     if (labels[reason]) return labels[reason];

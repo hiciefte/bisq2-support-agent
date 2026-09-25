@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
   AlertTriangle,
   ArrowRight,
@@ -1743,6 +1744,7 @@ export default function KnowledgeUpdatesPage() {
       {lastPublication && (
         <div className="space-y-2 rounded-xl border border-border/70 bg-muted/15 p-4 text-sm" role="status">
           <p className="font-medium">Last approved wiki update: {lastPublication.status.page_id}</p>
+          {lastPublication.status.page_id && <Link className="block underline" href={`/admin/knowledge-updates/pages/${encodeURIComponent(lastPublication.status.page_id)}`}>Inspect guide and review its public view</Link>}
           <p>Saved: {lastPublication.status.saved ? "Yes" : "No"}. Index: {lastPublication.status.index_status}. Answer quality check: not run.</p>
           <p className="text-muted-foreground">{lastPublication.status.detail} Index visibility does not demonstrate improved answers.</p>
           {lastPublication.status.index_status === "pending" && <p className="text-muted-foreground">Use the existing vector-store status banner to refresh the index, then check again.</p>}

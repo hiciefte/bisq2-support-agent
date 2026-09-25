@@ -11,6 +11,7 @@ from typing import Any
 
 from app.channels.inbound_orchestrator import InboundMessageOrchestrator
 from app.channels.models import ChannelType, IncomingMessage, UserContext
+from app.channels.plugins.matrix.context_text import context_relationships, context_text
 from app.channels.plugins.matrix.room_filter import (
     is_responder_room_allowed,
     normalize_room_ids,
@@ -161,6 +162,19 @@ class MatrixMessageHandler:
                 sender_id=sender_id,
             )
             return
+        if context_source:
+            authored = context_text(effective_event)
+            if not authored:
+                return
+            incoming = incoming.model_copy(
+                update={
+                    "question": authored,
+                    "channel_metadata": {
+                        **incoming.channel_metadata,
+                        **context_relationships(effective_event),
+                    },
+                }
+            )
         if not is_generation_enabled(self.autoresponse_policy_service, self.channel_id):
             return
         if not context_source and room_id not in self.allowed_room_ids:
