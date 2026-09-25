@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace as NS
 
 import pytest
-from app.channels.models import ClassificationDecision, UserContext
+from app.channels.models import ClassificationDecision, SendResult, UserContext
 from app.channels.staff_assist.context_runtime import MatrixContextRuntime
 from app.models.escalation import EscalationFilters
 
@@ -497,7 +497,7 @@ async def test_log_offer_with_diagnostic_fact_is_admitted(runtime_case):
 
 
 @pytest.mark.asyncio
-async def test_late_update_during_final_trial_check_blocks_note(runtime_case):
+async def test_late_update_committed_before_final_send_lock_blocks_note(runtime_case):
     bundle = runtime_case
     bundle.incoming = incoming(bundle, "$root", ROOT)
     late = incoming(
@@ -507,19 +507,142 @@ async def test_late_update_during_final_trial_check_blocks_note(runtime_case):
         reply_to_event_id="$root",
     )
     server_events(bundle, [bundle.incoming, late])
-    original = bundle.engine.check_trial_delivery
+    original = bundle.engine._send_if_open
 
-    async def check(transaction_id):
-        reason = await original(transaction_id)
-        if transaction_id.endswith("-note"):
+    async def send(case_id, channel, text, **kwargs):
+        if kwargs["transaction_id"].endswith("-note"):
             await bundle.engine.process(late, bundle.channel)
-        return reason
+        return await original(case_id, channel, text, **kwargs)
 
-    bundle.engine.check_trial_delivery = check
+    bundle.engine._send_if_open = send
     await bundle.engine.process(bundle.incoming, bundle.channel)
     await bundle.engine.drain()
     case = await saved_case(bundle)
     assert case.channel_metadata["incident_late_meaningful_update"] is True
     assert bundle.sender.await_count == 1
     assert case.channel_metadata["context_status"] == "deferred"
-    assert case.channel_metadata["context_reason"] == "staff_context_case_changed"
+    bundle.llm.invoke.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_late_append_waits_through_final_decision_and_inflight_transport(
+    runtime_case, monkeypatch
+):
+    bundle = runtime_case
+    bundle.incoming = incoming(bundle, "$root", ROOT)
+    late = incoming(
+        bundle,
+        "$late",
+        "Actually resolved now; the funds arrived.",
+        reply_to_event_id="$root",
+    )
+    server_events(bundle, [bundle.incoming, late])
+    decision_entered, release_decision = asyncio.Event(), asyncio.Event()
+    update_waiting, transport_entered = asyncio.Event(), asyncio.Event()
+    release_transport = asyncio.Event()
+    check = bundle.engine._case_is_open
+    send = bundle.engine._send_if_open
+    acquire = bundle.service._acquire_delivery_lock
+    note_checks = 0
+    note_sending = False
+
+    async def sending(case_id, channel, text, **kwargs):
+        nonlocal note_sending
+        note_sending = kwargs["transaction_id"].endswith("-note")
+        try:
+            return await send(case_id, channel, text, **kwargs)
+        finally:
+            note_sending = False
+
+    async def checked(case_id):
+        nonlocal note_checks
+        allowed = await check(case_id)
+        if note_sending:
+            note_checks += 1
+            # Pause after the final DB read, immediately before the existing
+            # send path uses its result. Earlier checks cannot close this race.
+            if note_checks == 3:
+                decision_entered.set()
+                await release_decision.wait()
+        return allowed
+
+    async def acquire_checked(case_id):
+        if asyncio.current_task().get_name() == "late-incident-update":
+            update_waiting.set()
+        return await acquire(case_id)
+
+    async def transport(text, **kwargs):
+        if kwargs["transaction_id"].endswith("-note"):
+            transport_entered.set()
+            await release_transport.wait()
+            return SendResult(True, "$staff-note")
+        return SendResult(True, "$staff-root")
+
+    monkeypatch.setattr(bundle.engine, "_case_is_open", checked)
+    monkeypatch.setattr(bundle.engine, "_send_if_open", sending)
+    monkeypatch.setattr(bundle.service, "_acquire_delivery_lock", acquire_checked)
+    bundle.sender.side_effect = transport
+    await bundle.engine.process(bundle.incoming, bundle.channel)
+    late_task = None
+    try:
+        await asyncio.wait_for(decision_entered.wait(), timeout=5)
+        late_task = asyncio.create_task(
+            bundle.engine.process(late, bundle.channel), name="late-incident-update"
+        )
+        await asyncio.wait_for(update_waiting.wait(), timeout=5)
+        assert not late_task.done()
+        case = await saved_case(bundle)
+        assert not case.channel_metadata.get("incident_late_meaningful_update")
+        assert len(case.channel_metadata["incident_messages"]) == 1
+        release_decision.set()
+        await asyncio.wait_for(transport_entered.wait(), timeout=5)
+        # Transport has begun; append cannot alter its checked snapshot or
+        # cancel/retry the message. The durable update follows its outcome.
+        assert not late_task.done()
+    finally:
+        release_decision.set()
+        release_transport.set()
+        if late_task is not None:
+            await asyncio.wait_for(late_task, timeout=5)
+        await asyncio.wait_for(bundle.engine.drain(), timeout=5)
+    case = await saved_case(bundle)
+    assert case.channel_metadata["incident_late_meaningful_update"] is True
+    assert (
+        case.channel_metadata["incident_late_update_status"]
+        == "needs_review_no_additional_generation"
+    )
+    assert case.channel_metadata["context_status"] == "delivered"
+    assert case.channel_metadata["incident_generation_question"] == ROOT
+    assert len(case.channel_metadata["incident_messages"]) == 2
+    bundle.llm.invoke.assert_called_once()
+    assert bundle.sender.await_count == 2
+    assert not bundle.service._delivery_locks
+    assert not bundle.service._delivery_lock_refs
+
+
+@pytest.mark.asyncio
+async def test_duplicate_append_explicitly_rolls_back_open_transaction(
+    runtime_case, monkeypatch
+):
+    from unittest.mock import AsyncMock
+
+    import aiosqlite
+    from app.channels.staff_assist.context_incidents import ContextIncidentStore
+
+    bundle = runtime_case
+    hold_worker(bundle)
+    root = incoming(bundle, "$root", ROOT)
+    await bundle.engine.process(root, bundle.channel)
+    case = await saved_case(bundle)
+    original = aiosqlite.Connection.rollback
+    rolled_back = AsyncMock()
+
+    async def rollback(connection):
+        await rolled_back()
+        return await original(connection)
+
+    monkeypatch.setattr(aiosqlite.Connection, "rollback", rollback)
+    await ContextIncidentStore(bundle.repository.db_path).append(case.id, root, ROOT)
+    rolled_back.assert_awaited_once()
+    assert len((await saved_case(bundle)).channel_metadata["incident_messages"]) == 1
+    await bundle.engine.close()

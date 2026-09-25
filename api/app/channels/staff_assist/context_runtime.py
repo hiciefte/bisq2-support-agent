@@ -308,12 +308,21 @@ class MatrixContextRuntime:
         )
         if case_id is not None:
             if not duplicate:
-                await incidents.append(
-                    case_id,
-                    incoming,
-                    question,
-                    worker_active=case_id in self._active_cases,
-                )
+                # Order: intake lock, per-case delivery lock, then DB write.
+                # The final publication decision and transport own this same
+                # lock, so an append cannot commit between their last read and
+                # send. An update arriving after that boundary waits for the
+                # in-flight result and is retained for review, never replayed.
+                lock = await service._acquire_delivery_lock(case_id)
+                try:
+                    await incidents.append(
+                        case_id,
+                        incoming,
+                        question,
+                        worker_active=case_id in self._active_cases,
+                    )
+                finally:
+                    await service._release_delivery_lock(case_id, lock)
             return False
         # Detached edits, counts, offers and acknowledgments are not incidents.
         # Non-question inputs still reach this path so they can enrich a known
@@ -789,10 +798,11 @@ class MatrixContextRuntime:
     async def _send_if_open(
         self, case_id: int, channel: Any, text: str, **kwargs: Any
     ) -> Any:
-        """Serialize the last decision/send boundary with Admin review actions.
+        """Serialize the final decision/send with Admin review and incident writes.
 
-        A review completed before transport starts prevents that send. If a
-        transport is already in flight, review waits for its outcome instead.
+        A review or meaningful update committed before this lock is acquired
+        prevents the send. Later updates wait for this decision/transport to
+        finish and remain reviewable; an in-flight message cannot be recalled.
         """
         service = self.runtime.resolve_optional("escalation_service")
         lock = await service._acquire_delivery_lock(case_id)
@@ -811,8 +821,8 @@ class MatrixContextRuntime:
             reason = await self.check_trial_delivery(kwargs.get("transaction_id", ""))
             if reason:
                 raise PublicationSuppressed(reason)
-            # The trial check awaits storage; a newly received incident update
-            # during that wait must still prevent starting stale publication.
+            # Recheck after the awaited trial storage check. Incident writes
+            # and Admin actions share this lock through the transport result.
             if self._closed or not await self._case_is_open(case_id):
                 raise PublicationSuppressed("staff_context_case_changed")
             result = await channel.send_staff_context(text, **kwargs)

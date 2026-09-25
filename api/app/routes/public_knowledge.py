@@ -25,12 +25,18 @@ def _service(request: Request):
 class PublicationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     revision: str = Field(pattern=r"^[0-9a-f]{64}$")
-    reviewer: str = Field(min_length=1, max_length=120)
 
 
 class RevokeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    reviewer: str = Field(min_length=1, max_length=120)
+
+
+def _review_actor(request: Request) -> str:
+    # Shared admin credentials identify the authentication class, not a person.
+    actor = getattr(request.state, "admin_actor", None)
+    if actor not in {"admin_session", "admin_api_key"}:
+        raise HTTPException(403, "Verified admin actor required")
+    return actor
 
 
 @router.get("/{page_id}")
@@ -66,7 +72,7 @@ async def publish_guide(
                 _service(request).publish,
                 page_id,
                 body.revision,
-                body.reviewer,
+                _review_actor(request),
             )
         )
     except ValueError:
@@ -81,6 +87,8 @@ async def revoke_guide(
 ):
     response.headers["Cache-Control"] = "no-store"
     try:
-        return await run_in_threadpool(_service(request).revoke, page_id, body.reviewer)
+        return await run_in_threadpool(
+            _service(request).revoke, page_id, _review_actor(request)
+        )
     except ValueError:
         raise HTTPException(400, "Invalid support guide request") from None

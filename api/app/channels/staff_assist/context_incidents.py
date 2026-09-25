@@ -219,6 +219,7 @@ class ContextIncidentStore:
             metadata = json.loads(row[0] or "{}")
             messages = metadata.get("incident_messages", [])
             if any(message["event_id"] == incoming.message_id for message in messages):
+                await db.rollback()
                 return
             if len(messages) >= 10:
                 metadata["incident_context_overflow"] = True

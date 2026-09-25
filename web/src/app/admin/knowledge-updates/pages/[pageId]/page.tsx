@@ -43,7 +43,7 @@ export default function InternalSupportGuidePage() {
     try {
       const response = await makeAuthenticatedRequest(`${endpoint}/${action}`, {
         method: "POST",
-        body: JSON.stringify({ reviewer: "support-admin", ...(action === "publish" ? { revision: guide.projection?.revision } : {}) }),
+        body: JSON.stringify(action === "publish" ? { revision: guide.projection?.revision } : {}),
       });
       if (!response.ok) throw new Error("Publication did not complete. Reload and review the current preview before trying again.");
       await load();

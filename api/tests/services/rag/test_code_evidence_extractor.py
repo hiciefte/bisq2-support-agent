@@ -513,3 +513,37 @@ def test_required_symbol_failure_does_not_overwrite_previous_artifact(tmp_path):
             ]
         )
     assert output.read_text() == "previous artifact\n"
+
+
+@pytest.mark.parametrize(
+    "alias,canonical,tag",
+    [
+        ("bisq", "bisq", "v1.10.8"),
+        ("bisq1", "bisq", "v1.10.8"),
+        ("bisq-network/bisq", "bisq", "v1.10.8"),
+        ("bisq2", "bisq2", "v2.1.13"),
+        ("bisq-network/bisq2", "bisq2", "v2.1.13"),
+    ],
+)
+def test_reviewed_recipes_accept_supported_repository_aliases(
+    tmp_path, alias, canonical, tag
+):
+    import app.services.rag.code_evidence_extractor as module
+
+    recipes = json.loads(
+        Path(module.__file__).with_name("code_evidence_recipes.json").read_text()
+    )
+    recipe = next(row for row in recipes if row["repo"] == canonical)
+    _write(tmp_path / recipe["path"], recipe["excerpt"])
+    commit = _commit_source(tmp_path)
+    _git(tmp_path, "tag", tag)
+    records = CodeEvidenceExtractor(
+        repo_path=tmp_path, repo=alias, commit=commit, release_tag=tag
+    ).extract()
+    record = next(row for row in records if row.id.endswith(":" + recipe["name"]))
+    assert record.repo == canonical
+    assert record.id.startswith(canonical + ":")
+    assert all(
+        ref.startswith(f"code:{canonical}@{commit}:") for ref in record.source_refs
+    )
+    assert CodeEvidenceFreshnessChecker(tmp_path).check([record]).valid == 1

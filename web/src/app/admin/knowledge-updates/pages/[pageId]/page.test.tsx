@@ -24,7 +24,7 @@ it("allows withdrawing a changed page's dormant approval without publishing it a
   fireEvent.click(revoke);
   await waitFor(() => expect(request).toHaveBeenCalledWith(
     "/admin/knowledge-updates/pages/synthetic-guide/revoke",
-    { method: "POST", body: JSON.stringify({ reviewer: "support-admin" }) },
+    { method: "POST", body: JSON.stringify({}) },
   ));
   await waitFor(() => expect(screen.getByRole("button", { name: "Make private" })).toBeDisabled());
 });

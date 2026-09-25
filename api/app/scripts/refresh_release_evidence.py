@@ -202,16 +202,30 @@ def prepare(args: argparse.Namespace) -> dict:
             report = CodeEvidenceFreshnessChecker(checkout).check(records)
             if report.stale:
                 raise ValueError("Source freshness failed")
-            note = ReleaseNote.from_dict(
-                {
-                    "repo": repo,
-                    "tag": tag,
-                    "commit": commit,
-                    "published_at": release["published_at"],
-                    "url": release["html_url"],
-                    "body": release["body"],
-                    "body_sha256": hashlib.sha256(release["body"].encode()).hexdigest(),
-                }
+            body = release.get("body")
+            if body is not None and not isinstance(body, str):
+                raise ValueError("Official release body must be text or absent")
+            if (
+                datetime.fromisoformat(
+                    release["published_at"].replace("Z", "+00:00")
+                ).utcoffset()
+                is None
+            ):
+                raise ValueError("Release publication date must include timezone")
+            note = (
+                ReleaseNote.from_dict(
+                    {
+                        "repo": repo,
+                        "tag": tag,
+                        "commit": commit,
+                        "published_at": release["published_at"],
+                        "url": release["html_url"],
+                        "body": body,
+                        "body_sha256": hashlib.sha256(body.encode()).hexdigest(),
+                    }
+                )
+                if body is not None and body.strip()
+                else None
             )
             for existing in [*all_code, *all_notes]:
                 existing_tag = getattr(existing, "release_tag", None) or getattr(
@@ -232,17 +246,20 @@ def prepare(args: argparse.Namespace) -> dict:
                 record
                 for record in all_notes
                 if not (record.repo == repo and record.tag == tag)
-            ] + [note]
+            ] + ([note] if note is not None else [])
             coverage.append(
                 {
                     "repo": repo,
                     "tag": tag,
                     "commit": commit,
-                    "published_at": note.published_at,
-                    "release_url": note.url,
+                    "published_at": release["published_at"],
+                    "release_url": release["html_url"],
                     "code_records": len(records),
                     "missing_optional_recipes": missing,
-                    "notes_sha256": note.body_sha256,
+                    "notes_sha256": note.body_sha256 if note is not None else None,
+                    "notes_status": (
+                        "available" if note is not None else "missing_upstream_body"
+                    ),
                 }
             )
     output.mkdir(parents=True)
@@ -272,6 +289,7 @@ def prepare(args: argparse.Namespace) -> dict:
             "Unchanged excerpts preserve reviewed claims; changed optional spans are omitted.",
             "Unknown installed version does not establish release applicability.",
             "No production installation, scheduler, or provider call is performed.",
+            "Missing upstream release-note bodies are explicit coverage gaps, not reconstructed notes.",
         ],
     }
     (output / "coverage.json").write_text(json.dumps(manifest, indent=2) + "\n")

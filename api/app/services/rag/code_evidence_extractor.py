@@ -14,6 +14,7 @@ from app.services.rag.code_evidence import (
     CODE_EVIDENCE_TYPE,
     STAFF_ONLY_AUDIENCE,
     CodeEvidenceRecord,
+    canonical_code_repo,
     release_version,
 )
 from app.services.rag.source_refs import parse_code_source_ref
@@ -143,7 +144,7 @@ class CodeEvidenceExtractor:
         release_tag: str | None = None,
     ) -> None:
         self.repo_path = Path(repo_path)
-        self.repo = repo.strip()
+        self.repo = canonical_code_repo(repo.strip()) or repo.strip()
         self.commit = commit.strip()
         self.audience = audience
         self.freshness_class = freshness_class
