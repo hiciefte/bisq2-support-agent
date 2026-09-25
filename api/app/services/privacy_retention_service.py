@@ -1118,6 +1118,7 @@ class PrivacyRetentionService:
             "knowledge_review_feedback",
             "training_learning_history",
             "knowledge_extraction_completed",
+            "knowledge_intake_dispositions",
         )
         if not path.exists():
             for label in labels:
@@ -1142,6 +1143,16 @@ class PrivacyRetentionService:
             )
             report.stores["knowledge_extraction_completed"] = extraction_result
             changed += extraction_result.deleted_rows
+            disposition_result = self._cleanup_text_table(
+                connection,
+                table="knowledge_intake_dispositions",
+                timestamp_expression="first_seen",
+                cutoff=cutoff,
+                now=now,
+                dry_run=dry_run,
+            )
+            report.stores["knowledge_intake_dispositions"] = disposition_result
+            changed += disposition_result.deleted_rows
             proposal_result = self._cleanup_text_table(
                 connection,
                 table="knowledge_update_proposals",

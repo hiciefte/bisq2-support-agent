@@ -13,6 +13,7 @@ Tests cover:
 
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -31,6 +32,7 @@ except ImportError:
 from app.services.knowledge.candidate_repository import (
     CalibrationStatus,
     KnowledgeCandidate,
+    KnowledgeCandidateRepository,
 )
 
 # Skip all tests if router doesn't exist yet (RED phase)
@@ -89,6 +91,13 @@ def mock_pipeline_service():
     service.approve_candidate = AsyncMock(return_value="faq_123")
     service.reject_candidate = AsyncMock(return_value=True)
     service.skip_candidate = AsyncMock(return_value=True)
+    service.last_bisq_sync_deferred_count = 0
+    service.repository.get_intake_disposition_status.return_value = {
+        "deferred_total": 0,
+        "deferred_by_source": {},
+        "deferred_by_reason": {},
+        "recent": [],
+    }
 
     return service
 
@@ -519,6 +528,155 @@ class TestSkipEndpoint:
 
 class TestSyncEndpoints:
     """Test sync trigger endpoints."""
+
+    def test_status_reads_real_dispositions_without_mutating_or_exposing_locators(
+        self, client, mock_pipeline_service, tmp_path
+    ):
+        db_path = tmp_path / "knowledge.db"
+        repository = KnowledgeCandidateRepository(str(db_path))
+        repository.record_intake_disposition(
+            source="matrix",
+            source_scope="private-room",
+            event_ids=["private-event-1", "private-event-2"],
+            reason="missing_reply_target",
+        )
+        repository.record_intake_disposition(
+            source="bisq2",
+            source_scope="private-channel",
+            event_ids=["private-event-3"],
+            reason="missing_prior_question",
+        )
+        mock_pipeline_service.repository = repository
+        before = db_path.read_bytes()
+
+        response = client.get("/admin/training/sync/status?source=matrix&limit=1")
+
+        assert response.status_code == 200
+        assert response.json()["deferred_total"] == 2
+        assert response.json()["deferred_by_source"] == {"matrix": 2}
+        assert response.json()["deferred_by_reason"] == {"missing_reply_target": 2}
+        assert len(response.json()["recent"]) == 1
+        assert "private" not in response.text
+        assert db_path.read_bytes() == before
+        assert repository.get_pending() == []
+
+    def test_status_is_digest_only_and_does_not_run_sync(
+        self, client, mock_pipeline_service
+    ):
+        mock_pipeline_service.repository.get_intake_disposition_status.return_value = {
+            "deferred_total": 1,
+            "deferred_by_source": {"matrix": 1},
+            "deferred_by_reason": {"missing_reply_target": 1},
+            "private_top_level": "do-not-return",
+            "recent": [
+                {
+                    "id": "a" * 64,
+                    "source": "matrix",
+                    "scope_digest": "b" * 64,
+                    "event_digest": "c" * 64,
+                    "reason": "missing_reply_target",
+                    "first_seen": "2026-09-25T00:00:00+00:00",
+                    "last_seen": "2026-09-25T00:00:00+00:00",
+                    "source_scope": "private-room",
+                    "source_event_id": "private-event",
+                    "body": "private-message",
+                }
+            ],
+        }
+
+        response = client.get("/admin/training/sync/status?source=matrix&limit=3")
+
+        assert response.status_code == 200
+        assert response.json()["deferred_total"] == 1
+        assert set(response.json()) == {
+            "deferred_total",
+            "deferred_by_source",
+            "deferred_by_reason",
+            "recent",
+        }
+        assert set(response.json()["recent"][0]) == {
+            "id",
+            "source",
+            "scope_digest",
+            "event_digest",
+            "reason",
+            "first_seen",
+            "last_seen",
+        }
+        assert "private" not in response.text
+        mock_pipeline_service.repository.get_intake_disposition_status.assert_called_once_with(
+            source="matrix", limit=3
+        )
+        mock_pipeline_service.sync_bisq_conversations.assert_not_called()
+        mock_pipeline_service.extract_faqs_batch.assert_not_called()
+
+    def test_status_requires_admin(self, client, mock_pipeline_service):
+        client.app.dependency_overrides.clear()
+        response = client.get("/admin/training/sync/status")
+        assert response.status_code in (401, 403)
+        mock_pipeline_service.repository.get_intake_disposition_status.assert_not_called()
+
+    @pytest.mark.parametrize("query", ["source=other", "limit=0", "limit=101"])
+    def test_status_validates_filters(self, client, mock_pipeline_service, query):
+        assert client.get(f"/admin/training/sync/status?{query}").status_code == 422
+        mock_pipeline_service.repository.get_intake_disposition_status.assert_not_called()
+
+    def test_status_unavailable_is_not_an_empty_success(
+        self, client, mock_pipeline_service
+    ):
+        mock_pipeline_service.repository.get_intake_disposition_status.side_effect = (
+            RuntimeError("private-db-location")
+        )
+        response = client.get("/admin/training/sync/status")
+        assert response.status_code == 503
+        assert response.json() == {"detail": "Intake disposition status unavailable"}
+        assert "private" not in response.text
+
+    @pytest.mark.parametrize("source", ["bisq2", "matrix"])
+    @pytest.mark.parametrize("deferred", [0, 2])
+    def test_sync_distinguishes_new_deferrals_from_retained_history(
+        self, client, mock_pipeline_service, monkeypatch, source, deferred
+    ):
+        monkeypatch.setattr(
+            "app.core.config.get_settings",
+            lambda: SimpleNamespace(
+                MATRIX_HOMESERVER_URL="https://matrix.invalid",
+                MATRIX_SYNC_ROOMS=["synthetic-room"],
+            ),
+        )
+        monkeypatch.setattr("importlib.util.find_spec", lambda name: object())
+        client.app.state.bisq_api = MagicMock()
+        client.app.state.bisq_sync_state = MagicMock()
+        mock_pipeline_service.sync_bisq_conversations = AsyncMock(return_value=3)
+        mock_pipeline_service.last_bisq_sync_deferred_count = deferred
+        client.app.state.matrix_sync_service = SimpleNamespace(
+            sync_rooms=AsyncMock(return_value=3), last_deferred_count=deferred
+        )
+        mock_pipeline_service.repository.get_intake_disposition_status.return_value = {
+            "deferred_total": 7,
+            "deferred_by_source": {source: 7},
+            "deferred_by_reason": {"missing_prior_question": 7},
+            "recent": [],
+        }
+
+        response = client.post(
+            f"/admin/training/sync/{'bisq' if source == 'bisq2' else source}"
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == (
+            "completed_with_deferrals" if deferred else "completed"
+        )
+        assert data["processed"] == 3
+        assert data["deferred"] == deferred
+        assert data["intake_status"]["deferred_total"] == 7
+        assert data["intake_status"]["deferred_by_reason"] == {
+            "missing_prior_question": 7
+        }
+        mock_pipeline_service.repository.get_intake_disposition_status.assert_called_once_with(
+            source=source, limit=20
+        )
 
     def test_trigger_bisq_sync(self, client, mock_pipeline_service):
         """Cycle 3.4.1: Test POST /sync/bisq triggers sync."""

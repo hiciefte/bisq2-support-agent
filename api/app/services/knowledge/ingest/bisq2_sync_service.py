@@ -33,7 +33,11 @@ MAX_PRIOR_CONTEXT_MESSAGES = 50
 
 
 class IncompleteBisqKnowledgeContextError(RuntimeError):
-    """Source context needs review; do not consume inputs or call extraction."""
+    """Source context needs a durable no-extraction disposition."""
+
+    def __init__(self, message: str, reason: str = "context_unavailable"):
+        super().__init__(message)
+        self.reason = reason
 
 
 class Bisq2SyncService:
@@ -63,6 +67,8 @@ class Bisq2SyncService:
         self.bisq_api = bisq_api
         self.state_manager = state_manager
         self._test_scope: Bisq2TestScope = resolve_bisq2_test_scope(settings)
+        self.last_deferred_count = 0
+        self.last_deferred_scopes = 0
 
         # Bisq staff trust is bound only to immutable profile identifiers.
         staff_profile_ids = getattr(settings, "BISQ2_STAFF_PROFILE_IDS", [])
@@ -88,6 +94,8 @@ class Bisq2SyncService:
         Uses LLM-based extraction via KnowledgeExtractor to identify Q&A pairs
         from the message stream, rather than relying on citation patterns.
         """
+        self.last_deferred_count = 0
+        self.last_deferred_scopes = 0
         if not self.is_configured():
             logger.debug("Bisq 2 API not configured, skipping sync")
             return 0
@@ -151,13 +159,24 @@ class Bisq2SyncService:
 
             results = []
             boundary_history: Optional[List[Dict[str, Any]]] = None
+            boundary_error: Optional[IncompleteBisqKnowledgeContextError] = None
+            channel_errors: List[Exception] = []
             for channel_id, channel_messages in messages_by_channel.items():
+                deferred_ids = self.pipeline_service.repository.get_deferred_event_ids(
+                    source="bisq2", source_scope=channel_id
+                )
+                # Reconcile dispositions committed before a source-state crash.
+                for message in channel_messages:
+                    if message.get("messageId") in deferred_ids:
+                        self.state_manager.mark_processed(message["messageId"])
                 eligible_ids = {
                     message.get("messageId", "")
                     for message in channel_messages
                     if message.get("messageId", "") in new_ids
+                    and message.get("messageId", "") not in deferred_ids
                 }
                 if not eligible_ids:
+                    self.state_manager.save_state()
                     continue
                 # Reuse exported history as bounded transient context. Processed
                 # questions can be paired with a newly arriving staff answer.
@@ -174,34 +193,73 @@ class Bisq2SyncService:
                 extraction_messages = sorted(
                     [*context, *fresh], key=lambda message: str(message.get("date", ""))
                 )
-                missing_targets, needs_prior = self._missing_context(
-                    extraction_messages, eligible_ids
-                )
-                if missing_targets or needs_prior:
-                    if boundary_history is None:
-                        boundary_history = await self._fetch_boundary_history()
-                    extraction_messages = self._recover_boundary_context(
-                        channel_id, extraction_messages, eligible_ids, boundary_history
+                try:
+                    try:
+                        missing_targets, needs_prior = self._missing_context(
+                            extraction_messages, eligible_ids
+                        )
+                        if missing_targets or needs_prior:
+                            if boundary_history is None and boundary_error is None:
+                                try:
+                                    boundary_history = (
+                                        await self._fetch_boundary_history()
+                                    )
+                                except IncompleteBisqKnowledgeContextError as exc:
+                                    boundary_error = exc
+                            if boundary_error is not None:
+                                raise boundary_error
+                            extraction_messages = self._recover_boundary_context(
+                                channel_id,
+                                extraction_messages,
+                                eligible_ids,
+                                boundary_history or [],
+                            )
+                    except IncompleteBisqKnowledgeContextError as exc:
+                        # Persist the entire current eligible channel batch.
+                        # Never replace a paid started/uncertain receipt.
+                        count = (
+                            self.pipeline_service.repository.record_intake_disposition(
+                                source="bisq2",
+                                source_scope=channel_id,
+                                event_ids=sorted(eligible_ids),
+                                reason=exc.reason,
+                            )
+                        )
+                        self.last_deferred_count += count
+                        self.last_deferred_scopes += 1
+                    else:
+                        if any(
+                            self._has_text(msg) and self._is_staff_message(msg)
+                            for msg in fresh
+                        ):
+                            channel_results = (
+                                await self.pipeline_service.extract_faqs_batch(
+                                    messages=extraction_messages,
+                                    source="bisq2",
+                                    staff_identifiers=self.staff_profile_ids,
+                                    source_scope=channel_id,
+                                    eligible_answer_ids=eligible_ids,
+                                )
+                            )
+                            results.extend(channel_results)
+                        else:
+                            self.pipeline_service.repository.ensure_knowledge_scope_not_held(
+                                source="bisq2", source_scope=channel_id
+                            )
+
+                    # Save completed or durably deferred channel progress now.
+                    for msg in fresh:
+                        msg_id = msg.get("messageId", "")
+                        if msg_id:
+                            self.state_manager.mark_processed(msg_id)
+                    self.state_manager.save_state()
+                except Exception as exc:
+                    # A held/failed channel must not starve independent ones.
+                    # Keep the global timestamp pending and report after saves.
+                    channel_errors.append(exc)
+                    logger.warning(
+                        "Bisq channel intake remains pending (%s)", type(exc).__name__
                     )
-                channel_results = await self.pipeline_service.extract_faqs_batch(
-                    messages=extraction_messages,
-                    source="bisq2",
-                    staff_identifiers=self.staff_profile_ids,
-                    source_scope=channel_id,
-                    eligible_answer_ids=eligible_ids,
-                )
-                results.extend(channel_results)
-
-                # A later channel may fail or be held for reconciliation. Save
-                # this completed channel now so changing context cannot cause
-                # its already-finished extraction to be submitted again.
-                for msg in fresh:
-                    msg_id = msg.get("messageId", "")
-                    if msg_id:
-                        self.state_manager.mark_processed(msg_id)
-                self.state_manager.save_state()
-
-            logger.info(f"Marked {len(new_messages)} input messages as processed")
 
             # Count successfully processed candidates
             for result in results:
@@ -211,6 +269,9 @@ class Bisq2SyncService:
                         f"Processed Bisq FAQ -> candidate {result.candidate_id} "
                         f"(routing: {result.routing})"
                     )
+
+            if channel_errors:
+                raise channel_errors[0]
 
             # Update sync state
             if messages:
@@ -276,18 +337,24 @@ class Bisq2SyncService:
         days = (
             min(30, max(1, configured_days)) if isinstance(configured_days, int) else 30
         )
-        result = await self.bisq_api.export_chat_messages(
-            since=datetime.now(timezone.utc) - timedelta(days=days),
-            max_retries=1,
-            retry_delay=0,
-        )
+        try:
+            result = await self.bisq_api.export_chat_messages(
+                since=datetime.now(timezone.utc) - timedelta(days=days),
+                max_retries=1,
+                retry_delay=0,
+            )
+        except Exception as exc:
+            raise IncompleteBisqKnowledgeContextError(
+                "Bisq boundary history is unavailable"
+            ) from exc
         history = result.get("messages") if isinstance(result, dict) else None
         if (
             not isinstance(history, list)
             or len(history) > MAX_BOUNDARY_HISTORY_MESSAGES
         ):
             raise IncompleteBisqKnowledgeContextError(
-                "Bisq boundary history is unavailable or exceeds its bound; inputs deferred"
+                "Bisq boundary history is unavailable or exceeds its bound; inputs deferred",
+                "context_limit" if isinstance(history, list) else "context_unavailable",
             )
         return [
             message
@@ -311,7 +378,8 @@ class Bisq2SyncService:
             [message for message in messages if message.get("messageId")]
         ):
             raise IncompleteBisqKnowledgeContextError(
-                "Bisq source has duplicate event provenance; inputs deferred"
+                "Bisq source has duplicate event provenance; inputs deferred",
+                "provenance_conflict",
             )
         targets = {
             target
@@ -322,7 +390,8 @@ class Bisq2SyncService:
         }
         if len(targets) > MAX_BOUNDARY_CITATIONS:
             raise IncompleteBisqKnowledgeContextError(
-                "Bisq reply targets exceed the bounded context; inputs deferred"
+                "Bisq reply targets exceed the bounded context; inputs deferred",
+                "context_limit",
             )
         for message in history:
             if self._test_scope.resolve_payload_channel(message) != channel_id:
@@ -332,7 +401,8 @@ class Bisq2SyncService:
                 continue
             if message_id in by_id and by_id[message_id] != message:
                 raise IncompleteBisqKnowledgeContextError(
-                    "Bisq boundary history has conflicting event provenance; inputs deferred"
+                    "Bisq boundary history has conflicting event provenance; inputs deferred",
+                    "provenance_conflict",
                 )
             by_id[message_id] = message
         # Older explicit citation roots must survive the recent-context limit.
@@ -359,7 +429,8 @@ class Bisq2SyncService:
         missing_targets, needs_prior = self._missing_context(recovered, eligible_ids)
         if missing_targets or needs_prior:
             raise IncompleteBisqKnowledgeContextError(
-                "Bisq prior question context remains incomplete; inputs deferred"
+                "Bisq prior question context remains incomplete; inputs deferred",
+                "missing_reply_target" if missing_targets else "missing_prior_question",
             )
         return recovered
 

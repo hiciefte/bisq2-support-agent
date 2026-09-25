@@ -2,6 +2,7 @@
 
 The existing database and table names remain stable for stored-data compatibility."""
 
+import hashlib
 import json
 import logging
 import sqlite3
@@ -12,6 +13,15 @@ from pathlib import Path
 from typing import Dict, List, Literal, Optional, Sequence
 
 logger = logging.getLogger(__name__)
+INTAKE_DISPOSITION_REASONS = frozenset(
+    {
+        "context_unavailable",
+        "context_limit",
+        "missing_reply_target",
+        "missing_prior_question",
+        "provenance_conflict",
+    }
+)
 
 
 class KnowledgeExtractionHeldError(RuntimeError):
@@ -320,6 +330,20 @@ class KnowledgeCandidateRepository:
             "CREATE INDEX IF NOT EXISTS idx_knowledge_extraction_scope "
             "ON knowledge_extraction_attempts(scope_digest, state)"
         )
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS knowledge_intake_dispositions (
+                id TEXT PRIMARY KEY,
+                source TEXT NOT NULL CHECK (source IN ('matrix', 'bisq2')),
+                source_scope TEXT NOT NULL,
+                source_event_id TEXT NOT NULL,
+                scope_digest TEXT NOT NULL,
+                event_digest TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                first_seen TEXT NOT NULL,
+                last_seen TEXT NOT NULL,
+                UNIQUE (source, source_scope, source_event_id)
+            )
+        """)
 
         # Create indexes for performance
         cursor.execute(
@@ -574,6 +598,140 @@ class KnowledgeCandidateRepository:
                     input_digest,
                 ),
             )
+
+    def record_intake_disposition(
+        self, *, source: str, source_scope: str, event_ids: List[str], reason: str
+    ) -> int:
+        """Record a terminal no-extraction disposition before consuming inputs.
+
+        Exact locators stay in this private database for operator recovery, under
+        configured privacy retention. No source body or provider output is stored.
+        An uncertain paid attempt must be reconciled separately, never skipped.
+        """
+        if (
+            source not in {"matrix", "bisq2"}
+            or reason not in INTAKE_DISPOSITION_REASONS
+        ):
+            raise ValueError("Invalid intake disposition")
+        if (
+            not source_scope
+            or not event_ids
+            or any(not isinstance(value, str) or not value for value in event_ids)
+        ):
+            raise ValueError("Intake disposition requires exact source locators")
+        scope_digest = hashlib.sha256(
+            json.dumps([source, source_scope]).encode()
+        ).hexdigest()
+        now = datetime.now(timezone.utc).isoformat()
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if conn.execute(
+                "SELECT 1 FROM knowledge_extraction_attempts WHERE scope_digest = ? "
+                "AND state IN ('started', 'uncertain') LIMIT 1",
+                (scope_digest,),
+            ).fetchone():
+                raise KnowledgeExtractionHeldError(
+                    "Paid knowledge extraction requires reconciliation before disposition"
+                )
+            for event_id in sorted(set(event_ids)):
+                event_digest = hashlib.sha256(event_id.encode()).hexdigest()
+                disposition_id = hashlib.sha256(
+                    json.dumps([source, source_scope, event_id]).encode()
+                ).hexdigest()
+                conn.execute(
+                    "INSERT INTO knowledge_intake_dispositions "
+                    "(id, source, source_scope, source_event_id, scope_digest, event_digest, reason, first_seen, last_seen) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(source, source_scope, source_event_id) DO UPDATE SET last_seen = excluded.last_seen",
+                    (
+                        disposition_id,
+                        source,
+                        source_scope,
+                        event_id,
+                        scope_digest,
+                        event_digest,
+                        reason,
+                        now,
+                        now,
+                    ),
+                )
+        return len(set(event_ids))
+
+    def ensure_knowledge_scope_not_held(
+        self, *, source: str, source_scope: str
+    ) -> None:
+        """No-content progress must not consume an unresolved earlier paid batch."""
+        scope_digest = hashlib.sha256(
+            json.dumps([source, source_scope]).encode()
+        ).hexdigest()
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            if conn.execute(
+                "SELECT 1 FROM knowledge_extraction_attempts WHERE scope_digest = ? "
+                "AND state IN ('started', 'uncertain') LIMIT 1",
+                (scope_digest,),
+            ).fetchone():
+                raise KnowledgeExtractionHeldError(
+                    "Knowledge extraction is held for reconciliation of a prior attempt"
+                )
+
+    def get_deferred_event_ids(self, *, source: str, source_scope: str) -> set[str]:
+        """Internal crash reconciliation; deferred events never auto-enter extraction."""
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            return {
+                row[0]
+                for row in conn.execute(
+                    "SELECT source_event_id FROM knowledge_intake_dispositions WHERE source = ? AND source_scope = ?",
+                    (source, source_scope),
+                )
+            }
+
+    def get_intake_disposition_status(
+        self, source: Optional[str] = None, limit: int = 20
+    ) -> Dict:
+        """Digest-only admin projection; exact private locators are never returned."""
+        if source is not None and source not in {"matrix", "bisq2"}:
+            raise ValueError("Invalid intake source")
+        where, parameters = (" WHERE source = ?", [source]) if source else ("", [])
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute("BEGIN")
+            total = conn.execute(
+                "SELECT count(*) FROM knowledge_intake_dispositions" + where, parameters
+            ).fetchone()[0]
+            by_source = {
+                row[0]: row[1]
+                for row in conn.execute(
+                    "SELECT source, count(*) FROM knowledge_intake_dispositions"
+                    + where
+                    + " GROUP BY source",
+                    parameters,
+                )
+            }
+            by_reason = {
+                row[0]: row[1]
+                for row in conn.execute(
+                    "SELECT reason, count(*) FROM knowledge_intake_dispositions"
+                    + where
+                    + " GROUP BY reason",
+                    parameters,
+                )
+            }
+            recent = [
+                dict(row)
+                for row in conn.execute(
+                    "SELECT id, source, scope_digest, event_digest, reason, first_seen, last_seen "
+                    "FROM knowledge_intake_dispositions"
+                    + where
+                    + " ORDER BY last_seen DESC, id LIMIT ?",
+                    [*parameters, max(1, min(100, limit))],
+                )
+            ]
+        return {
+            "deferred_total": total,
+            "deferred_by_source": by_source,
+            "deferred_by_reason": by_reason,
+            "recent": recent,
+        }
 
     def create(
         self,

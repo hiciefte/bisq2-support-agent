@@ -62,8 +62,19 @@ context and at most 10 citation roots reach extraction.
 Matrix resolves at most 10 missing reply or boundary anchors with bounded native
 room-context reads. Reactions, membership events and empty messages are not
 question context. If required context cannot be recovered within these bounds,
-the input is deferred without a model call or consumption of its cursor/IDs.
+the affected input batch is recorded as deferred without a model call. Only after
+that record is durable can its cursor/IDs advance so later input can continue.
 This is not unlimited historical conversation recovery.
+
+Deferred inputs have metadata-only dispositions in the existing knowledge
+database, not invented question/answer candidates. Knowledge Updates displays
+their retained counts and digest references through a read-only admin status
+endpoint. Exact source locators remain private in the database for an operator
+to investigate before a separately reviewed replay. No automatic replay or
+unlock endpoint is provided. Retained dispositions are checked before extraction,
+including after a crash between the database write and cursor save. These records
+expire from their first-seen time under `DATA_RETENTION_DAYS`; this protection is
+not a permanent tombstone for source cursors abandoned beyond retention.
 
 Matrix bootstraps from recent history and then advances its saved cursor forward.
 Existing tokens and identities are retained. Successfully completed Bisq channels

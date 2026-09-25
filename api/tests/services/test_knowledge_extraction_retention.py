@@ -52,3 +52,40 @@ def test_completed_receipts_follow_configured_window(tmp_path, dry_run):
             )
         }
     assert retained == ({"old", "new", "held"} if dry_run else {"new", "held"})
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_disposition_private_locators_follow_first_seen_retention(tmp_path, dry_run):
+    path = tmp_path / "unified_training.db"
+    repo = KnowledgeCandidateRepository(str(path))
+    for event_id in ["old-private-id", "new-private-id"]:
+        repo.record_intake_disposition(
+            source="matrix",
+            source_scope="!private:test",
+            event_ids=[event_id],
+            reason="context_unavailable",
+        )
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=2)
+    with closing(sqlite3.connect(path)) as conn, conn:
+        conn.execute(
+            "UPDATE knowledge_intake_dispositions SET first_seen = ? WHERE source_event_id = 'old-private-id'",
+            ((now - timedelta(days=3)).isoformat(),),
+        )
+    repo.record_intake_disposition(
+        source="matrix",
+        source_scope="!private:test",
+        event_ids=["old-private-id"],
+        reason="context_unavailable",
+    )
+    service = PrivacyRetentionService(
+        SimpleNamespace(DATA_DIR=str(tmp_path), DATA_RETENTION_DAYS=2)
+    )
+    report = PrivacyRetentionReport(dry_run=dry_run, cutoff=cutoff, completed_at=now)
+    service._cleanup_training_database(
+        cutoff=cutoff, now=now, dry_run=dry_run, report=report
+    )
+    assert report.stores["knowledge_intake_dispositions"].deleted_rows == 1
+    assert repo.get_deferred_event_ids(
+        source="matrix", source_scope="!private:test"
+    ) == ({"old-private-id", "new-private-id"} if dry_run else {"new-private-id"})

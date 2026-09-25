@@ -31,6 +31,7 @@ import { AdminQueueShell } from "@/components/admin/queue/AdminQueueShell";
 import { QueuePageHeader } from "@/components/admin/queue/QueuePageHeader";
 import { QueueTabs } from "@/components/admin/queue/QueueTabs";
 import { DocumentDiffViewer, type DiffRow } from "@/components/admin/knowledge-updates/DocumentDiffViewer";
+import { IntakeDispositionNotice, type IntakeDispositionStatus } from "@/components/admin/knowledge-updates/IntakeDispositionNotice";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -1079,6 +1080,8 @@ export default function KnowledgeUpdatesPage() {
     AUTO_APPROVE: 0,
   });
   const [reworkTriage, setReworkTriage] = useState<KnowledgeReworkTriage | null>(null);
+  const [intakeStatus, setIntakeStatus] = useState<IntakeDispositionStatus | null>(null);
+  const [intakeStatusUnavailable, setIntakeStatusUnavailable] = useState(false);
   const [activeQueue, setActiveQueue] = useState<RoutingCategory>("FULL_REVIEW");
   const [data, setData] = useState<KnowledgeUpdateResponse | null>(null);
   const [operations, setOperations] = useState<KnowledgeOperation[]>([]);
@@ -1257,6 +1260,20 @@ export default function KnowledgeUpdatesPage() {
     setIsRefreshing(true);
     setError(null);
     try {
+      void makeAuthenticatedRequest("/admin/training/sync/status")
+        .then(async (response) => {
+          if (!response.ok) throw new Error("Intake status unavailable");
+          const status = (await response.json()) as IntakeDispositionStatus;
+          if (!Number.isFinite(status.deferred_total) || status.deferred_total < 0) {
+            throw new Error("Invalid intake status");
+          }
+          setIntakeStatus(status);
+          setIntakeStatusUnavailable(false);
+        })
+        .catch(() => {
+          setIntakeStatus(null);
+          setIntakeStatusUnavailable(true);
+        });
       void makeAuthenticatedRequest("/admin/knowledge-updates/rework-triage?limit=8")
         .then(async (reworkResponse) => {
           if (!reworkResponse.ok) {
@@ -1479,7 +1496,9 @@ export default function KnowledgeUpdatesPage() {
         throw new Error(detail?.detail || "Failed to approve knowledge update");
       }
       const approved = await response.json();
-      setLastPublication({ candidateId: data.candidate.id, status: approved.publication_status });
+      setLastPublication(approved?.publication_status
+        ? { candidateId: data.candidate.id, status: approved.publication_status }
+        : null);
       toast.success("Wiki update saved. Indexing and answer quality are checked separately.");
       await loadData({ silent: true });
     } catch (err) {
@@ -1718,6 +1737,8 @@ export default function KnowledgeUpdatesPage() {
           <CardContent className="p-4 text-sm text-destructive">{error}</CardContent>
         </Card>
       )}
+
+      <IntakeDispositionNotice status={intakeStatus} unavailable={intakeStatusUnavailable} />
 
       {lastPublication && (
         <div className="space-y-2 rounded-xl border border-border/70 bg-muted/15 p-4 text-sm" role="status">

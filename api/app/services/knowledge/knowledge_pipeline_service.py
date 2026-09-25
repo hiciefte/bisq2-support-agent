@@ -2182,6 +2182,7 @@ class KnowledgePipelineService:
         Returns:
             Number of Q&A pairs successfully processed
         """
+        self.last_bisq_sync_deferred_count = 0
         # Use provided or create dependencies
         if bisq_api is None:
             # Check if Bisq API is configured
@@ -2223,7 +2224,11 @@ class KnowledgePipelineService:
             state_manager=state_manager,
         )
 
-        return await sync_service.sync_conversations()
+        try:
+            return await sync_service.sync_conversations()
+        finally:
+            # Copy before returning, with no await before the API caller reads it.
+            self.last_bisq_sync_deferred_count = sync_service.last_deferred_count
 
     async def sync_matrix_conversations(self) -> int:
         """

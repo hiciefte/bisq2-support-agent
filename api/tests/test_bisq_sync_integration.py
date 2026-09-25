@@ -41,6 +41,37 @@ class TestBisqSyncIntegration:
         assert callable(pipeline_service.sync_bisq_conversations)
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("failed", [False, True])
+    async def test_sync_exposes_its_own_deferred_count(self, pipeline_service, failed):
+        sync = MagicMock(last_deferred_count=2)
+        sync.sync_conversations = AsyncMock(
+            side_effect=RuntimeError("incomplete") if failed else None,
+            return_value=3,
+        )
+        pipeline_service.last_bisq_sync_deferred_count = 99
+        with patch(
+            "app.services.knowledge.knowledge_pipeline_service.Bisq2SyncService",
+            return_value=sync,
+        ):
+            if failed:
+                with pytest.raises(RuntimeError, match="incomplete"):
+                    await pipeline_service.sync_bisq_conversations(
+                        bisq_api=MagicMock(), state_manager=MagicMock()
+                    )
+            else:
+                assert (
+                    await pipeline_service.sync_bisq_conversations(
+                        bisq_api=MagicMock(), state_manager=MagicMock()
+                    )
+                    == 3
+                )
+        assert pipeline_service.last_bisq_sync_deferred_count == 2
+
+        pipeline_service.settings.BISQ_API_URL = ""
+        assert await pipeline_service.sync_bisq_conversations() == 0
+        assert pipeline_service.last_bisq_sync_deferred_count == 0
+
+    @pytest.mark.asyncio
     async def test_sync_bisq_delegates_to_service(
         self, pipeline_service, mock_settings
     ):

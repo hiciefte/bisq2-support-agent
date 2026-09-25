@@ -3,7 +3,7 @@
 import json
 import logging
 from functools import partial
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from app.core.exceptions import BaseAppException
 from app.core.security import verify_admin_access
@@ -12,7 +12,7 @@ from app.services.knowledge.knowledge_pipeline_service import (
     CandidateReviewConflictError,
     DuplicateFAQError,
 )
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
@@ -237,6 +237,27 @@ class BatchApproveResponse(BaseModel):
     created_faq_ids: List[str] = Field(default_factory=list)
 
 
+class IntakeDispositionItem(BaseModel):
+    """Digest-only public admin view; private replay locators stay in SQLite."""
+
+    id: str
+    source: Literal["bisq2", "matrix"]
+    scope_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    event_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    reason: str
+    first_seen: str
+    last_seen: str
+
+
+class IntakeDispositionStatus(BaseModel):
+    """All retained deferrals, independent of one sync invocation."""
+
+    deferred_total: int
+    deferred_by_source: Dict[str, int]
+    deferred_by_reason: Dict[str, int]
+    recent: List[IntakeDispositionItem]
+
+
 class SyncResponse(BaseModel):
     """Response model for sync operations.
 
@@ -251,6 +272,10 @@ class SyncResponse(BaseModel):
     processed: Optional[int] = None
     message: Optional[str] = None
     task_id: Optional[str] = None
+    deferred: int = Field(default=0, description="Inputs deferred during this sync")
+    intake_status: Optional[IntakeDispositionStatus] = Field(
+        default=None, description="Retained dispositions, including earlier syncs"
+    )
 
 
 class LearningMetricsResponse(BaseModel):
@@ -1011,6 +1036,36 @@ async def regenerate_candidate_answer(
 
 
 # Sync endpoints for unified pipeline
+@router.get("/sync/status", response_model=IntakeDispositionStatus)
+async def get_intake_sync_status(
+    source: Optional[Literal["bisq2", "matrix"]] = None,
+    limit: int = Query(default=20, ge=1, le=100),
+    pipeline_service=Depends(get_pipeline_service()),
+):
+    """Read retained context deferrals without fetching messages or calling models."""
+    try:
+        return await _read_intake_status(pipeline_service, source, limit)
+    except Exception:
+        logger.exception("Failed to read intake disposition status")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Intake disposition status unavailable",
+        ) from None
+
+
+async def _read_intake_status(
+    pipeline_service, source: Optional[str], limit: int = 20
+) -> IntakeDispositionStatus:
+    raw = await run_in_threadpool(
+        partial(
+            pipeline_service.repository.get_intake_disposition_status,
+            source=source,
+            limit=limit,
+        )
+    )
+    return IntakeDispositionStatus.model_validate(raw)
+
+
 @router.post("/sync/bisq", response_model=SyncResponse)
 async def trigger_bisq_sync(
     request: Request,
@@ -1056,10 +1111,21 @@ async def trigger_bisq_sync(
             state_manager=state_manager,
         )
 
+        deferred = pipeline_service.last_bisq_sync_deferred_count
+        intake_status = await _read_intake_status(pipeline_service, "bisq2")
         return SyncResponse(
-            status="completed",
+            status="completed_with_deferrals" if deferred else "completed",
             processed=processed,
-            message=f"Processed {processed} Bisq conversations",
+            deferred=deferred,
+            intake_status=intake_status,
+            message=(
+                f"Processed {processed} Bisq conversations"
+                + (
+                    f"; deferred {deferred} inputs with unresolved context"
+                    if deferred
+                    else ""
+                )
+            ),
         )
 
     except Exception:
@@ -1141,10 +1207,21 @@ async def trigger_matrix_sync(
         # Run sync
         processed = await matrix_sync.sync_rooms()
 
+        deferred = matrix_sync.last_deferred_count
+        intake_status = await _read_intake_status(pipeline_service, "matrix")
         return SyncResponse(
-            status="completed",
+            status="completed_with_deferrals" if deferred else "completed",
             processed=processed,
-            message=f"Processed {processed} Matrix Q&A pairs",
+            deferred=deferred,
+            intake_status=intake_status,
+            message=(
+                f"Processed {processed} Matrix Q&A pairs"
+                + (
+                    f"; deferred {deferred} inputs with unresolved context"
+                    if deferred
+                    else ""
+                )
+            ),
         )
 
     except Exception:

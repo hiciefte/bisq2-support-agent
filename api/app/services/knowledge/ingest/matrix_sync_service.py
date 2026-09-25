@@ -43,7 +43,11 @@ MAX_BOUNDARY_CONTEXT_READS = 10
 
 
 class IncompleteKnowledgeContextError(RuntimeError):
-    """A source boundary could not be resolved; do not consume its inputs."""
+    """A source boundary needs a durable no-extraction disposition."""
+
+    def __init__(self, message: str, reason: str = "context_unavailable"):
+        super().__init__(message)
+        self.reason = reason
 
 
 class MatrixSyncService:
@@ -97,6 +101,8 @@ class MatrixSyncService:
         self._connection_manager: Optional[Any] = None
         self._session_manager: Optional[Any] = None
         self._error_handler: Optional[Any] = None
+        self.last_deferred_count = 0
+        self.last_deferred_scopes = 0
 
     @staticmethod
     def _get_sync_rooms(settings: Any) -> List[str]:
@@ -158,6 +164,8 @@ class MatrixSyncService:
         Returns:
             Number of Q&A pairs successfully processed
         """
+        self.last_deferred_count = 0
+        self.last_deferred_scopes = 0
         if not self.is_configured():
             logger.debug("Matrix not configured, skipping sync")
             return 0
@@ -304,13 +312,17 @@ class MatrixSyncService:
         # First observe a recent backward snapshot, then continue forward from
         # its head. Existing tokens are never reset: legacy backward cursors
         # catch up forward through the existing processed-ID deduplication.
+        raw_messages = response.chunk
         next_token = response.end if since_token else response.start
+        # Matrix may omit end for an empty forward page. Keep the established
+        # cursor; an empty response is not evidence of a new position.
+        if since_token and not raw_messages and not next_token:
+            next_token = since_token
         if not isinstance(next_token, str) or not next_token:
             raise IncompleteKnowledgeContextError(
                 "Matrix page has no continuation token"
             )
 
-        raw_messages = response.chunk
         logger.debug(f"Fetched {len(raw_messages)} messages from {room_id}")
 
         if not raw_messages:
@@ -320,6 +332,15 @@ class MatrixSyncService:
 
         # Convert matrix-nio events to dict format
         messages = [self._event_to_dict(msg) for msg in raw_messages]
+
+        # The SQLite disposition commits before the separate source-state file.
+        # Reconcile that crash window before context reads or paid extraction.
+        deferred_ids = self.pipeline_service.repository.get_deferred_event_ids(
+            source="matrix", source_scope=room_id
+        )
+        for msg in messages:
+            if msg.get("event_id") in deferred_ids:
+                self.polling_state.mark_processed(msg["event_id"])
 
         # Filter out already-processed messages
         new_messages = [
@@ -338,16 +359,43 @@ class MatrixSyncService:
 
         # Processed events remain eligible as context, never as new answers.
         eligible_ids = {msg.get("event_id", "") for msg in new_messages}
-        messages = await self._with_boundary_context(
-            client, room_id, messages, eligible_ids
-        )
-        results = await self.pipeline_service.extract_faqs_batch(
-            messages=messages,
-            source="matrix",
-            staff_identifiers=self.trusted_staff_ids,
-            source_scope=room_id,
-            eligible_answer_ids=eligible_ids,
-        )
+        try:
+            messages = await self._with_boundary_context(
+                client, room_id, messages, eligible_ids
+            )
+        except IncompleteKnowledgeContextError as exc:
+            # Disposition the whole eligible page, never an invented Q&A pair.
+            # A failed write or unresolved paid guard leaves this page pending.
+            count = self.pipeline_service.repository.record_intake_disposition(
+                source="matrix",
+                source_scope=room_id,
+                event_ids=sorted(eligible_ids),
+                reason=exc.reason,
+            )
+            self.last_deferred_count += count
+            self.last_deferred_scopes += 1
+            results = []
+        else:
+            # Context may contain a deferred or previously processed answer.
+            # It must not trigger a new paid call for a user-only current page.
+            if any(
+                msg.get("event_id") in eligible_ids
+                and str(msg.get("sender", "")).lower() in self._staff_ids_lower
+                and is_matrix_text_message(msg)
+                for msg in messages
+            ):
+                results = await self.pipeline_service.extract_faqs_batch(
+                    messages=messages,
+                    source="matrix",
+                    staff_identifiers=self.trusted_staff_ids,
+                    source_scope=room_id,
+                    eligible_answer_ids=eligible_ids,
+                )
+            else:
+                self.pipeline_service.repository.ensure_knowledge_scope_not_held(
+                    source="matrix", source_scope=room_id
+                )
+                results = []
 
         for msg in new_messages:
             event_id = msg.get("event_id", "")
@@ -382,6 +430,14 @@ class MatrixSyncService:
         context. Reads use the authenticated client and the exact source room.
         Cursor advancement remains the caller's responsibility after extraction.
         """
+        if any(
+            msg.get("event_id") in eligible_ids
+            and msg.get("type") == "m.room.encrypted"
+            for msg in messages
+        ):
+            raise IncompleteKnowledgeContextError(
+                "Matrix page contains unreadable encrypted inputs"
+            )
         readable = [
             msg
             for msg in messages
@@ -390,7 +446,7 @@ class MatrixSyncService:
         by_id = {msg["event_id"]: msg for msg in readable}
         if len(by_id) != len(readable):
             raise IncompleteKnowledgeContextError(
-                "Matrix source has duplicate event provenance"
+                "Matrix source has duplicate event provenance", "provenance_conflict"
             )
         staff_messages = [
             msg
@@ -434,19 +490,25 @@ class MatrixSyncService:
         )
         if len(anchors) > MAX_BOUNDARY_CONTEXT_READS:
             raise IncompleteKnowledgeContextError(
-                "Matrix reply targets exceed the bounded context reads; inputs deferred"
+                "Matrix reply targets exceed the bounded context reads; inputs deferred",
+                "context_limit",
             )
         for anchor in anchors:
             # An earlier response may already contain another required target.
             if anchor in by_id and anchor in missing_targets:
                 continue
-            response = await self._error_handler.call_with_retry(
-                client.room_context,
-                room_id,
-                anchor,
-                limit=20,
-                method_name="room_context",
-            )
+            try:
+                response = await self._error_handler.call_with_retry(
+                    client.room_context,
+                    room_id,
+                    anchor,
+                    limit=20,
+                    method_name="room_context",
+                )
+            except Exception as exc:
+                raise IncompleteKnowledgeContextError(
+                    "Matrix boundary context is unavailable"
+                ) from exc
             if (
                 not isinstance(response, RoomContextResponse)
                 or response.room_id != room_id
@@ -463,13 +525,14 @@ class MatrixSyncService:
             ]
             if len(context_events) > 21:
                 raise IncompleteKnowledgeContextError(
-                    "Matrix boundary context exceeded its bound"
+                    "Matrix boundary context exceeded its bound", "context_limit"
                 )
             for event in context_events:
                 msg = self._event_to_dict(event)
                 if msg.get("room_id", room_id) != room_id:
                     raise IncompleteKnowledgeContextError(
-                        "Matrix context has conflicting room provenance"
+                        "Matrix context has conflicting room provenance",
+                        "provenance_conflict",
                     )
                 event_id = msg.get("event_id")
                 if not event_id:
@@ -481,17 +544,19 @@ class MatrixSyncService:
                     for field in immutable_fields
                 ):
                     raise IncompleteKnowledgeContextError(
-                        "Matrix context has conflicting event provenance"
+                        "Matrix context has conflicting event provenance",
+                        "provenance_conflict",
                     )
                 if is_matrix_text_message(msg):
                     by_id[event_id] = msg
         if not missing_targets.issubset(by_id):
             raise IncompleteKnowledgeContextError(
-                "Matrix reply context remains incomplete"
+                "Matrix reply context remains incomplete", "missing_reply_target"
             )
         if staff_messages and not has_prior_user():
             raise IncompleteKnowledgeContextError(
-                "Matrix prior question context remains incomplete; inputs deferred"
+                "Matrix prior question context remains incomplete; inputs deferred",
+                "missing_prior_question",
             )
         return sorted(by_id.values(), key=lambda msg: msg.get("origin_server_ts", 0))
 

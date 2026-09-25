@@ -16,6 +16,7 @@ Fixtures:
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 from unittest.mock import AsyncMock, MagicMock
 
@@ -276,7 +277,9 @@ def unified_repository(unified_temp_dir):
             KnowledgeCandidateRepository,
         )
 
-        return KnowledgeCandidateRepository(unified_temp_dir)
+        return KnowledgeCandidateRepository(
+            str(Path(unified_temp_dir) / "knowledge.db")
+        )
     except ImportError:
         pytest.skip("KnowledgeCandidateRepository not yet implemented")
 
@@ -375,6 +378,7 @@ async def unified_pipeline_service(
     test_settings,
     mock_rag_service,
     mock_faq_service,
+    unified_repository,
 ):
     """Create a KnowledgePipelineService instance for testing.
 
@@ -389,6 +393,7 @@ async def unified_pipeline_service(
             settings=test_settings,
             rag_service=mock_rag_service,
             faq_service=mock_faq_service,
+            repository=unified_repository,
         )
         return service
     except ImportError:

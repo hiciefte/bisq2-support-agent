@@ -40,6 +40,8 @@ def mock_settings():
 def mock_pipeline_service():
     """Create mock KnowledgePipelineService for LLM-based extraction."""
     service = AsyncMock()
+    service.repository = MagicMock()
+    service.repository.get_deferred_event_ids.return_value = set()
     # Mock extract_faqs_batch for LLM-based extraction
     service.extract_faqs_batch = AsyncMock(
         return_value=[
@@ -542,6 +544,8 @@ class TestLLMBasedExtraction:
 
         # Pipeline returns empty results when no Q&A found
         mock_pipeline = AsyncMock()
+        mock_pipeline.repository = MagicMock()
+        mock_pipeline.repository.get_deferred_event_ids.return_value = set()
         mock_pipeline.extract_faqs_batch = AsyncMock(return_value=[])
 
         service = MatrixSyncService(
@@ -695,6 +699,8 @@ class TestPipelineIntegration:
 
         # Pipeline should not be called when all messages filtered
         mock_pipeline = AsyncMock()
+        mock_pipeline.repository = MagicMock()
+        mock_pipeline.repository.get_deferred_event_ids.return_value = set()
         mock_pipeline.extract_faqs_batch = AsyncMock(return_value=[])
 
         service = MatrixSyncService(
@@ -803,6 +809,8 @@ class TestErrorHandling:
 
         # Make extraction fail
         mock_pipeline = AsyncMock()
+        mock_pipeline.repository = MagicMock()
+        mock_pipeline.repository.get_deferred_event_ids.return_value = set()
         mock_pipeline.extract_faqs_batch = AsyncMock(
             side_effect=Exception("LLM extraction failed")
         )

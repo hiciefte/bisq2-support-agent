@@ -13,7 +13,6 @@ from app.channels.plugins.matrix.client.polling_state import PollingStateManager
 from app.services.knowledge.candidate_repository import KnowledgeExtractionHeldError
 from app.services.knowledge.ingest.bisq2_sync_service import Bisq2SyncService
 from app.services.knowledge.ingest.matrix_sync_service import (
-    IncompleteKnowledgeContextError,
     MatrixSyncService,
 )
 from app.services.knowledge.knowledge_extractor import KnowledgeExtractor
@@ -263,7 +262,7 @@ async def test_matrix_cross_page_answer_uses_native_context(pipeline, matrix_syn
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("wrong_room", [False, True])
-async def test_matrix_context_failure_retains_cursor_and_input(
+async def test_matrix_context_failure_records_disposition_and_advances(
     matrix_sync, qa, wrong_room
 ):
     client = SimpleNamespace(room_messages=AsyncMock(), room_context=AsyncMock())
@@ -276,10 +275,16 @@ async def test_matrix_context_failure_retains_cursor_and_input(
         Page([qa[1]], "next"),
         context,
     ]
-    with pytest.raises(IncompleteKnowledgeContextError):
-        await matrix_sync._sync_single_room(client, ROOM)
-    assert matrix_sync.polling_state.get_room_token(ROOM) is None
-    assert not matrix_sync.polling_state.is_processed("$answer:test")
+    assert await matrix_sync._sync_single_room(client, ROOM) == 0
+    assert matrix_sync.polling_state.get_room_token(ROOM) == "head-next"
+    assert matrix_sync.polling_state.is_processed("$answer:test")
+    assert matrix_sync.last_deferred_count == 1
+    assert (
+        matrix_sync.pipeline_service.repository.get_intake_disposition_status()[
+            "deferred_total"
+        ]
+        == 1
+    )
 
 
 @pytest.mark.asyncio
@@ -655,19 +660,22 @@ async def test_matrix_too_many_reply_targets_defers_before_context_or_extraction
     ]
     matrix_sync._error_handler.call_with_retry.return_value = Page(answers, "next")
     with patch.object(KnowledgeExtractor, "_call_llm", AsyncMock()) as extract:
-        with pytest.raises(
-            IncompleteKnowledgeContextError, match="bounded context reads"
-        ):
+        assert (
             await matrix_sync._sync_single_room(
                 SimpleNamespace(room_messages=AsyncMock(), room_context=AsyncMock()),
                 ROOM,
             )
+            == 0
+        )
     assert matrix_sync._error_handler.call_with_retry.await_count == 1
     extract.assert_not_awaited()
-    assert matrix_sync.polling_state.get_room_token(ROOM) is None
-    assert not any(
+    assert matrix_sync.polling_state.get_room_token(ROOM) == "head-next"
+    assert all(
         matrix_sync.polling_state.is_processed(answer["event_id"]) for answer in answers
     )
+    assert pipeline.repository.get_intake_disposition_status()[
+        "deferred_by_reason"
+    ] == {"context_limit": 11}
 
 
 def non_question_event(kind):
@@ -727,16 +735,22 @@ async def test_matrix_requires_real_prior_question_context(
             assert QUESTION in extract.call_args.kwargs["messages_text"]
             assert matrix_sync.polling_state.is_processed(answer["event_id"])
         else:
-            with pytest.raises(IncompleteKnowledgeContextError, match="prior question"):
+            assert (
                 await matrix_sync._sync_single_room(
                     SimpleNamespace(
                         room_messages=AsyncMock(), room_context=AsyncMock()
                     ),
                     ROOM,
                 )
+                == 0
+            )
             extract.assert_not_awaited()
-            assert matrix_sync.polling_state.get_room_token(ROOM) is None
-            assert not matrix_sync.polling_state.is_processed(answer["event_id"])
+            assert matrix_sync.polling_state.get_room_token(ROOM) == "head-next"
+            assert matrix_sync.polling_state.is_processed(answer["event_id"])
+            assert matrix_sync.last_deferred_count == 2  # entire eligible page
+            assert pipeline.repository.get_intake_disposition_status()[
+                "deferred_by_reason"
+            ] == {"missing_prior_question": 2}
 
 
 @pytest.mark.asyncio
@@ -829,13 +843,9 @@ async def test_bisq_late_answer_recovers_question_older_than_hour(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["missing", "oversize", "wrong_channel"])
-async def test_bisq_unrecoverable_boundary_preserves_source_and_has_no_paid_attempt(
+async def test_bisq_unrecoverable_boundary_records_disposition_without_paid_attempt(
     pipeline, tmp_path, failure
 ):
-    from app.services.knowledge.ingest.bisq2_sync_service import (
-        IncompleteBisqKnowledgeContextError,
-    )
-
     sync, question, answer = late_bisq_sync(pipeline, tmp_path)
     before = sync.state_manager.last_sync_timestamp
     history = {
@@ -848,12 +858,13 @@ async def test_bisq_unrecoverable_boundary_preserves_source_and_has_no_paid_atte
         {"messages": history},
     ]
     with patch.object(KnowledgeExtractor, "_call_llm", AsyncMock()) as extract:
-        with pytest.raises(IncompleteBisqKnowledgeContextError):
-            await sync.sync_conversations()
+        assert await sync.sync_conversations() == 0
     extract.assert_not_awaited()
     restored = BisqSyncStateManager(str(sync.state_manager.state_file))
-    assert not restored.is_processed("answer-late")
-    assert restored.last_sync_timestamp == before
+    assert restored.is_processed("answer-late")
+    assert restored.last_sync_timestamp > before
+    assert sync.last_deferred_count == 1
+    assert pipeline.repository.get_intake_disposition_status()["deferred_total"] == 1
     with closing(sqlite3.connect(pipeline.repository.db_path)) as conn:
         assert (
             conn.execute(
@@ -917,10 +928,327 @@ async def test_matrix_context_provenance_changes_defer_before_paid_work(
             context,
         ]
     with patch.object(KnowledgeExtractor, "_call_llm", AsyncMock()) as extract:
-        with pytest.raises(IncompleteKnowledgeContextError, match="provenance"):
+        assert (
+            await matrix_sync._sync_single_room(
+                SimpleNamespace(room_messages=AsyncMock(), room_context=AsyncMock()),
+                ROOM,
+            )
+            == 0
+        )
+    extract.assert_not_awaited()
+    assert matrix_sync.polling_state.get_room_token(ROOM) == "head-next"
+    assert (
+        "provenance_conflict"
+        in pipeline.repository.get_intake_disposition_status()["deferred_by_reason"]
+    )
+
+
+def test_disposition_status_is_private_idempotent_and_scope_specific(pipeline):
+    repo = pipeline.repository
+    for source, scope in [("matrix", ROOM), ("matrix", "!other:test"), ("bisq2", ROOM)]:
+        repo.record_intake_disposition(
+            source=source,
+            source_scope=scope,
+            event_ids=["private-event-id", "private-event-id"],
+            reason="missing_prior_question",
+        )
+    repo.record_intake_disposition(
+        source="matrix",
+        source_scope=ROOM,
+        event_ids=["private-event-id"],
+        reason="context_unavailable",
+    )
+    status = repo.get_intake_disposition_status()
+    assert status["deferred_total"] == 3
+    assert status["deferred_by_source"] == {"bisq2": 1, "matrix": 2}
+    assert status["deferred_by_reason"] == {"missing_prior_question": 3}
+    assert (
+        len(repo.get_intake_disposition_status(source="matrix", limit=1)["recent"]) == 1
+    )
+    assert "private-event-id" not in json.dumps(status) and ROOM not in json.dumps(
+        status
+    )
+    assert (
+        repo.get_deferred_event_ids(source="matrix", source_scope="!absent:test")
+        == set()
+    )
+    with closing(sqlite3.connect(repo.db_path)) as conn:
+        assert (
+            conn.execute(
+                "SELECT source_event_id FROM knowledge_intake_dispositions LIMIT 1"
+            ).fetchone()[0]
+            == "private-event-id"
+        )
+        assert (
+            conn.execute("SELECT count(*) FROM unified_faq_candidates").fetchone()[0]
+            == 0
+        )
+
+
+def reserve_paid_attempt(repo, source, scope):
+    import hashlib
+
+    repo.begin_knowledge_extraction(
+        source=source,
+        scope_digest=hashlib.sha256(json.dumps([source, scope]).encode()).hexdigest(),
+        input_digest="held-" + source,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["database", "paid_guard"])
+async def test_matrix_disposition_failure_preserves_inputs(
+    pipeline, matrix_sync, qa, failure
+):
+    matrix_sync._error_handler.call_with_retry.side_effect = [
+        Page([qa[1]], "next"),
+        SimpleNamespace(error="missing"),
+    ]
+    if failure == "database":
+        pipeline.repository.record_intake_disposition = MagicMock(
+            side_effect=sqlite3.OperationalError("test")
+        )
+        expected = sqlite3.OperationalError
+    else:
+        reserve_paid_attempt(pipeline.repository, "matrix", ROOM)
+        expected = KnowledgeExtractionHeldError
+    with patch.object(KnowledgeExtractor, "_call_llm", AsyncMock()) as extract:
+        with pytest.raises(expected):
             await matrix_sync._sync_single_room(
                 SimpleNamespace(room_messages=AsyncMock(), room_context=AsyncMock()),
                 ROOM,
             )
     extract.assert_not_awaited()
     assert matrix_sync.polling_state.get_room_token(ROOM) is None
+    assert not matrix_sync.polling_state.is_processed(qa[1]["event_id"])
+    assert matrix_sync.last_deferred_count == 0
+    assert pipeline.repository.get_intake_disposition_status()["deferred_total"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("encrypted", [False, True])
+async def test_matrix_restart_reconciles_disposition_without_retry(
+    pipeline, matrix_sync, qa, encrypted
+):
+    old_answer = (
+        {**qa[1], "type": "m.room.encrypted", "content": {"ciphertext": "test"}}
+        if encrypted
+        else qa[1]
+    )
+    matrix_sync._error_handler.call_with_retry.side_effect = [
+        Page([old_answer], "next"),
+        *([] if encrypted else [SimpleNamespace(error="missing")]),
+    ]
+    client = SimpleNamespace(room_messages=AsyncMock(), room_context=AsyncMock())
+    with patch.object(
+        matrix_sync.polling_state,
+        "update_room_token",
+        side_effect=OSError("save failed"),
+    ):
+        with pytest.raises(OSError):
+            await matrix_sync._sync_single_room(client, ROOM)
+    assert pipeline.repository.get_intake_disposition_status()["deferred_total"] == 1
+    matrix_sync.polling_state = PollingStateManager(
+        str(matrix_sync.polling_state.state_file)
+    )
+    matrix_sync._error_handler.call_with_retry = AsyncMock(
+        return_value=Page(qa, "recovered")
+    )
+    with patch.object(KnowledgeExtractor, "_call_llm", AsyncMock()) as extract:
+        assert await matrix_sync._sync_single_room(client, ROOM) == 0
+    extract.assert_not_awaited()
+    assert matrix_sync._error_handler.call_with_retry.await_count == 1
+    assert matrix_sync.polling_state.get_room_token(ROOM) == "head-recovered"
+    assert matrix_sync.polling_state.is_processed(qa[1]["event_id"])
+
+
+@pytest.mark.asyncio
+async def test_matrix_deferred_page_does_not_block_next_valid_page(
+    pipeline, matrix_sync, qa
+):
+    question = event("$next-question:test", "@user:test", QUESTION, 3)
+    answer = event("$next-answer:test", STAFF, ANSWER, 4, question["event_id"])
+    matrix_sync._error_handler.call_with_retry.side_effect = [
+        Page([qa[1]], "first"),
+        SimpleNamespace(error="missing"),
+        Page([question, answer], "second"),
+    ]
+    with patch.object(
+        KnowledgeExtractor,
+        "_call_llm",
+        AsyncMock(
+            return_value=extraction_result(answer["event_id"], question["event_id"])
+        ),
+    ) as extract:
+        client = SimpleNamespace(room_messages=AsyncMock(), room_context=AsyncMock())
+        assert await matrix_sync._sync_single_room(client, ROOM) == 0
+        assert await matrix_sync._sync_single_room(client, ROOM) == 1
+    assert extract.await_count == 1
+    assert matrix_sync.last_deferred_count == 1
+    assert matrix_sync.polling_state.get_room_token(ROOM) == "second"
+
+
+@pytest.mark.asyncio
+async def test_matrix_empty_forward_page_without_end_keeps_cursor(matrix_sync):
+    matrix_sync.polling_state.update_room_token(ROOM, "saved-forward")
+    page = Page([], "ignored")
+    page.end = None
+    matrix_sync._error_handler.call_with_retry.return_value = page
+    assert (
+        await matrix_sync._sync_single_room(
+            SimpleNamespace(room_messages=AsyncMock()), ROOM
+        )
+        == 0
+    )
+    assert matrix_sync.polling_state.get_room_token(ROOM) == "saved-forward"
+
+
+@pytest.mark.asyncio
+async def test_bisq_failed_history_read_is_cached_and_other_channel_continues(
+    pipeline, tmp_path
+):
+    from app.channels.plugins.bisq2.test_scope import resolve_bisq2_test_scope
+
+    sync, question, answer = late_bisq_sync(pipeline, tmp_path)
+    pipeline.settings.BISQ2_ALLOWED_CHANNEL_IDS = [
+        "channel-a",
+        "channel-b",
+        "channel-c",
+    ]
+    sync._test_scope = resolve_bisq2_test_scope(pipeline.settings)
+    second_answer = {**answer, "channelId": "channel-b", "messageId": "answer-b"}
+    independent = [
+        {**question, "channelId": "channel-c", "messageId": "question-c"},
+        {
+            **answer,
+            "channelId": "channel-c",
+            "messageId": "answer-c",
+            "citationMessageId": "question-c",
+        },
+    ]
+    sync.bisq_api.export_chat_messages.side_effect = [
+        {"messages": [answer, second_answer, *independent]},
+        TimeoutError("private diagnostic"),
+    ]
+    with patch.object(
+        KnowledgeExtractor,
+        "_call_llm",
+        AsyncMock(return_value=extraction_result("answer-c", "question-c")),
+    ) as extract:
+        assert await sync.sync_conversations() == 1
+    assert sync.bisq_api.export_chat_messages.await_count == 2
+    assert extract.await_count == 1
+    assert sync.last_deferred_count == 2 and sync.last_deferred_scopes == 2
+    assert pipeline.repository.get_intake_disposition_status()[
+        "deferred_by_reason"
+    ] == {"context_unavailable": 2}
+    restored = BisqSyncStateManager(str(sync.state_manager.state_file))
+    assert all(
+        restored.is_processed(value)
+        for value in ["answer-late", "answer-b", "answer-c"]
+    )
+    sync.bisq_api.export_chat_messages.side_effect = None
+    sync.bisq_api.export_chat_messages.return_value = {"messages": []}
+    assert await sync.sync_conversations() == 0
+    assert sync.last_deferred_count == 0
+
+
+@pytest.mark.asyncio
+async def test_bisq_held_channel_does_not_block_later_valid_channel(pipeline, tmp_path):
+    from app.channels.plugins.bisq2.test_scope import resolve_bisq2_test_scope
+
+    sync, question, answer = late_bisq_sync(pipeline, tmp_path)
+    before = sync.state_manager.last_sync_timestamp
+    reserve_paid_attempt(pipeline.repository, "bisq2", "channel-a")
+    pipeline.settings.BISQ2_ALLOWED_CHANNEL_IDS = ["channel-a", "channel-b"]
+    sync._test_scope = resolve_bisq2_test_scope(pipeline.settings)
+    independent = [
+        {**question, "channelId": "channel-b", "messageId": "question-b"},
+        {
+            **answer,
+            "channelId": "channel-b",
+            "messageId": "answer-b",
+            "citationMessageId": "question-b",
+        },
+    ]
+    sync.bisq_api.export_chat_messages.side_effect = [
+        {"messages": [answer, *independent]},
+        {"messages": []},
+    ]
+    with patch.object(
+        KnowledgeExtractor,
+        "_call_llm",
+        AsyncMock(return_value=extraction_result("answer-b", "question-b")),
+    ) as extract:
+        with pytest.raises(KnowledgeExtractionHeldError):
+            await sync.sync_conversations()
+    assert extract.await_count == 1
+    restored = BisqSyncStateManager(str(sync.state_manager.state_file))
+    assert not restored.is_processed("answer-late")
+    assert restored.is_processed("answer-b")
+    assert restored.last_sync_timestamp == before
+    assert pipeline.repository.get_intake_disposition_status()["deferred_total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_bisq_restart_skips_disposition_even_with_newly_readable_context(
+    pipeline, tmp_path
+):
+    sync, question, answer = late_bisq_sync(pipeline, tmp_path)
+    sync.bisq_api.export_chat_messages.side_effect = [
+        {"messages": [answer]},
+        {"messages": []},
+    ]
+    with patch.object(
+        sync.state_manager, "save_state", side_effect=OSError("save failed")
+    ):
+        with pytest.raises(OSError):
+            await sync.sync_conversations()
+    assert pipeline.repository.get_intake_disposition_status()["deferred_total"] == 1
+    sync.state_manager = BisqSyncStateManager(
+        str(tmp_path / "empty-restored-state.json")
+    )
+    # Q is also newly visible after restoration: deferred A must not enable a paid call.
+    assert not sync.state_manager.is_processed("question-old")
+    sync.bisq_api.export_chat_messages = AsyncMock(
+        return_value={"messages": [question, answer]}
+    )
+    with patch.object(KnowledgeExtractor, "_call_llm", AsyncMock()) as extract:
+        assert await sync.sync_conversations() == 0
+    extract.assert_not_awaited()
+    assert sync.bisq_api.export_chat_messages.await_count == 1
+    assert sync.state_manager.is_processed("answer-late")
+    assert sync.last_deferred_count == 0
+
+
+@pytest.mark.asyncio
+async def test_matrix_no_answer_fast_path_preserves_existing_paid_guard(
+    pipeline, matrix_sync, qa
+):
+    reserve_paid_attempt(pipeline.repository, "matrix", ROOM)
+    matrix_sync._error_handler.call_with_retry.return_value = Page([qa[0]], "next")
+    with patch.object(KnowledgeExtractor, "_call_llm", AsyncMock()) as extract:
+        with pytest.raises(KnowledgeExtractionHeldError):
+            await matrix_sync._sync_single_room(
+                SimpleNamespace(room_messages=AsyncMock()), ROOM
+            )
+    extract.assert_not_awaited()
+    assert matrix_sync.polling_state.get_room_token(ROOM) is None
+    assert not matrix_sync.polling_state.is_processed(qa[0]["event_id"])
+
+
+@pytest.mark.asyncio
+async def test_bisq_no_answer_fast_path_preserves_existing_paid_guard(
+    pipeline, tmp_path
+):
+    sync, question, _ = late_bisq_sync(pipeline, tmp_path)
+    before = sync.state_manager.last_sync_timestamp
+    question = {**question, "messageId": "new-question"}
+    reserve_paid_attempt(pipeline.repository, "bisq2", "channel-a")
+    sync.bisq_api.export_chat_messages.return_value = {"messages": [question]}
+    with patch.object(KnowledgeExtractor, "_call_llm", AsyncMock()) as extract:
+        with pytest.raises(KnowledgeExtractionHeldError):
+            await sync.sync_conversations()
+    extract.assert_not_awaited()
+    assert not sync.state_manager.is_processed("new-question")
+    assert sync.state_manager.last_sync_timestamp == before
