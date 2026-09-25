@@ -13,5 +13,6 @@ export type {
   QueueCounts,
   RoutingCategory,
   SimilarFAQ,
-  UnifiedCandidate,
-} from './types';
+  KnowledgeCandidate,
+} from "../knowledge-updates/types";
+export type { UnifiedCandidate } from "./types";

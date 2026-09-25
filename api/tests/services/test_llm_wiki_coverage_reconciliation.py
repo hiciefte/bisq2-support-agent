@@ -1,16 +1,16 @@
 from pathlib import Path
 
 from app.core.config import Settings
+from app.services.knowledge.candidate_repository import (
+    KnowledgeCandidate,
+    KnowledgeCandidateRepository,
+)
 from app.services.knowledge_updates.llm_wiki_coverage_reconciliation import (
     LLMWikiCoverageReconciliationService,
 )
-from app.services.training.unified_repository import (
-    UnifiedFAQCandidate,
-    UnifiedFAQCandidateRepository,
-)
 
 
-def _candidate(**overrides) -> UnifiedFAQCandidate:
+def _candidate(**overrides) -> KnowledgeCandidate:
     values = {
         "id": 1,
         "source": "matrix",
@@ -53,7 +53,7 @@ def _candidate(**overrides) -> UnifiedFAQCandidate:
         "has_correction": False,
     }
     values.update(overrides)
-    return UnifiedFAQCandidate(**values)
+    return KnowledgeCandidate(**values)
 
 
 def _write_page(
@@ -209,7 +209,7 @@ def test_apply_marks_only_pending_high_confidence_candidates_as_covered(
     tmp_path: Path,
 ) -> None:
     _write_page(tmp_path)
-    repository = UnifiedFAQCandidateRepository(str(tmp_path / "unified_training.db"))
+    repository = KnowledgeCandidateRepository(str(tmp_path / "unified_training.db"))
     pending = repository.create(
         source="matrix",
         source_event_id="$covered",
@@ -287,7 +287,7 @@ def test_apply_reports_stale_pending_write_once(tmp_path: Path) -> None:
 
 def test_reconcile_pending_repository_gathers_before_applying(tmp_path: Path) -> None:
     _write_page(tmp_path)
-    repository = UnifiedFAQCandidateRepository(str(tmp_path / "unified_training.db"))
+    repository = KnowledgeCandidateRepository(str(tmp_path / "unified_training.db"))
     candidates = [
         repository.create(
             source="matrix",

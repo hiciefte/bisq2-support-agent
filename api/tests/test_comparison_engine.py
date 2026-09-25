@@ -1,7 +1,7 @@
 """Tests for answer comparison engine."""
 
 import pytest
-from app.services.training.comparison_engine import (
+from app.services.knowledge.comparison_engine import (
     AnswerComparisonEngine,
     ComparisonResult,
 )

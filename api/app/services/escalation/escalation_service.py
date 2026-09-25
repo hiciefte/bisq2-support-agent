@@ -389,6 +389,12 @@ class EscalationService:
                     admin_action=admin_action,
                     routing_action=escalation.routing_action,
                     metadata={
+                        "review_kind": (
+                            "answer_quality"
+                            if str(escalation.ai_draft_answer or "").strip()
+                            else "staff_response"
+                        ),
+                        "calibration_question_id": f"escalation:{escalation.id}",
                         "channel": escalation.channel,
                         "staff_id": staff_id,
                         "edit_distance": edit_distance,
@@ -577,6 +583,7 @@ class EscalationService:
                     channel=escalation.channel,
                     trusted=True,
                     sources=escalation.sources,
+                    has_ai_draft=bool(str(escalation.ai_draft_answer or "").strip()),
                 )
                 self.feedback_orchestrator.record_user_rating(signal)
             except Exception:

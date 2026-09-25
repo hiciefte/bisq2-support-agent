@@ -10,16 +10,16 @@ from pathlib import Path
 import pytest
 from app.core.config import Settings
 from app.services.admin_reporting_service import SupportReportingService
+from app.services.knowledge.candidate_repository import KnowledgeCandidateRepository
 from app.services.knowledge_updates.llm_wiki_update_service import (
     KnowledgeUpdateService,
 )
-from app.services.training.unified_repository import UnifiedFAQCandidateRepository
 
 
 def _setup_reporting_db(tmp_path: Path) -> Path:
     settings = Settings(DATA_DIR=str(tmp_path))
     db_path = tmp_path / "unified_training.db"
-    UnifiedFAQCandidateRepository(str(db_path))
+    KnowledgeCandidateRepository(str(db_path))
     KnowledgeUpdateService(settings=settings, db_path=str(db_path))
     return db_path
 
@@ -33,7 +33,7 @@ def _create_candidate(
     protocol: str = "bisq_easy",
     category: str = "Trading",
 ) -> int:
-    repo = UnifiedFAQCandidateRepository(str(db_path))
+    repo = KnowledgeCandidateRepository(str(db_path))
     candidate = repo.create(
         source=source,  # type: ignore[arg-type]
         source_event_id=event_id,

@@ -73,6 +73,10 @@ class TestBisq2SyncDeduplication:
     def mock_pipeline_service(self):
         """Create mock pipeline service."""
         service = MagicMock()
+        service.repository.get_deferred_event_ids.return_value = set()
+        service.repository.record_intake_disposition.side_effect = lambda **kwargs: len(
+            set(kwargs["event_ids"])
+        )
         service.extract_faqs_batch = AsyncMock()
         return service
 
@@ -134,10 +138,8 @@ class TestBisq2SyncDeduplication:
         result = await sync_service.sync_conversations()
 
         assert result == 0
-        extracted_messages = mock_pipeline_service.extract_faqs_batch.await_args.kwargs[
-            "messages"
-        ]
-        assert extracted_messages == [allowed]
+        # The in-scope input is user-only; it must not dispatch extraction.
+        mock_pipeline_service.extract_faqs_batch.assert_not_awaited()
         state_manager.mark_processed.assert_called_once_with("msg-allowed")
         assert "msg-allowed" in state_manager.processed_message_ids
         assert "msg-blocked" not in state_manager.processed_message_ids
@@ -176,18 +178,17 @@ class TestBisq2SyncDeduplication:
         }
         mock_pipeline_service.extract_faqs_batch.return_value = []
 
-        await service.sync_conversations()
-
-        assert mock_pipeline_service.extract_faqs_batch.await_count == 2
-        batches = [
-            call.kwargs["messages"]
-            for call in mock_pipeline_service.extract_faqs_batch.await_args_list
-        ]
-        assert batches == [[question], [answer]]
-        assert all(
-            call.kwargs["staff_identifiers"] == ["staff1", "staff2"]
-            for call in mock_pipeline_service.extract_faqs_batch.await_args_list
+        assert await service.sync_conversations() == 0
+        mock_pipeline_service.extract_faqs_batch.assert_not_awaited()
+        mock_pipeline_service.repository.record_intake_disposition.assert_called_once_with(
+            source="bisq2",
+            source_scope="channel-two",
+            event_ids=["answer-two"],
+            reason="missing_prior_question",
         )
+        assert state_manager.is_processed("answer-two")
+        assert state_manager.is_processed("question-one")
+        assert service.last_deferred_count == 1
 
     @pytest.mark.asyncio
     async def test_export_exception_logs_class_only(
@@ -353,15 +354,11 @@ class TestBisq2SyncDeduplication:
             "messages", call_args[0][0] if call_args[0] else []
         )
 
-        assert (
-            len(messages_sent) == 2
-        ), f"Expected 2 new messages to be sent, got {len(messages_sent)}"
-
-        sent_ids = {m["messageId"] for m in messages_sent}
-        assert sent_ids == {
-            "msg-003",
-            "msg-004",
-        }, f"Expected new messages msg-003 and msg-004, got {sent_ids}"
+        assert len(messages_sent) == 4  # Prior messages are context only.
+        assert call_args.kwargs["eligible_answer_ids"] == {"msg-003", "msg-004"}
+        assert call_args.kwargs["source_scope"] == _TEST_CHANNEL_ID
+        for message in second_messages:
+            assert state_manager.is_processed(message["messageId"])
 
     @pytest.mark.asyncio
     async def test_messages_marked_even_when_no_faqs_extracted(

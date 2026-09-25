@@ -1,16 +1,16 @@
 from pathlib import Path
 
 from app.core.config import Settings
+from app.services.knowledge.candidate_repository import KnowledgeCandidate
 from app.services.knowledge_updates.candidate_rework_triage import (
     CandidateReworkTriageService,
 )
 from app.services.knowledge_updates.llm_wiki_update_service import (
     KnowledgeUpdateService,
 )
-from app.services.training.unified_repository import UnifiedFAQCandidate
 
 
-def _candidate(**overrides) -> UnifiedFAQCandidate:
+def _candidate(**overrides) -> KnowledgeCandidate:
     values = {
         "id": 1,
         "source": "matrix",
@@ -50,7 +50,7 @@ def _candidate(**overrides) -> UnifiedFAQCandidate:
         "has_correction": False,
     }
     values.update(overrides)
-    return UnifiedFAQCandidate(**values)
+    return KnowledgeCandidate(**values)
 
 
 def _service(tmp_path: Path) -> KnowledgeUpdateService:

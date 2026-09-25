@@ -5,7 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle2, Inbox, Trophy, Zap, Target, Clock } from "lucide-react";
-import type { QueueCounts, RoutingCategory } from "./types";
+import type { QueueCounts, RoutingCategory } from "../knowledge-updates/types";
 
 interface EmptyQueueStateProps {
   routing: RoutingCategory;

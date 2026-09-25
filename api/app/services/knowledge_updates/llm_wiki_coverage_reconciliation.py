@@ -7,11 +7,11 @@ import re
 from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Iterable, Optional, Protocol, Sequence
+from typing import Any, Iterable, Literal, Optional, Protocol, Sequence
 
 from app.core.config import Settings
+from app.services.knowledge.candidate_repository import KnowledgeCandidate
 from app.services.rag.llm_wiki_loader import LLMWikiLoader
-from app.services.training.unified_repository import UnifiedFAQCandidate
 
 HIGH_CONFIDENCE_THRESHOLD = 0.82
 SPOT_CHECK_THRESHOLD = 0.65
@@ -60,11 +60,11 @@ class CandidateApprovalRepository(Protocol):
 
     def get_pending(
         self,
-        source: Optional[str] = None,
+        source: Optional[Literal["bisq2", "matrix", "code_evidence"]] = None,
         routing: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
-    ) -> list[UnifiedFAQCandidate]: ...
+    ) -> list[KnowledgeCandidate]: ...
 
 
 @dataclass(frozen=True)
@@ -136,7 +136,7 @@ class LLMWikiCoverageReconciliationService:
 
     def reconcile(
         self,
-        candidates: Sequence[UnifiedFAQCandidate | None],
+        candidates: Sequence[KnowledgeCandidate | None],
         *,
         apply: bool,
         repository: Optional[CandidateApprovalRepository] = None,
@@ -205,7 +205,7 @@ class LLMWikiCoverageReconciliationService:
         The pending rows are gathered before any apply mutation so offset-based
         pagination cannot skip rows as candidates leave the pending queue.
         """
-        candidates: list[UnifiedFAQCandidate] = []
+        candidates: list[KnowledgeCandidate] = []
         offset = 0
         while True:
             page = repository.get_pending(limit=page_size, offset=offset)
@@ -250,7 +250,7 @@ class LLMWikiCoverageReconciliationService:
 
     def _classify_candidate(
         self,
-        candidate: UnifiedFAQCandidate | None,
+        candidate: KnowledgeCandidate | None,
         pages: Sequence[_ReviewedPage],
     ) -> LLMWikiCoverageItem:
         if candidate is None:
@@ -296,7 +296,7 @@ class LLMWikiCoverageReconciliationService:
 
     def _best_score(
         self,
-        candidate: UnifiedFAQCandidate,
+        candidate: KnowledgeCandidate,
         pages: Sequence[_ReviewedPage],
     ) -> Optional[_CoverageScore]:
         scores = [
@@ -311,7 +311,7 @@ class LLMWikiCoverageReconciliationService:
         return max(scores, key=lambda score: score.confidence)
 
 
-def _score_page(candidate: UnifiedFAQCandidate, page: _ReviewedPage) -> _CoverageScore:
+def _score_page(candidate: KnowledgeCandidate, page: _ReviewedPage) -> _CoverageScore:
     candidate_sources = _candidate_source_refs(candidate)
     llm_wiki_titles = _candidate_source_titles(candidate, "llm_wiki")
     exact_llm_wiki_match = _page_title_matches(page, llm_wiki_titles)
@@ -379,7 +379,7 @@ def _is_high_confidence(score: _CoverageScore) -> bool:
     )
 
 
-def _unsafe_candidate(candidate: UnifiedFAQCandidate) -> bool:
+def _unsafe_candidate(candidate: KnowledgeCandidate) -> bool:
     contradiction = candidate.contradiction_score or 0.0
     hallucination = candidate.hallucination_risk or 0.0
     return (
@@ -394,7 +394,7 @@ def _protocol_compatible(candidate_protocol: Optional[str], page_protocol: str) 
     return page_protocol == "all" or candidate_protocol == page_protocol
 
 
-def _candidate_source_refs(candidate: UnifiedFAQCandidate) -> set[str]:
+def _candidate_source_refs(candidate: KnowledgeCandidate) -> set[str]:
     refs: set[str] = set()
     for source in _candidate_sources(candidate):
         source_type = str(source.get("type") or "").strip()
@@ -408,7 +408,7 @@ def _candidate_source_refs(candidate: UnifiedFAQCandidate) -> set[str]:
 
 
 def _candidate_source_titles(
-    candidate: UnifiedFAQCandidate,
+    candidate: KnowledgeCandidate,
     source_type: str,
 ) -> set[str]:
     return {
@@ -419,7 +419,7 @@ def _candidate_source_titles(
     }
 
 
-def _candidate_sources(candidate: UnifiedFAQCandidate) -> list[dict[str, Any]]:
+def _candidate_sources(candidate: KnowledgeCandidate) -> list[dict[str, Any]]:
     raw = candidate.generated_answer_sources
     if not raw:
         return []

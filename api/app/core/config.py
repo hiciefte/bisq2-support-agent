@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # Pipeline Threshold Constants
 # =============================================================================
-# These constants are used by both UnifiedPipelineService and LearningEngine
+# These constants are used by both KnowledgePipelineService and LearningEngine
 # to ensure consistent routing decisions across the training pipeline.
 #
 # - AUTO_APPROVE: High-confidence candidates that can be auto-approved

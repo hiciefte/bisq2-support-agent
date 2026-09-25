@@ -24,6 +24,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from app.core.config import Settings  # noqa: E402
+from app.services.knowledge.candidate_repository import KnowledgeCandidate  # noqa: E402
 from app.services.knowledge_updates.candidate_rework_triage import (  # noqa: E402
     CandidateReworkTriageService,
 )
@@ -40,7 +41,6 @@ from app.services.knowledge_updates.topic_clusters import (  # noqa: E402
     topic_cluster_ids,
     topic_cluster_key,
 )
-from app.services.training.unified_repository import UnifiedFAQCandidate  # noqa: E402
 
 CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 
@@ -199,8 +199,8 @@ def _csv_safe(value: Any) -> str:
     return text
 
 
-def _candidate_from_dict(raw: dict[str, Any]) -> UnifiedFAQCandidate:
-    candidate_fields = {field.name: field for field in fields(UnifiedFAQCandidate)}
+def _candidate_from_dict(raw: dict[str, Any]) -> KnowledgeCandidate:
+    candidate_fields = {field.name: field for field in fields(KnowledgeCandidate)}
     required = [
         name
         for name, field in candidate_fields.items()
@@ -219,7 +219,7 @@ def _candidate_from_dict(raw: dict[str, Any]) -> UnifiedFAQCandidate:
     for boolean_field in ("is_calibration_sample", "has_correction"):
         if boolean_field in values:
             values[boolean_field] = bool(values[boolean_field])
-    return UnifiedFAQCandidate(**values)
+    return KnowledgeCandidate(**values)
 
 
 def _write_exported_pages(export: dict[str, Any], data_dir: Path) -> None:
@@ -252,7 +252,7 @@ def _write_exported_pages(export: dict[str, Any], data_dir: Path) -> None:
 
 def _admin_cluster_index(
     service: KnowledgeUpdateService,
-    candidates: list[UnifiedFAQCandidate],
+    candidates: list[KnowledgeCandidate],
 ) -> dict[int, dict[str, Any]]:
     index: dict[int, dict[str, Any]] = {}
     items = build_knowledge_review_items(
@@ -278,7 +278,7 @@ def _admin_cluster_index(
 
 def _audit_candidate(
     service: KnowledgeUpdateService,
-    candidate: UnifiedFAQCandidate,
+    candidate: KnowledgeCandidate,
     exact_clusters: dict[str, list[int]],
     topic_clusters: dict[str, list[int]],
     admin_cluster_index: dict[int, dict[str, Any]],
@@ -364,7 +364,7 @@ def _audit_candidate(
 
 def _recommendation(
     *,
-    candidate: UnifiedFAQCandidate,
+    candidate: KnowledgeCandidate,
     blocking_failures: list[str],
     warnings: list[str],
     cluster_size: int,

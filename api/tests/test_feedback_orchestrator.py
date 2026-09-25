@@ -21,6 +21,7 @@ def _make_signal(**overrides: Any) -> StaffRatingSignal:
         "channel": "web",
         "trusted": True,
         "sources": [{"type": "faq"}],
+        "has_ai_draft": True,
     }
     data.update(overrides)
     return StaffRatingSignal(**data)
@@ -48,6 +49,8 @@ def test_trusted_helpful_edited_maps_to_admin_action_edited() -> None:
     assert kwargs["admin_action"] == "edited"
     assert kwargs["metadata"]["idempotent"] is True
     assert kwargs["question_id"] == "user_rating_msg-1_user-1"
+    assert kwargs["metadata"]["review_kind"] == "answer_quality"
+    assert kwargs["metadata"]["calibration_question_id"] == "escalation:1"
 
 
 def test_trusted_unhelpful_maps_to_admin_action_rejected() -> None:
@@ -72,3 +75,15 @@ def test_quadrant_weight_passed_as_single_review_weight() -> None:
     kwargs = learning_engine.record_review.call_args.kwargs
     assert kwargs["metadata"]["quadrant"] == "D"
     assert kwargs["weight"] == FeedbackOrchestrator.QUADRANT_WEIGHTS["D"]
+
+
+def test_missing_ai_draft_provenance_is_audit_only() -> None:
+    learning_engine = MagicMock()
+    signal = _make_signal()
+    data = vars(signal).copy()
+    del data["has_ai_draft"]
+
+    FeedbackOrchestrator(learning_engine).record_user_rating(StaffRatingSignal(**data))
+
+    metadata = learning_engine.record_review.call_args.kwargs["metadata"]
+    assert metadata["review_kind"] == "staff_response"

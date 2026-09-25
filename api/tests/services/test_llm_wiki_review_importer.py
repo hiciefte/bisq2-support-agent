@@ -2,6 +2,7 @@ import zipfile
 from pathlib import Path
 
 from app.core.config import Settings
+from app.services.knowledge.candidate_repository import KnowledgeCandidate
 from app.services.knowledge_updates.llm_wiki_review_importer import (
     ReviewedLLMWikiBatchImporter,
 )
@@ -9,7 +10,6 @@ from app.services.knowledge_updates.llm_wiki_update_service import (
     KnowledgeUpdateService,
 )
 from app.services.rag.llm_wiki_loader import LLMWikiLoader
-from app.services.training.unified_repository import UnifiedFAQCandidate
 from langchain_core.documents import Document
 
 
@@ -107,7 +107,7 @@ Human clarified the support flow and Ficed wrong tab wording.
     return page
 
 
-def _candidate(**overrides) -> UnifiedFAQCandidate:
+def _candidate(**overrides) -> KnowledgeCandidate:
     values = {
         "id": 11,
         "source": "matrix",
@@ -144,7 +144,7 @@ def _candidate(**overrides) -> UnifiedFAQCandidate:
         "has_correction": False,
     }
     values.update(overrides)
-    return UnifiedFAQCandidate(**values)
+    return KnowledgeCandidate(**values)
 
 
 def test_importer_mines_diff_feedback_and_normalizes_reviewed_pages(

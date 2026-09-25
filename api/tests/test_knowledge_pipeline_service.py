@@ -1,5 +1,5 @@
 """
-TDD Tests for UnifiedPipelineService.
+TDD Tests for KnowledgePipelineService.
 
 These tests follow the RED-GREEN-REFACTOR cycle from the plan:
 /Users/takahiro/.claude/plans/cheerful-discovering-blanket.md
@@ -17,27 +17,28 @@ import pytest_asyncio
 
 # Import will fail until implementation exists - that's the RED phase
 try:
-    from app.services.training.unified_pipeline_service import (
+    from app.services.knowledge.knowledge_pipeline_service import (
         DuplicateFAQError,
-        UnifiedPipelineService,
+        KnowledgeExtractionError,
+        KnowledgePipelineService,
     )
 
     IMPLEMENTATION_EXISTS = True
 except ImportError:
     IMPLEMENTATION_EXISTS = False
-    UnifiedPipelineService = None
+    KnowledgePipelineService = None
     DuplicateFAQError = None
 
 # Import repository (should exist from Phase 1)
-from app.services.training.unified_repository import (
+from app.services.knowledge.candidate_repository import (
     CalibrationStatus,
-    UnifiedFAQCandidateRepository,
+    KnowledgeCandidateRepository,
 )
 
 # Skip all tests if implementation doesn't exist yet (RED phase)
 pytestmark = pytest.mark.skipif(
     not IMPLEMENTATION_EXISTS,
-    reason="UnifiedPipelineService not yet implemented (RED phase)",
+    reason="KnowledgePipelineService not yet implemented (RED phase)",
 )
 
 
@@ -169,7 +170,7 @@ class TestServiceInit:
         self, temp_db_path, mock_settings, mock_rag_service, mock_faq_service
     ):
         """Create a pipeline service instance."""
-        service = UnifiedPipelineService(
+        service = KnowledgePipelineService(
             settings=mock_settings,
             rag_service=mock_rag_service,
             faq_service=mock_faq_service,
@@ -183,7 +184,7 @@ class TestServiceInit:
         # Assert
         assert service is not None
         assert service.repository is not None
-        assert isinstance(service.repository, UnifiedFAQCandidateRepository)
+        assert isinstance(service.repository, KnowledgeCandidateRepository)
         assert service.rag_service is not None
         assert service.faq_service is not None
 
@@ -201,7 +202,7 @@ class TestBisq2Processing:
         self, temp_db_path, mock_settings, mock_rag_service, mock_faq_service
     ):
         """Create a pipeline service instance."""
-        service = UnifiedPipelineService(
+        service = KnowledgePipelineService(
             settings=mock_settings,
             rag_service=mock_rag_service,
             faq_service=mock_faq_service,
@@ -260,7 +261,7 @@ class TestMatrixProcessing:
         self, temp_db_path, mock_settings, mock_rag_service, mock_faq_service
     ):
         """Create a pipeline service instance."""
-        service = UnifiedPipelineService(
+        service = KnowledgePipelineService(
             settings=mock_settings,
             rag_service=mock_rag_service,
             faq_service=mock_faq_service,
@@ -326,7 +327,7 @@ class TestRoutingLogic:
         self, temp_db_path, mock_settings, mock_rag_service, mock_faq_service
     ):
         """Create service with mockable comparison engine."""
-        service = UnifiedPipelineService(
+        service = KnowledgePipelineService(
             settings=mock_settings,
             rag_service=mock_rag_service,
             faq_service=mock_faq_service,
@@ -479,7 +480,7 @@ class TestCalibrationBehavior:
         self, temp_db_path, mock_settings, mock_rag_service, mock_faq_service
     ):
         """Create a pipeline service instance."""
-        service = UnifiedPipelineService(
+        service = KnowledgePipelineService(
             settings=mock_settings,
             rag_service=mock_rag_service,
             faq_service=mock_faq_service,
@@ -574,7 +575,7 @@ class TestReviewActions:
         self, temp_db_path, mock_settings, mock_rag_service, mock_faq_service
     ):
         """Create service with a pending candidate."""
-        service = UnifiedPipelineService(
+        service = KnowledgePipelineService(
             settings=mock_settings,
             rag_service=mock_rag_service,
             faq_service=mock_faq_service,
@@ -624,7 +625,7 @@ class TestReviewActions:
         self, temp_db_path, mock_settings, mock_rag_service, mock_faq_service
     ):
         """Cycle 2.6.1: Test approve uses human-readable source for bisq2."""
-        service = UnifiedPipelineService(
+        service = KnowledgePipelineService(
             settings=mock_settings,
             rag_service=mock_rag_service,
             faq_service=mock_faq_service,
@@ -656,7 +657,7 @@ class TestReviewActions:
         self, temp_db_path, mock_settings, mock_rag_service, mock_faq_service
     ):
         """Test approve uses human-readable source for matrix."""
-        service = UnifiedPipelineService(
+        service = KnowledgePipelineService(
             settings=mock_settings,
             rag_service=mock_rag_service,
             faq_service=mock_faq_service,
@@ -685,7 +686,7 @@ class TestReviewActions:
 
     def test_source_display_name_helper_function(self):
         """Test get_faq_source_display_name helper function."""
-        from app.services.training.unified_pipeline_service import (
+        from app.services.knowledge.knowledge_pipeline_service import (
             get_faq_source_display_name,
         )
 
@@ -732,7 +733,7 @@ class TestReviewActions:
             ]
         )
 
-        service = UnifiedPipelineService(
+        service = KnowledgePipelineService(
             settings=mock_settings,
             rag_service=mock_rag_service,
             faq_service=mock_faq_service,
@@ -776,7 +777,7 @@ class TestReviewActions:
         # Set up RAG service to return empty list (no duplicates)
         mock_rag_service.search_faq_similarity = AsyncMock(return_value=[])
 
-        service = UnifiedPipelineService(
+        service = KnowledgePipelineService(
             settings=mock_settings,
             rag_service=mock_rag_service,
             faq_service=mock_faq_service,
@@ -814,7 +815,7 @@ class TestQueryMethods:
         self, temp_db_path, mock_settings, mock_rag_service, mock_faq_service
     ):
         """Create service with candidates from both sources."""
-        service = UnifiedPipelineService(
+        service = KnowledgePipelineService(
             settings=mock_settings,
             rag_service=mock_rag_service,
             faq_service=mock_faq_service,
@@ -934,7 +935,7 @@ class TestEmptyGeneratedAnswerHandling:
         )
         mock_rag.search_faq_similarity = AsyncMock(return_value=[])
 
-        service = UnifiedPipelineService(
+        service = KnowledgePipelineService(
             settings=mock_settings,
             rag_service=mock_rag,
             faq_service=mock_faq_service,
@@ -1044,7 +1045,7 @@ class TestComparisonEngineRequired:
             )
         )
 
-        service = UnifiedPipelineService(
+        service = KnowledgePipelineService(
             settings=mock_settings,
             rag_service=mock_rag_service,
             faq_service=mock_faq_service,
@@ -1095,7 +1096,7 @@ class TestComparisonEngineRequired:
 # REMOVED: Bisq 2 Citation-Based Q&A Extraction Tests
 # =============================================================================
 # These tests were for the OLD citation-based extraction approach.
-# The new architecture uses LLM-based extraction via UnifiedFAQExtractor,
+# The new architecture uses LLM-based extraction via KnowledgeExtractor,
 # which doesn't rely on citation fields. Q&A extraction is now done by
 # sending all messages to the LLM for intelligent extraction.
 #
@@ -1126,7 +1127,7 @@ class TestPipelineProtocolDetection:
         self, temp_db_path, mock_settings, mock_rag_service, mock_faq_service
     ):
         """Create a pipeline service instance."""
-        service = UnifiedPipelineService(
+        service = KnowledgePipelineService(
             settings=mock_settings,
             rag_service=mock_rag_service,
             faq_service=mock_faq_service,
@@ -1231,7 +1232,7 @@ class TestRAGResponseKeyMismatch:
 
     BUG DESCRIPTION:
     - The SimplifiedRAGService.query() returns {"answer": "...", "sources": [...], ...}
-    - The UnifiedPipelineService was using rag_response.get("response", "")
+    - The KnowledgePipelineService was using rag_response.get("response", "")
     - This caused generated_answer to always be empty string
     - Result: All candidates had empty RAG answers and 0.0 final scores
 
@@ -1264,7 +1265,7 @@ class TestRAGResponseKeyMismatch:
         )
         mock_rag.search_faq_similarity = AsyncMock(return_value=[])
 
-        service = UnifiedPipelineService(
+        service = KnowledgePipelineService(
             settings=mock_settings,
             rag_service=mock_rag,
             faq_service=mock_faq_service,
@@ -1382,7 +1383,7 @@ class TestOriginalStaffAnswerPropagation:
         self, temp_db_path, mock_settings, mock_rag_service, mock_faq_service
     ):
         """Create service for testing extract_faqs_batch."""
-        service = UnifiedPipelineService(
+        service = KnowledgePipelineService(
             settings=mock_settings,
             rag_service=mock_rag_service,
             faq_service=mock_faq_service,
@@ -1420,7 +1421,7 @@ class TestOriginalStaffAnswerPropagation:
         # Mock the extractor to return a known original_staff_answer
         # Note: We patch in unified_faq_extractor module, then the import inside extract_faqs_batch uses it
         with patch(
-            "app.services.training.unified_faq_extractor.UnifiedFAQExtractor"
+            "app.services.knowledge.knowledge_extractor.KnowledgeExtractor"
         ) as MockExtractor:
             mock_extractor_instance = MagicMock()
             mock_result = MagicMock()
@@ -1478,7 +1479,7 @@ class TestOriginalStaffAnswerPropagation:
         service = service_with_mock_extractor
 
         with patch(
-            "app.services.training.unified_faq_extractor.UnifiedFAQExtractor"
+            "app.services.knowledge.knowledge_extractor.KnowledgeExtractor"
         ) as MockExtractor:
             mock_extractor_instance = MagicMock()
             mock_result = MagicMock()
@@ -1526,7 +1527,7 @@ class TestOriginalStaffAnswerPropagation:
         protected_profile = "scope-profile-private-sentinel"
 
         with patch(
-            "app.services.training.unified_faq_extractor.UnifiedFAQExtractor"
+            "app.services.knowledge.knowledge_extractor.KnowledgeExtractor"
         ) as MockExtractor:
             mock_result = MagicMock()
             mock_result.error = None
@@ -1551,13 +1552,12 @@ class TestOriginalStaffAnswerPropagation:
                 "_process_extracted_faq",
                 AsyncMock(side_effect=failure),
             ):
-                results = await service.extract_faqs_batch(
-                    messages=[],
-                    source="bisq2",
-                    staff_identifiers=[protected_profile],
-                )
-
-        assert results == []
+                with pytest.raises(KnowledgeExtractionError):
+                    await service.extract_faqs_batch(
+                        messages=[],
+                        source="bisq2",
+                        staff_identifiers=[protected_profile],
+                    )
         assert protected_channel not in caplog.text
         assert protected_profile not in caplog.text
         assert "RuntimeError" in caplog.text
@@ -1577,7 +1577,7 @@ class TestStaffSenderExtraction:
         self, temp_db_path, mock_settings, mock_rag_service, mock_faq_service
     ):
         """Create service for testing staff_sender extraction."""
-        service = UnifiedPipelineService(
+        service = KnowledgePipelineService(
             settings=mock_settings,
             rag_service=mock_rag_service,
             faq_service=mock_faq_service,
@@ -1593,7 +1593,7 @@ class TestStaffSenderExtraction:
         service = service_for_staff_sender
 
         with patch(
-            "app.services.training.unified_faq_extractor.UnifiedFAQExtractor"
+            "app.services.knowledge.knowledge_extractor.KnowledgeExtractor"
         ) as MockExtractor:
             mock_extractor_instance = MagicMock()
             mock_result = MagicMock()
@@ -1636,7 +1636,7 @@ class TestStaffSenderExtraction:
         service = service_for_staff_sender
 
         with patch(
-            "app.services.training.unified_faq_extractor.UnifiedFAQExtractor"
+            "app.services.knowledge.knowledge_extractor.KnowledgeExtractor"
         ) as MockExtractor:
             mock_extractor_instance = MagicMock()
             mock_result = MagicMock()
@@ -1699,7 +1699,7 @@ class TestGenerationConfidenceCapture:
         mock_rag.setup = AsyncMock()
         mock_rag.search_faq_similarity = AsyncMock(return_value=[])
 
-        service = UnifiedPipelineService(
+        service = KnowledgePipelineService(
             settings=mock_settings,
             rag_service=mock_rag,
             faq_service=mock_faq_service,
@@ -1715,7 +1715,7 @@ class TestGenerationConfidenceCapture:
         service = service_with_confidence
 
         with patch(
-            "app.services.training.unified_faq_extractor.UnifiedFAQExtractor"
+            "app.services.knowledge.knowledge_extractor.KnowledgeExtractor"
         ) as MockExtractor:
             mock_extractor_instance = MagicMock()
             mock_result = MagicMock()
@@ -1739,6 +1739,7 @@ class TestGenerationConfidenceCapture:
                 messages=[],
                 source="bisq2",
                 staff_identifiers=["staff_user"],
+                compare_answers=True,
             )
 
         assert len(results) == 1
@@ -1764,7 +1765,7 @@ class TestGenerationConfidenceCapture:
         mock_rag.setup = AsyncMock()
         mock_rag.search_faq_similarity = AsyncMock(return_value=[])
 
-        service = UnifiedPipelineService(
+        service = KnowledgePipelineService(
             settings=mock_settings,
             rag_service=mock_rag,
             faq_service=mock_faq_service,
@@ -1772,7 +1773,7 @@ class TestGenerationConfidenceCapture:
         )
 
         with patch(
-            "app.services.training.unified_faq_extractor.UnifiedFAQExtractor"
+            "app.services.knowledge.knowledge_extractor.KnowledgeExtractor"
         ) as MockExtractor:
             mock_extractor_instance = MagicMock()
             mock_result = MagicMock()
@@ -1796,6 +1797,7 @@ class TestGenerationConfidenceCapture:
                 messages=[],
                 source="bisq2",
                 staff_identifiers=["staff"],
+                compare_answers=True,
             )
 
         candidate = service.repository.get_by_id(results[0].candidate_id)
@@ -1823,7 +1825,7 @@ class TestGenerationConfidenceCapture:
         mock_rag.setup = AsyncMock()
         mock_rag.search_faq_similarity = AsyncMock(return_value=[])
 
-        service = UnifiedPipelineService(
+        service = KnowledgePipelineService(
             settings=mock_settings,
             rag_service=mock_rag,
             faq_service=mock_faq_service,
@@ -1831,7 +1833,7 @@ class TestGenerationConfidenceCapture:
         )
 
         with patch(
-            "app.services.training.unified_faq_extractor.UnifiedFAQExtractor"
+            "app.services.knowledge.knowledge_extractor.KnowledgeExtractor"
         ) as MockExtractor:
             mock_extractor_instance = MagicMock()
             mock_result = MagicMock()
@@ -1855,6 +1857,7 @@ class TestGenerationConfidenceCapture:
                 messages=[],
                 source="bisq2",
                 staff_identifiers=["staff"],
+                compare_answers=True,
             )
 
         candidate = service.repository.get_by_id(results[0].candidate_id)
@@ -1886,7 +1889,7 @@ class TestPipelineThreadIntegration:
         mock_comparison_engine,
     ):
         """Create a pipeline service instance with comparison engine."""
-        service = UnifiedPipelineService(
+        service = KnowledgePipelineService(
             settings=mock_settings,
             rag_service=mock_rag_service,
             faq_service=mock_faq_service,
@@ -2104,7 +2107,7 @@ class TestPipelinePreApprovalCorrections:
         mock_comparison_engine,
     ):
         """Create a pipeline service instance with comparison engine."""
-        service = UnifiedPipelineService(
+        service = KnowledgePipelineService(
             settings=mock_settings,
             rag_service=mock_rag_service,
             faq_service=mock_faq_service,
@@ -2338,7 +2341,7 @@ class TestPipelinePostApprovalCorrections:
         mock_comparison_engine,
     ):
         """Create a pipeline service instance with comparison engine."""
-        service = UnifiedPipelineService(
+        service = KnowledgePipelineService(
             settings=mock_settings,
             rag_service=mock_rag_service,
             faq_service=mock_faq_service,
@@ -2541,7 +2544,7 @@ class TestPipelinePostApprovalCorrections:
                     (rebuild, operation, faq_id, metadata)
                 )
             )
-            service = UnifiedPipelineService(
+            service = KnowledgePipelineService(
                 settings=mock_settings,
                 rag_service=mock_rag_service,
                 faq_service=faq_service,
@@ -2620,7 +2623,7 @@ class TestThresholdConstants:
             PIPELINE_AUTO_APPROVE_THRESHOLD,
             PIPELINE_SPOT_CHECK_THRESHOLD,
         )
-        from app.services.training.unified_pipeline_service import (
+        from app.services.knowledge.knowledge_pipeline_service import (
             AUTO_APPROVE_THRESHOLD,
             SPOT_CHECK_THRESHOLD,
         )

@@ -7,7 +7,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from typing import Callable, Iterable, Sequence
 
-from app.services.training.unified_repository import UnifiedFAQCandidate
+from app.services.knowledge.candidate_repository import KnowledgeCandidate
 
 TOKEN_STOPWORDS = {
     "about",
@@ -104,7 +104,7 @@ ROUTING_PRIORITY = {
 class KnowledgeTopicCluster:
     key: str
     topic: str
-    candidates: Sequence[UnifiedFAQCandidate]
+    candidates: Sequence[KnowledgeCandidate]
 
     @property
     def size(self) -> int:
@@ -140,16 +140,16 @@ class KnowledgeTopicCluster:
 
 @dataclass(frozen=True)
 class KnowledgeReviewItem:
-    candidate: UnifiedFAQCandidate
+    candidate: KnowledgeCandidate
     routing: str
     cluster: KnowledgeTopicCluster | None = None
 
 
 def build_knowledge_review_items(
-    candidates: Sequence[UnifiedFAQCandidate],
-    is_reviewable: Callable[[UnifiedFAQCandidate], bool],
+    candidates: Sequence[KnowledgeCandidate],
+    is_reviewable: Callable[[KnowledgeCandidate], bool],
     *,
-    cluster_key: Callable[[UnifiedFAQCandidate], str] | None = None,
+    cluster_key: Callable[[KnowledgeCandidate], str] | None = None,
 ) -> list[KnowledgeReviewItem]:
     """Collapse reviewable topic clusters into one admin queue item."""
     ordered = [candidate for candidate in candidates if is_reviewable(candidate)]
@@ -199,7 +199,7 @@ def build_knowledge_review_items(
 
 
 def build_exact_clusters(
-    candidates: Iterable[UnifiedFAQCandidate],
+    candidates: Iterable[KnowledgeCandidate],
 ) -> dict[str, list[int]]:
     clusters: dict[str, list[int]] = defaultdict(list)
     for candidate in candidates:
@@ -208,11 +208,11 @@ def build_exact_clusters(
 
 
 def build_topic_clusters(
-    candidates: Iterable[UnifiedFAQCandidate],
+    candidates: Iterable[KnowledgeCandidate],
     *,
-    key_func: Callable[[UnifiedFAQCandidate], str] | None = None,
-) -> dict[str, list[UnifiedFAQCandidate]]:
-    clusters: dict[str, list[UnifiedFAQCandidate]] = defaultdict(list)
+    key_func: Callable[[KnowledgeCandidate], str] | None = None,
+) -> dict[str, list[KnowledgeCandidate]]:
+    clusters: dict[str, list[KnowledgeCandidate]] = defaultdict(list)
     build_key = key_func or topic_cluster_key
     for candidate in candidates:
         clusters[build_key(candidate)].append(candidate)
@@ -220,7 +220,7 @@ def build_topic_clusters(
 
 
 def topic_cluster_ids(
-    candidates: Iterable[UnifiedFAQCandidate],
+    candidates: Iterable[KnowledgeCandidate],
 ) -> dict[str, list[int]]:
     return {
         key: [candidate.id for candidate in group]
@@ -228,7 +228,7 @@ def topic_cluster_ids(
     }
 
 
-def exact_cluster_key(candidate: UnifiedFAQCandidate) -> str:
+def exact_cluster_key(candidate: KnowledgeCandidate) -> str:
     question = _fingerprint(candidate.edited_question_text or candidate.question_text)
     answer = _fingerprint(candidate.edited_staff_answer or candidate.staff_answer)
     return (
@@ -237,7 +237,7 @@ def exact_cluster_key(candidate: UnifiedFAQCandidate) -> str:
     )
 
 
-def topic_cluster_key(candidate: UnifiedFAQCandidate) -> str:
+def topic_cluster_key(candidate: KnowledgeCandidate) -> str:
     text = _clean(
         " ".join(
             [

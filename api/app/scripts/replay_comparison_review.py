@@ -16,7 +16,7 @@ import json
 import os
 from pathlib import Path
 
-from app.services.training.comparison_engine import AnswerComparisonEngine
+from app.services.knowledge.comparison_engine import AnswerComparisonEngine
 
 
 async def replay(input_path: Path, output_path: Path, model: str) -> None:

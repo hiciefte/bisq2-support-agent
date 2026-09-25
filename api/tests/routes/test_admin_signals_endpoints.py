@@ -22,7 +22,7 @@ from app.routes.admin.signals import (
     get_feedback_service,
     router,
 )
-from app.services.training.unified_repository import UnifiedFAQCandidate
+from app.services.knowledge.candidate_repository import KnowledgeCandidate
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -71,7 +71,7 @@ def _sample_escalation(message_id: str, escalation_id: int = 7) -> Escalation:
     )
 
 
-def _candidate(**overrides) -> UnifiedFAQCandidate:
+def _candidate(**overrides) -> KnowledgeCandidate:
     values = {
         "id": 1,
         "source": "matrix",
@@ -108,7 +108,7 @@ def _candidate(**overrides) -> UnifiedFAQCandidate:
         "has_correction": False,
     }
     values.update(overrides)
-    return UnifiedFAQCandidate(**values)
+    return KnowledgeCandidate(**values)
 
 
 class _KnowledgeRepository:

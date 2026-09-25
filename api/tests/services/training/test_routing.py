@@ -9,14 +9,14 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from app.services.training.unified_pipeline_service import UnifiedPipelineService
+from app.services.knowledge.knowledge_pipeline_service import KnowledgePipelineService
 
 
-def _make_service(*, calibration_mode: bool = False) -> UnifiedPipelineService:
+def _make_service(*, calibration_mode: bool = False) -> KnowledgePipelineService:
     repo = SimpleNamespace(
         is_calibration_mode=lambda: calibration_mode,
     )
-    service = object.__new__(UnifiedPipelineService)
+    service = object.__new__(KnowledgePipelineService)
     service.repository = repo
     service.learning_engine = None
     return service

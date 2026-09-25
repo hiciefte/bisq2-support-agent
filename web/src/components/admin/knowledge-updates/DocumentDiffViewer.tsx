@@ -32,7 +32,7 @@ export function DocumentDiffViewer({
         <div>
           <p className="text-sm font-medium">Full wiki file: diff & edit</p>
           <p className="text-xs text-muted-foreground">
-            Click a proposed line to edit it in place while keeping the diff context visible.
+            Removed lines show the existing passage; added lines show the proposed passage. Click a proposed or unchanged line to edit it in context.
           </p>
         </div>
         <div className="flex items-center gap-2 text-xs">

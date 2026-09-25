@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { stripGeneratedAnswerFooter } from "@/lib/answer-format";
 import { Check, Loader2, ChevronDown, ChevronUp } from "lucide-react";
-import type { BatchCandidate } from "./types";
+import type { BatchCandidate } from "../knowledge-updates/types";
 
 interface BatchReviewListProps {
   candidates: BatchCandidate[];

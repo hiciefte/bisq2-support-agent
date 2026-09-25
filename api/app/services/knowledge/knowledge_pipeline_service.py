@@ -1,23 +1,16 @@
-"""
-Unified Pipeline Service for FAQ Training.
+"""Knowledge intake and review orchestration for Matrix and Bisq conversations.
 
-This service orchestrates the processing of support conversations from both
-Bisq 2 in-app chat and Matrix chat sources, managing the comparison workflow,
-routing decisions, and review actions.
+Candidates are stored before optional answer comparison. Wiki review is the
+primary workflow; public FAQ publishing remains an explicit secondary action."""
 
-Architecture:
-    - Processes conversations from both Bisq 2 API and Matrix sources
-    - Uses RAG service to generate answers for comparison
-    - Routes candidates based on comparison scores and calibration state
-    - Manages review workflow (approve/reject/skip)
-    - Creates verified FAQs with source preservation
-"""
-
+import asyncio
+import hashlib
 import json
 import logging
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, cast
 
 # Import sync services at module level for testability (mocking)
@@ -46,14 +39,14 @@ from app.metrics.training_metrics import (
 )
 from app.models.faq import FAQItem
 from app.services.faq.duplicate_guard import find_similar_faqs
-from app.services.rag.protocol_detector import ProtocolDetector, Source
-from app.services.training.ingest.bisq2_sync_service import Bisq2SyncService
-from app.services.training.ingest.matrix_sync_service import MatrixSyncService
-from app.services.training.unified_repository import (
+from app.services.knowledge.candidate_repository import (
     CalibrationStatus,
-    UnifiedFAQCandidate,
-    UnifiedFAQCandidateRepository,
+    KnowledgeCandidate,
+    KnowledgeCandidateRepository,
 )
+from app.services.knowledge.ingest.bisq2_sync_service import Bisq2SyncService
+from app.services.knowledge.ingest.matrix_sync_service import MatrixSyncService
+from app.services.rag.protocol_detector import ProtocolDetector, Source
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +90,10 @@ class ComparisonResult:
     requires_full_review: bool = True
 
 
+class KnowledgeExtractionError(RuntimeError):
+    """Extraction did not complete; preserve source input and reconcile."""
+
+
 @dataclass
 class ProcessingResult:
     """Result of processing a conversation or answer."""
@@ -105,7 +102,7 @@ class ProcessingResult:
     source: str
     source_event_id: str
     routing: str
-    final_score: float
+    final_score: Optional[float]
     is_calibration_sample: bool
     skipped_reason: Optional[str] = None
 
@@ -186,9 +183,9 @@ class CandidateReviewConflictError(Exception):
         self.faq_id = faq_id
 
 
-class UnifiedPipelineService:
+class KnowledgePipelineService:
     """
-    Orchestrates the unified FAQ training pipeline.
+    Orchestrates the unified knowledge review pipeline.
 
     This service handles:
     - Processing Bisq 2 and Matrix conversations
@@ -206,7 +203,7 @@ class UnifiedPipelineService:
         faq_service: Any = None,
         db_path: Optional[str] = None,
         comparison_engine: Optional[Any] = None,
-        repository: Optional[UnifiedFAQCandidateRepository] = None,
+        repository: Optional[KnowledgeCandidateRepository] = None,
         aisuite_client: Any = None,
         learning_engine: Any = None,
     ):
@@ -220,7 +217,7 @@ class UnifiedPipelineService:
             db_path: Path to SQLite database (used if repository not provided)
             comparison_engine: Optional comparison engine for scoring
             repository: Optional pre-configured repository (takes precedence over db_path)
-            aisuite_client: AISuite client for LLM calls in FAQ extraction
+            aisuite_client: AISuite client for LLM calls in knowledge extraction
             learning_engine: Optional LearningEngine for adaptive threshold tuning
         """
         self.settings = settings
@@ -237,7 +234,7 @@ class UnifiedPipelineService:
         if repository is not None:
             self.repository = repository
         elif db_path is not None:
-            self.repository = UnifiedFAQCandidateRepository(db_path)
+            self.repository = KnowledgeCandidateRepository(db_path)
         else:
             raise ValueError("Either repository or db_path must be provided")
 
@@ -1178,7 +1175,7 @@ class UnifiedPipelineService:
 
         return faq_id
 
-    def _recover_linked_faq_id(self, candidate: UnifiedFAQCandidate) -> Optional[str]:
+    def _recover_linked_faq_id(self, candidate: KnowledgeCandidate) -> Optional[str]:
         """Recover the FAQ created by a previously interrupted approval.
 
         Only the candidate's own persisted faq_id link (validated against
@@ -1201,7 +1198,7 @@ class UnifiedPipelineService:
         return None
 
     def _find_exact_question_faq_id(
-        self, candidate: UnifiedFAQCandidate, question: str
+        self, candidate: KnowledgeCandidate, question: str
     ) -> Optional[str]:
         """Find an existing, unlinked FAQ with the exact question text.
 
@@ -1562,7 +1559,7 @@ class UnifiedPipelineService:
         edited_staff_answer: Optional[str] = None,
         edited_question_text: Optional[str] = None,
         category: Optional[str] = None,
-    ) -> Optional[UnifiedFAQCandidate]:
+    ) -> Optional[KnowledgeCandidate]:
         """
         Update a candidate's editable fields.
 
@@ -1707,7 +1704,7 @@ class UnifiedPipelineService:
         protocol: str,
         *,
         require_pending: bool = False,
-    ) -> Optional[UnifiedFAQCandidate]:
+    ) -> Optional[KnowledgeCandidate]:
         """
         Regenerate the RAG answer for a candidate with a specific protocol.
 
@@ -1774,7 +1771,7 @@ class UnifiedPipelineService:
         self,
         candidate_id: int,
         protocol: str,
-    ) -> Optional[UnifiedFAQCandidate]:
+    ) -> Optional[KnowledgeCandidate]:
         """Regenerate a candidate answer only if the candidate is still pending."""
         return await self.regenerate_candidate_answer(
             candidate_id,
@@ -1788,7 +1785,7 @@ class UnifiedPipelineService:
         routing: Optional[str] = None,
         limit: int = 50,
         offset: int = 0,
-    ) -> List[UnifiedFAQCandidate]:
+    ) -> List[KnowledgeCandidate]:
         """
         Get pending candidates for review.
 
@@ -1829,7 +1826,7 @@ class UnifiedPipelineService:
         self,
         routing: str,
         source: Optional[Literal["bisq2", "matrix"]] = None,
-    ) -> Optional[UnifiedFAQCandidate]:
+    ) -> Optional[KnowledgeCandidate]:
         """
         Get the current item to review for a routing category.
 
@@ -1891,10 +1888,12 @@ class UnifiedPipelineService:
         category: str = "General",
         original_user_question: Optional[str] = None,
         original_staff_answer: Optional[str] = None,
+        *,
+        compare_answer: bool = False,
     ) -> ProcessingResult:
-        """Process a single extracted FAQ through the pipeline.
+        """Persist extracted knowledge before optional answer evaluation.
 
-        This internal method handles FAQs extracted by UnifiedFAQExtractor,
+        This internal method handles FAQs extracted by KnowledgeExtractor,
         running them through RAG comparison and creating candidates.
 
         Args:
@@ -1961,70 +1960,72 @@ class UnifiedPipelineService:
             question_text, staff_answer, source=cast(Optional[Source], source)
         )
 
-        generated = await self._generate_candidate_answer(
-            question_text, detected_protocol
-        )
-
-        # Calculate comparison scores
-        comparison = await self._compare_answers(
-            source_event_id, question_text, staff_answer, generated.answer
-        )
-
-        # Determine routing
-        routing, is_calibration = self._determine_routing(
-            comparison.final_score,
-            comparison_score=comparison.embedding_similarity,
-            requires_full_review=comparison.requires_full_review,
-        )
-
-        # Create candidate with detected protocol
-        source_timestamp = datetime.now(timezone.utc).isoformat()
+        # A support answer is reviewable knowledge even without a paid baseline
+        # answer. Never lose it because generation or judging fails afterwards.
         candidate = self.repository.create(
             source=cast(Literal["bisq2", "matrix"], source),
             source_event_id=source_event_id,
-            source_timestamp=source_timestamp,
+            source_timestamp=datetime.now(timezone.utc).isoformat(),
             question_text=question_text,
             staff_answer=staff_answer,
-            generated_answer=generated.answer,
-            staff_sender=staff_sender,  # Now passed from LLM extraction
-            embedding_similarity=comparison.embedding_similarity,
-            factual_alignment=comparison.factual_alignment,
-            contradiction_score=comparison.contradiction_score,
-            completeness=comparison.completeness,
-            hallucination_risk=comparison.hallucination_risk,
-            final_score=comparison.final_score,
-            llm_reasoning=comparison.llm_reasoning,
-            routing=routing,
-            is_calibration_sample=is_calibration,
+            staff_sender=staff_sender,
+            routing="FULL_REVIEW",
+            is_calibration_sample=False,
             category=category,
             protocol=detected_protocol,
-            generated_answer_sources=generated.sources_json,
             original_user_question=original_user_question,
             original_staff_answer=original_staff_answer,
-            generation_confidence=generated.confidence,
         )
 
-        # Update calibration count and metrics if calibration sample
-        if is_calibration:
-            self.repository.increment_calibration_count()
-            update_calibration_metrics(self.repository.get_calibration_status())
+        # Reuse the reviewed-wiki matcher and its existing provenance gates.
+        # Textual similarity alone must never approve a new staff claim.
+        wiki_path = getattr(self.settings, "LLM_WIKI_DIR_PATH", None)
+        if isinstance(wiki_path, (str, Path)):
+            from app.services.knowledge_updates.llm_wiki_coverage_reconciliation import (
+                LLMWikiCoverageReconciliationService,
+            )
 
-        # Record metrics
-        training_pairs_processed.labels(routing=routing).inc()
-        training_final_scores.observe(comparison.final_score)
-        if routing == "AUTO_APPROVE":
-            training_auto_approvals.inc()
+            coverage = LLMWikiCoverageReconciliationService(self.settings).reconcile(
+                [candidate],
+                apply=True,
+                repository=self.repository,
+                reviewer="knowledge-intake-coverage",
+            )
+            if coverage.applied_count:
+                return ProcessingResult(
+                    candidate.id,
+                    source,
+                    source_event_id,
+                    "SKIPPED",
+                    None,
+                    False,
+                    skipped_reason="already_covered",
+                )
+            if coverage.spot_check_count:
+                candidate = (
+                    self.repository.update_candidate(candidate.id, routing="SPOT_CHECK")
+                    or candidate
+                )
 
-        # Update queue metrics
+        if compare_answer:
+            candidate = (
+                await self.regenerate_candidate_answer(
+                    candidate.id, detected_protocol, require_pending=True
+                )
+                or candidate
+            )
+
+        training_pairs_processed.labels(routing=candidate.routing).inc()
+        if candidate.final_score is not None:
+            training_final_scores.observe(candidate.final_score)
         update_queue_metrics(self.repository.get_queue_counts())
-
         return ProcessingResult(
             candidate_id=candidate.id,
             source=source,
             source_event_id=source_event_id,
-            routing=routing,
-            final_score=comparison.final_score,
-            is_calibration_sample=is_calibration,
+            routing=candidate.routing,
+            final_score=candidate.final_score,
+            is_calibration_sample=False,
         )
 
     async def extract_faqs_batch(
@@ -2032,74 +2033,131 @@ class UnifiedPipelineService:
         messages: List[Dict[str, Any]],
         source: str,
         staff_identifiers: Optional[List[str]] = None,
+        *,
+        source_scope: str = "",
+        eligible_answer_ids: Optional[set[str]] = None,
+        compare_answers: bool = False,
     ) -> List[ProcessingResult]:
-        """Extract FAQ candidates from a batch of messages using single LLM call.
+        """Extract reviewable knowledge, with comparison explicitly optional.
 
-        This method provides a simplified alternative to processing individual Q&A pairs.
-        It uses UnifiedFAQExtractor for single-pass LLM extraction, then processes each
-        extracted FAQ through the standard pipeline for comparison and routing.
-
-        Args:
-            messages: List of chat messages (Bisq 2 or Matrix format)
-            source: Source identifier ("bisq2" or "matrix")
-            staff_identifiers: Optional list of staff usernames/IDs
-
-        Returns:
-            List of ProcessingResult for each extracted FAQ candidate
+        Context messages may include already processed questions. Only answers
+        in ``eligible_answer_ids`` may create candidates. A durable receipt is
+        reserved before extraction so an uncertain provider call cannot be
+        silently retried by the next sync. Failures propagate to keep cursors
+        and processed IDs unchanged; a successful empty extraction returns [].
         """
-        from app.services.training.unified_faq_extractor import UnifiedFAQExtractor
+        from app.services.knowledge.knowledge_extractor import KnowledgeExtractor
 
-        # Create extractor with AISuite client and settings
-        extractor = UnifiedFAQExtractor(
+        extractor = KnowledgeExtractor(
             aisuite_client=self.aisuite_client,
             settings=self.settings,
             staff_identifiers=staff_identifiers,
         )
+        # Deterministic configuration failures are not dispatched attempts and
+        # must neither take down API startup nor create an uncertain receipt.
+        extractor.validate_provider()
 
-        # Extract FAQs using single LLM call
-        extraction_result = await extractor.extract_faqs(
-            messages=messages,
+        scope_digest = hashlib.sha256(
+            json.dumps([source, source_scope]).encode()
+        ).hexdigest()
+        # Matrix unsigned metadata (for example age) changes between reads of
+        # the same event. It must not turn cursor reconciliation into a new call.
+        digest_messages = [
+            (
+                {key: value for key, value in message.items() if key != "unsigned"}
+                if source == "matrix"
+                else message
+            )
+            for message in messages
+        ]
+        input_digest = hashlib.sha256(
+            json.dumps(
+                [
+                    scope_digest,
+                    digest_messages,
+                    sorted(staff_identifiers or []),
+                    (
+                        sorted(eligible_answer_ids)
+                        if eligible_answer_ids is not None
+                        else None
+                    ),
+                    compare_answers,
+                ],
+                sort_keys=True,
+                ensure_ascii=False,
+            ).encode()
+        ).hexdigest()
+        completed = self.repository.begin_knowledge_extraction(
             source=source,
+            scope_digest=scope_digest,
+            input_digest=input_digest,
         )
-
-        # Handle extraction errors
-        if extraction_result.error:
-            logger.error(f"FAQ extraction error: {extraction_result.error}")
+        if completed is not None:
+            # Source cursors can be reconciled after a crash following success.
+            # Do not re-count or re-generate candidates already saved by it.
             return []
 
-        # Process each extracted FAQ through the pipeline
-        results: List[ProcessingResult] = []
-        pipeline_data = extraction_result.to_pipeline_format()
-
-        for faq_data in pipeline_data:
-            try:
-                result = await self._process_extracted_faq(
-                    question_text=faq_data["question_text"],
-                    staff_answer=faq_data["staff_answer"],
-                    source=faq_data["source"],
-                    source_event_id=faq_data["source_event_id"],
-                    staff_sender=faq_data.get("staff_sender", ""),
-                    category=faq_data.get("category", "General"),
-                    original_user_question=faq_data.get("original_user_question"),
-                    original_staff_answer=faq_data.get("original_staff_answer"),
+        candidate_ids: List[int] = []
+        try:
+            extraction_result = await extractor.extract_faqs(
+                messages=messages, source=source
+            )
+            if extraction_result.error:
+                raise KnowledgeExtractionError(
+                    "Knowledge extraction failed; inputs remain unprocessed"
                 )
-                results.append(result)
-            except Exception as exc:
-                if source == "bisq2" or faq_data.get("source") == "bisq2":
-                    logger.error(
-                        "Failed to process extracted Bisq FAQ (%s)",
-                        type(exc).__name__,
+
+            results: List[ProcessingResult] = []
+            processing_failed = False
+            for item in extraction_result.to_pipeline_format():
+                answer_id = item.get("answer_message_id", item["source_event_id"])
+                if (
+                    eligible_answer_ids is not None
+                    and answer_id not in eligible_answer_ids
+                ):
+                    continue
+                try:
+                    result = await self._process_extracted_faq(
+                        question_text=item["question_text"],
+                        staff_answer=item["staff_answer"],
+                        source=item["source"],
+                        source_event_id=item["source_event_id"],
+                        staff_sender=item.get("staff_sender", ""),
+                        category=item.get("category", "General"),
+                        original_user_question=item.get("original_user_question"),
+                        original_staff_answer=item.get("original_staff_answer"),
+                        compare_answer=compare_answers,
                     )
-                else:
-                    logger.exception("Failed to process extracted FAQ")
-                continue
-
-        logger.info(
-            f"Batch extraction complete: {extraction_result.extracted_count} FAQs "
-            f"extracted, {len(results)} processed successfully"
-        )
-
-        return results
+                    results.append(result)
+                    if result.candidate_id is not None:
+                        candidate_ids.append(result.candidate_id)
+                except Exception as exc:
+                    # Preserve remaining extracted candidates too. Never log raw
+                    # provider errors, source IDs, or private support messages.
+                    logger.error(
+                        "Knowledge candidate processing failed (%s)", type(exc).__name__
+                    )
+                    persisted = self.repository.get_by_event_id(item["source_event_id"])
+                    if persisted is not None:
+                        candidate_ids.append(persisted.id)
+                    processing_failed = True
+            if processing_failed:
+                raise KnowledgeExtractionError(
+                    "Knowledge candidate processing failed; reconciliation required"
+                )
+            self.repository.finish_knowledge_extraction(
+                input_digest,
+                candidate_ids=candidate_ids,
+                succeeded=True,
+            )
+            return results
+        except (Exception, asyncio.CancelledError):
+            self.repository.finish_knowledge_extraction(
+                input_digest,
+                candidate_ids=candidate_ids,
+                succeeded=False,
+            )
+            raise
 
     async def sync_bisq_conversations(
         self,
@@ -2124,6 +2182,7 @@ class UnifiedPipelineService:
         Returns:
             Number of Q&A pairs successfully processed
         """
+        self.last_bisq_sync_deferred_count = 0
         # Use provided or create dependencies
         if bisq_api is None:
             # Check if Bisq API is configured
@@ -2165,7 +2224,11 @@ class UnifiedPipelineService:
             state_manager=state_manager,
         )
 
-        return await sync_service.sync_conversations()
+        try:
+            return await sync_service.sync_conversations()
+        finally:
+            # Copy before returning, with no await before the API caller reads it.
+            self.last_bisq_sync_deferred_count = sync_service.last_deferred_count
 
     async def sync_matrix_conversations(self) -> int:
         """
@@ -2201,3 +2264,7 @@ class UnifiedPipelineService:
         )
 
         return await sync_service.sync_rooms()
+
+
+# Compatibility for existing operational imports; implementations live above.
+UnifiedPipelineService = KnowledgePipelineService

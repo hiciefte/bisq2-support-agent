@@ -5,9 +5,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from app.services.training.comparison_engine import AnswerComparisonEngine
-from app.services.training.unified_pipeline_service import UnifiedPipelineService
-from app.services.training.unified_repository import UnifiedFAQCandidateRepository
+from app.services.knowledge.candidate_repository import KnowledgeCandidateRepository
+from app.services.knowledge.comparison_engine import AnswerComparisonEngine
+from app.services.knowledge.knowledge_pipeline_service import KnowledgePipelineService
 
 
 def judgment(
@@ -52,7 +52,7 @@ def engine_for(payload):
 
 
 def pipeline_for(engine):
-    service = object.__new__(UnifiedPipelineService)
+    service = object.__new__(KnowledgePipelineService)
     service.comparison_engine = engine
     service.repository = SimpleNamespace(is_calibration_mode=lambda: False)
     service.learning_engine = SimpleNamespace(
@@ -109,7 +109,7 @@ async def test_context_failures_override_perfect_scores_and_survive_storage(
     )
     assert routing == "FULL_REVIEW"
     service.learning_engine.get_routing_recommendation.assert_not_called()
-    repository = UnifiedFAQCandidateRepository(str(tmp_path / "review.db"))
+    repository = KnowledgeCandidateRepository(str(tmp_path / "review.db"))
     candidate = repository.create(
         source="matrix",
         source_event_id="synthetic",
@@ -120,7 +120,7 @@ async def test_context_failures_override_perfect_scores_and_survive_storage(
         llm_reasoning=comparison.llm_reasoning,
         final_score=comparison.final_score,
     )
-    reloaded = UnifiedFAQCandidateRepository(repository.db_path).get_by_id(candidate.id)
+    reloaded = KnowledgeCandidateRepository(repository.db_path).get_by_id(candidate.id)
     assert reloaded.routing == "FULL_REVIEW"
     assert disposition in reloaded.llm_reasoning
     assert evidence in reloaded.llm_reasoning

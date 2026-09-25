@@ -16,9 +16,9 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from app.services.training.unified_repository import (
-    UnifiedFAQCandidate,
-    UnifiedFAQCandidateRepository,
+from app.services.knowledge.candidate_repository import (
+    KnowledgeCandidate,
+    KnowledgeCandidateRepository,
 )
 
 # =============================================================================
@@ -38,7 +38,7 @@ class TestEditedQuestionTextDatabaseLayer:
     def test_edited_question_text_column_exists_in_new_database(self, temp_db_path):
         """RED: New databases should have edited_question_text column."""
         # Arrange & Act - instantiation creates the database with schema
-        UnifiedFAQCandidateRepository(str(temp_db_path))
+        KnowledgeCandidateRepository(str(temp_db_path))
 
         # Assert - Check column exists
         conn = sqlite3.connect(str(temp_db_path))
@@ -117,7 +117,7 @@ class TestEditedQuestionTextDatabaseLayer:
         conn.close()
 
         # Act - Initialize repository (should trigger migration)
-        UnifiedFAQCandidateRepository(str(temp_db_path))
+        KnowledgeCandidateRepository(str(temp_db_path))
 
         # Assert - Column should now exist
         conn = sqlite3.connect(str(temp_db_path))
@@ -144,7 +144,7 @@ class TestEditedQuestionTextRepository:
         """Create a repository with temporary database."""
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "test_repo.db"
-            yield UnifiedFAQCandidateRepository(str(db_path))
+            yield KnowledgeCandidateRepository(str(db_path))
 
     @pytest.fixture
     def sample_candidate(self, repo):
@@ -159,9 +159,9 @@ class TestEditedQuestionTextRepository:
         )
 
     def test_dataclass_has_edited_question_text_field(self):
-        """RED: UnifiedFAQCandidate should have edited_question_text field."""
+        """RED: KnowledgeCandidate should have edited_question_text field."""
         # Create a candidate instance to check field exists
-        candidate = UnifiedFAQCandidate(
+        candidate = KnowledgeCandidate(
             id=1,
             source="bisq2",
             source_event_id="test",
@@ -258,7 +258,7 @@ class TestEditedQuestionTextService:
 
     @pytest.fixture
     def mock_dependencies(self):
-        """Create mock dependencies for UnifiedPipelineService."""
+        """Create mock dependencies for KnowledgePipelineService."""
         mock_repo = MagicMock()
         mock_rag_service = MagicMock()
         mock_faq_service = MagicMock()
@@ -278,8 +278,8 @@ class TestEditedQuestionTextService:
         self, mock_dependencies
     ):
         """RED: approve_candidate should use edited_question_text for FAQ question."""
-        from app.services.training.unified_pipeline_service import (
-            UnifiedPipelineService,
+        from app.services.knowledge.knowledge_pipeline_service import (
+            KnowledgePipelineService,
         )
 
         mock_repo, mock_rag_service, mock_faq_service = mock_dependencies
@@ -301,7 +301,7 @@ class TestEditedQuestionTextService:
         mock_repo.get_by_id.return_value = mock_candidate
 
         # Create service
-        service = UnifiedPipelineService(
+        service = KnowledgePipelineService(
             repository=mock_repo,
             rag_service=mock_rag_service,
             faq_service=mock_faq_service,
@@ -320,8 +320,8 @@ class TestEditedQuestionTextService:
         self, mock_dependencies
     ):
         """RED: approve_candidate should use original question_text when not edited."""
-        from app.services.training.unified_pipeline_service import (
-            UnifiedPipelineService,
+        from app.services.knowledge.knowledge_pipeline_service import (
+            KnowledgePipelineService,
         )
 
         mock_repo, mock_rag_service, mock_faq_service = mock_dependencies
@@ -343,7 +343,7 @@ class TestEditedQuestionTextService:
         mock_repo.get_by_id.return_value = mock_candidate
 
         # Create service
-        service = UnifiedPipelineService(
+        service = KnowledgePipelineService(
             repository=mock_repo,
             rag_service=mock_rag_service,
             faq_service=mock_faq_service,
@@ -362,9 +362,9 @@ class TestEditedQuestionTextService:
         self, mock_dependencies
     ):
         """Regeneration should use edited FAQ content, not only original text."""
-        from app.services.training.unified_pipeline_service import (
+        from app.services.knowledge.knowledge_pipeline_service import (
             ComparisonResult,
-            UnifiedPipelineService,
+            KnowledgePipelineService,
         )
 
         mock_repo, mock_rag_service, mock_faq_service = mock_dependencies
@@ -389,7 +389,7 @@ class TestEditedQuestionTextService:
         )
         mock_repo.update_candidate.return_value = mock_candidate
 
-        service = UnifiedPipelineService(
+        service = KnowledgePipelineService(
             repository=mock_repo,
             rag_service=mock_rag_service,
             faq_service=mock_faq_service,
@@ -426,9 +426,9 @@ class TestEditedQuestionTextService:
         self, mock_dependencies
     ):
         """Editing FAQ question should refresh generated answer and re-score."""
-        from app.services.training.unified_pipeline_service import (
+        from app.services.knowledge.knowledge_pipeline_service import (
             ComparisonResult,
-            UnifiedPipelineService,
+            KnowledgePipelineService,
         )
 
         mock_repo, mock_rag_service, mock_faq_service = mock_dependencies
@@ -453,7 +453,7 @@ class TestEditedQuestionTextService:
             }
         )
 
-        service = UnifiedPipelineService(
+        service = KnowledgePipelineService(
             repository=mock_repo,
             rag_service=mock_rag_service,
             faq_service=mock_faq_service,

@@ -230,8 +230,7 @@ class TestAutoSendRouterDynamicThresholds:
             "auto_send_threshold": 0.88,
             "queue_high_threshold": 0.65,
         }
-        mock_engine._review_history = [{}] * 60  # 60 reviews > min_samples_for_update
-        mock_engine.min_samples_for_update = 50
+        mock_engine.has_sufficient_calibration_samples.return_value = True
 
         router = AutoSendRouter(learning_engine=mock_engine)
         thresholds = router._get_thresholds()
@@ -245,8 +244,7 @@ class TestAutoSendRouterDynamicThresholds:
         from app.services.rag.auto_send_router import AutoSendRouter
 
         mock_engine = MagicMock()
-        mock_engine._review_history = [{}] * 10  # Only 10 reviews
-        mock_engine.min_samples_for_update = 50
+        mock_engine.has_sufficient_calibration_samples.return_value = False
 
         router = AutoSendRouter(learning_engine=mock_engine)
         thresholds = router._get_thresholds()
@@ -272,8 +270,7 @@ class TestAutoSendRouterDynamicThresholds:
             "auto_send_threshold": 0.88,
             "queue_high_threshold": 0.65,
         }
-        mock_engine._review_history = [{}] * 60
-        mock_engine.min_samples_for_update = 50
+        mock_engine.has_sufficient_calibration_samples.return_value = True
 
         calibrated_router = AutoSendRouter(learning_engine=mock_engine)
         calibrated_action = await calibrated_router.route_response(

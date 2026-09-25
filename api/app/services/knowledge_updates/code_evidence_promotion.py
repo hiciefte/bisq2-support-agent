@@ -7,6 +7,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from app.core.config import Settings
+from app.services.knowledge.candidate_repository import (
+    KnowledgeCandidate,
+    KnowledgeCandidateRepository,
+)
 from app.services.knowledge_updates.llm_wiki_update_service import (
     KnowledgeUpdateProposal,
     KnowledgeUpdateService,
@@ -18,17 +22,13 @@ from app.services.rag.source_refs import (
     imprecise_code_source_refs,
     parse_code_source_ref,
 )
-from app.services.training.unified_repository import (
-    UnifiedFAQCandidate,
-    UnifiedFAQCandidateRepository,
-)
 
 
 @dataclass(frozen=True)
 class CodeEvidencePromotionResult:
     """Result of adding a code fact to the knowledge-update queue."""
 
-    candidate: UnifiedFAQCandidate
+    candidate: KnowledgeCandidate
     proposal: KnowledgeUpdateProposal
 
 
@@ -39,7 +39,7 @@ class CodeEvidencePromotionService:
         self,
         *,
         settings: Settings,
-        repository: UnifiedFAQCandidateRepository,
+        repository: KnowledgeCandidateRepository,
         knowledge_update_service: KnowledgeUpdateService | None = None,
     ) -> None:
         self.settings = settings

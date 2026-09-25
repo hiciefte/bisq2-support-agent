@@ -1,5 +1,5 @@
 """
-TDD Tests for UnifiedFAQCandidateRepository.
+TDD Tests for KnowledgeCandidateRepository.
 
 These tests follow the RED-GREEN-REFACTOR cycle from the plan:
 /Users/takahiro/.claude/plans/cheerful-discovering-blanket.md
@@ -15,24 +15,24 @@ import pytest
 
 # Import will fail until implementation exists - that's the RED phase
 try:
-    from app.services.training.unified_repository import (
+    from app.services.knowledge.candidate_repository import (
         CalibrationStatus,
-        UnifiedFAQCandidate,
-        UnifiedFAQCandidateRepository,
+        KnowledgeCandidate,
+        KnowledgeCandidateRepository,
     )
 
     IMPLEMENTATION_EXISTS = True
 except ImportError:
     IMPLEMENTATION_EXISTS = False
-    UnifiedFAQCandidateRepository = None
-    UnifiedFAQCandidate = None
+    KnowledgeCandidateRepository = None
+    KnowledgeCandidate = None
     CalibrationStatus = None
 
 
 # Skip all tests if implementation doesn't exist yet (RED phase)
 pytestmark = pytest.mark.skipif(
     not IMPLEMENTATION_EXISTS,
-    reason="UnifiedFAQCandidateRepository not yet implemented (RED phase)",
+    reason="KnowledgeCandidateRepository not yet implemented (RED phase)",
 )
 
 
@@ -53,7 +53,7 @@ class TestRepositoryInit:
     def test_creates_tables_on_init(self, temp_db_path):
         """Cycle 1.1.1: Test unified_faq_candidates and calibration_state tables are created."""
         # Arrange & Act - repo creation triggers table creation
-        _repo = UnifiedFAQCandidateRepository(str(temp_db_path))  # noqa: F841
+        _repo = KnowledgeCandidateRepository(str(temp_db_path))  # noqa: F841
 
         # Assert - Check tables exist
         conn = sqlite3.connect(str(temp_db_path))
@@ -77,7 +77,7 @@ class TestRepositoryInit:
 
     def test_source_must_be_known_ingest_source(self, temp_db_path):
         """Cycle 1.1.2: Test source column has CHECK constraint for valid values."""
-        _repo = UnifiedFAQCandidateRepository(str(temp_db_path))  # noqa: F841
+        _repo = KnowledgeCandidateRepository(str(temp_db_path))  # noqa: F841
 
         # Try to insert with invalid source - should fail
         conn = sqlite3.connect(str(temp_db_path))
@@ -96,7 +96,7 @@ class TestRepositoryInit:
 
     def test_creates_indexes(self, temp_db_path):
         """Test that required indexes are created for performance."""
-        _repo = UnifiedFAQCandidateRepository(str(temp_db_path))  # noqa: F841
+        _repo = KnowledgeCandidateRepository(str(temp_db_path))  # noqa: F841
 
         conn = sqlite3.connect(str(temp_db_path))
         cursor = conn.cursor()
@@ -165,7 +165,7 @@ class TestRepositoryInit:
         conn.commit()
         conn.close()
 
-        repo = UnifiedFAQCandidateRepository(str(temp_db_path))
+        repo = KnowledgeCandidateRepository(str(temp_db_path))
         candidate = repo.create(
             source="code_evidence",
             source_event_id="code:bisq2@abc123:Foo.java:1-2",
@@ -246,7 +246,7 @@ class TestRepositoryInit:
         conn.commit()
         conn.close()
 
-        repo = UnifiedFAQCandidateRepository(str(temp_db_path))
+        repo = KnowledgeCandidateRepository(str(temp_db_path))
         legacy = repo.get_by_event_id("$legacy-with-new-columns")
 
         assert legacy is not None
@@ -270,7 +270,7 @@ class TestCRUDOperations:
         """Create a repository with temporary database."""
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "test_unified.db"
-            yield UnifiedFAQCandidateRepository(str(db_path))
+            yield KnowledgeCandidateRepository(str(db_path))
 
     @pytest.fixture
     def sample_candidate_data(self):
@@ -393,7 +393,7 @@ class TestSourceFiltering:
         """Create repository with candidates from both sources."""
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "test_unified.db"
-            repo = UnifiedFAQCandidateRepository(str(db_path))
+            repo = KnowledgeCandidateRepository(str(db_path))
 
             # Create 2 bisq2 candidates
             for i in range(2):
@@ -483,7 +483,7 @@ class TestReviewActions:
         """Create repository with a single pending candidate."""
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "test_unified.db"
-            repo = UnifiedFAQCandidateRepository(str(db_path))
+            repo = KnowledgeCandidateRepository(str(db_path))
 
             candidate = repo.create(
                 source="bisq2",
@@ -568,7 +568,7 @@ class TestCalibrationLogic:
         """Create a fresh repository."""
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "test_unified.db"
-            yield UnifiedFAQCandidateRepository(str(db_path))
+            yield KnowledgeCandidateRepository(str(db_path))
 
     def test_is_calibration_mode_initially_true(self, repo):
         """Cycle 1.5.1: Test calibration mode is active on fresh repository."""
@@ -648,11 +648,11 @@ class TestOriginalStaffAnswer:
     @pytest.fixture
     def repo(self, temp_db_path):
         """Create a repository with temporary database."""
-        yield UnifiedFAQCandidateRepository(str(temp_db_path))
+        yield KnowledgeCandidateRepository(str(temp_db_path))
 
     def test_original_staff_answer_column_exists(self, temp_db_path):
         """Test original_staff_answer column is created."""
-        _repo = UnifiedFAQCandidateRepository(str(temp_db_path))  # noqa: F841
+        _repo = KnowledgeCandidateRepository(str(temp_db_path))  # noqa: F841
 
         conn = sqlite3.connect(str(temp_db_path))
         cursor = conn.cursor()
@@ -735,11 +735,11 @@ class TestGenerationConfidence:
     @pytest.fixture
     def repo(self, temp_db_path):
         """Create a repository with temporary database."""
-        yield UnifiedFAQCandidateRepository(str(temp_db_path))
+        yield KnowledgeCandidateRepository(str(temp_db_path))
 
     def test_generation_confidence_column_exists(self, temp_db_path):
         """Test generation_confidence column is created."""
-        _repo = UnifiedFAQCandidateRepository(str(temp_db_path))  # noqa: F841
+        _repo = KnowledgeCandidateRepository(str(temp_db_path))  # noqa: F841
 
         conn = sqlite3.connect(str(temp_db_path))
         cursor = conn.cursor()
@@ -806,7 +806,7 @@ class TestEdgeCases:
         """Create a fresh repository."""
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "test_unified.db"
-            yield UnifiedFAQCandidateRepository(str(db_path))
+            yield KnowledgeCandidateRepository(str(db_path))
 
     def test_duplicate_event_id_raises_error(self, repo):
         """Test that duplicate source_event_id raises an error."""
@@ -876,7 +876,7 @@ class TestConversationThreadTables:
     @pytest.fixture
     def repo(self, temp_db_path):
         """Create repository instance."""
-        return UnifiedFAQCandidateRepository(str(temp_db_path))
+        return KnowledgeCandidateRepository(str(temp_db_path))
 
     def test_thread_tables_exist(self, temp_db_path, repo):
         """Cycle 9.1: Verify conversation_threads and thread_messages tables exist."""
@@ -974,7 +974,7 @@ class TestThreadLookupByMessage:
     @pytest.fixture
     def repo(self, temp_db_path):
         """Create repository instance."""
-        return UnifiedFAQCandidateRepository(str(temp_db_path))
+        return KnowledgeCandidateRepository(str(temp_db_path))
 
     def test_find_thread_by_question_message(self, repo):
         """Cycle 10.1: Find thread by question message ID."""
@@ -1047,7 +1047,7 @@ class TestStateTransitionsWithAudit:
     @pytest.fixture
     def repo(self, temp_db_path):
         """Create repository instance."""
-        return UnifiedFAQCandidateRepository(str(temp_db_path))
+        return KnowledgeCandidateRepository(str(temp_db_path))
 
     def test_transition_thread_state(self, repo):
         """Cycle 11.1: Basic state transition updates thread state."""

@@ -4,7 +4,7 @@ import logging
 from unittest.mock import AsyncMock
 
 import pytest
-from app.services.training.comparison_engine import AnswerComparisonEngine
+from app.services.knowledge.comparison_engine import AnswerComparisonEngine
 
 
 @pytest.mark.asyncio
@@ -27,7 +27,7 @@ async def test_provider_failure_reasoning_is_generic(caplog):
 
     with caplog.at_level(
         logging.ERROR,
-        logger="app.services.training.comparison_engine",
+        logger="app.services.knowledge.comparison_engine",
     ):
         result = await engine.compare(
             question_event_id="event-1",

@@ -1,34 +1,13 @@
-"""Unified FAQ Extractor - Single LLM call for Q&A pair extraction.
+"""Extract reusable knowledge from support conversations in one bounded call.
 
-This module provides a simplified approach to FAQ extraction from support chat messages:
-- Single LLM call to extract all Q&A pairs from a batch of messages
-- LLM handles conversation grouping (topic-based, not time-based)
-- Correction detection (use final/corrected answer)
-- Privacy-preserving anonymization before LLM call
-
-Key differences from ConversationHandler:
-- ConversationHandler: Complex rule-based grouping with temporal proximity, cycle detection
-- UnifiedFAQExtractor: Simple single-pass LLM extraction (20x cost reduction)
-
-Performance improvements over multi-pass approach:
-- 98% reduction in API calls
-- 85% token reduction
-- 95% cost savings
-
-Usage:
-    import aisuite as ai
-    client = ai.Client()
-    extractor = UnifiedFAQExtractor(aisuite_client=client, settings=settings)
-    result = await extractor.extract_faqs(messages=messages, source="bisq2")
-    for faq in result.faqs:
-        print(f"Q: {faq.question_text}")
-        print(f"A: {faq.answer_text}")
-"""
+The model groups questions with staff evidence and detects corrections.
+Anonymization and source attribution checks bound what can become a candidate.
+Extraction output retains the historical FAQ JSON shape for compatibility."""
 
 import asyncio
 import json
 import logging
-import random
+import math
 import re
 import time
 from collections import Counter
@@ -53,6 +32,36 @@ except ModuleNotFoundError:  # pragma: no cover - exercised in minimal test envs
 
 logger = logging.getLogger(__name__)
 
+
+def is_matrix_text_message(message: Mapping[str, Any]) -> bool:
+    """Only readable conversational events can supply question/answer context."""
+    content = message.get("content")
+    return bool(
+        message.get("type") == "m.room.message"
+        and isinstance(content, Mapping)
+        and content.get("msgtype") in {"m.text", "m.notice", "m.emote"}
+        and isinstance(content.get("body"), str)
+        and content["body"].strip()
+    )
+
+
+def create_knowledge_extraction_client(settings: Settings) -> ai.Client:
+    """Keep OpenAI extraction attempts separate from shared answer clients.
+
+    OpenAI's SDK otherwise retries transport failures inside a single AISuite
+    call, defeating the durable receipt's once-only dispatch boundary.
+    """
+    config: Dict[str, Any] = {
+        "api_key": settings.OPENAI_API_KEY,
+        "max_retries": 0,
+        "timeout": 60.0,
+    }
+    base_url = getattr(settings, "OPENAI_BASE_URL", None)
+    if isinstance(base_url, str) and base_url.strip():
+        config["base_url"] = base_url.strip()
+    return ai.Client(provider_configs={"openai": config})
+
+
 # Default support staff identifiers
 DEFAULT_STAFF_IDENTIFIERS = [
     # Bisq 2 usernames
@@ -73,22 +82,26 @@ DEFAULT_STAFF_IDENTIFIERS = [
 
 
 # System prompt for FAQ Q&A pair extraction
-FAQ_EXTRACTION_SYSTEM_PROMPT = """You are an expert at extracting FAQ question-answer pairs from support chat conversations.
+FAQ_EXTRACTION_SYSTEM_PROMPT = """You extract reusable support knowledge from question-answer exchanges for an LLM Wiki review queue.
 
 You will receive:
 1. A transcript of support chat messages (anonymized: User_1, Staff_1, etc.)
 2. A list of staff identifier patterns
 
-Your task is to extract HIGH-QUALITY FAQ pairs where:
+Your task is to extract specific knowledge candidates where:
 - A user asks a support question
-- A staff member provides a helpful answer
+- A staff member provides an answer with reusable Bisq-specific information
+
+These are review candidates, not published FAQs or verified facts. Staff answers are
+fallible evidence: preserve qualifications, version scope, and uncertainty. Do not
+add claims or treat a confident tone as proof of correctness.
 
 ## EXTRACTION RULES
 
 ### What to extract:
 - Clear user questions with staff answers
 - Initial questions about Bisq Easy, trading, security, payments
-- Questions where staff provided accurate, helpful responses
+- Questions where staff provided specific support information worth reviewing
 - Questions about how features work, troubleshooting, or setup
 
 ### What NOT to extract:
@@ -273,7 +286,7 @@ Confidence scoring (considers both extraction quality AND transformation quality
 - 0.7-0.8: Acceptable Q&A, significant transformation applied, may need review
 - <0.7: Skip - answer too vague, context-dependent, or transformation would alter technical meaning
 
-Only include pairs with confidence >= 0.7 for FAQ training data quality.
+Only include pairs with extraction confidence >= 0.7. This confidence describes source extraction quality, not factual correctness or permission to publish.
 """
 
 # Pre-compiled patterns for detecting LLM-fabricated message IDs
@@ -351,12 +364,8 @@ def _resolve_exact_alias(
     return next(iter(values))
 
 
-def _resolve_valid_bisq_citation(
-    raw_message: Mapping[str, Any],
-    normalized_message: Mapping[str, Any],
-    messages_by_id: Mapping[str, Mapping[str, Any]],
-) -> str:
-    """Resolve a citation only through immutable same-batch provenance."""
+def bisq_citation_message_id(raw_message: Mapping[str, Any]) -> str:
+    """Find an exact referenced ID; author/channel provenance is checked later."""
     citation = raw_message.get("citation")
     nested = citation if isinstance(citation, Mapping) else {}
 
@@ -380,7 +389,20 @@ def _resolve_valid_bisq_citation(
     }
     if len(citation_message_ids) != 1:
         return ""
-    citation_message_id = next(iter(citation_message_ids))
+    return next(iter(citation_message_ids))
+
+
+def _resolve_valid_bisq_citation(
+    raw_message: Mapping[str, Any],
+    normalized_message: Mapping[str, Any],
+    messages_by_id: Mapping[str, Mapping[str, Any]],
+) -> str:
+    """Resolve a citation only through immutable same-batch provenance."""
+    citation_message_id = bisq_citation_message_id(raw_message)
+    if not citation_message_id:
+        return ""
+    citation = raw_message.get("citation")
+    nested = citation if isinstance(citation, Mapping) else {}
 
     nested_author_profile_id = _resolve_exact_alias(
         nested,
@@ -432,7 +454,7 @@ def _resolve_valid_bisq_citation(
 
 
 @dataclass
-class ExtractedFAQ:
+class ExtractedKnowledge:
     """A single extracted FAQ question-answer pair."""
 
     question_text: str
@@ -451,11 +473,11 @@ class ExtractedFAQ:
 
 
 @dataclass
-class FAQExtractionResult:
-    """Result of FAQ extraction from a batch of messages."""
+class KnowledgeExtractionResult:
+    """Result of knowledge extraction from a batch of messages."""
 
     source: str
-    faqs: List[ExtractedFAQ] = field(default_factory=list)
+    faqs: List[ExtractedKnowledge] = field(default_factory=list)
     total_messages: int = 0
     extracted_count: int = 0
     processing_time_ms: int = 0
@@ -473,7 +495,7 @@ class FAQExtractionResult:
     def to_pipeline_format(self) -> List[Dict[str, Any]]:
         """Convert extracted FAQs to pipeline-compatible format.
 
-        Returns format expected by UnifiedPipelineService.
+        Returns format expected by KnowledgePipelineService.
         Includes staff_sender lookup from original message data.
 
         Note: original_user_question and original_staff_answer use direct message
@@ -574,6 +596,7 @@ class FAQExtractionResult:
                     "question_text": faq.question_text,
                     "staff_answer": faq.answer_text,
                     "source_event_id": source_event_id,
+                    "answer_message_id": faq.answer_msg_id,
                     "source": self.source,
                     "confidence": faq.confidence,
                     "has_correction": faq.has_correction,
@@ -586,8 +609,8 @@ class FAQExtractionResult:
         return results
 
 
-class UnifiedFAQExtractor:
-    """Extracts FAQ Q&A pairs from support chat messages using single LLM call.
+class KnowledgeExtractor:
+    """Extracts question and staff-answer evidence from support chat messages using single LLM call.
 
     This class provides a simplified alternative to the complex ConversationHandler
     approach. Instead of rule-based conversation grouping, it sends all messages
@@ -599,17 +622,13 @@ class UnifiedFAQExtractor:
         staff_identifiers: List of staff usernames/IDs to identify staff messages
     """
 
-    # Retry configuration
-    MAX_RETRIES = 3
-    BASE_DELAY = 1.0  # seconds
-
     def __init__(
         self,
         aisuite_client: Optional[ai.Client],
         settings: Settings,
         staff_identifiers: Optional[List[str]] = None,
     ):
-        """Initialize the FAQ extractor.
+        """Initialize the knowledge extractor.
 
         Args:
             aisuite_client: Initialized AISuite client instance
@@ -625,6 +644,21 @@ class UnifiedFAQExtractor:
             for identifier in (staff_identifiers or [])
             if isinstance(identifier, str) and identifier
         )
+
+    def validate_provider(self) -> str:
+        """Fail locally before reservation when retry guarantees are unsupported."""
+        model = (
+            getattr(self.settings, "LLM_EXTRACTION_MODEL", "")
+            or self.settings.OPENAI_MODEL
+        )
+        if not isinstance(model, str) or (
+            ":" in model and model.split(":", 1)[0] != "openai"
+        ):
+            raise ValueError(
+                "Knowledge extraction requires a provider with verified no-retry transport; "
+                "currently only OpenAI is supported"
+            )
+        return model if ":" in model else f"openai:{model}"
 
     def _is_staff_author(self, author: str) -> bool:
         """Check if author matches any staff identifier.
@@ -669,21 +703,21 @@ class UnifiedFAQExtractor:
         self,
         messages: List[Dict[str, Any]],
         source: str,
-    ) -> FAQExtractionResult:
-        """Extract FAQ Q&A pairs from a batch of messages.
+    ) -> KnowledgeExtractionResult:
+        """Extract question and staff-answer evidence from a batch of messages.
 
         Args:
             messages: List of chat messages (Bisq 2 or Matrix format)
             source: Source identifier ("bisq2" or "matrix")
 
         Returns:
-            FAQExtractionResult containing extracted FAQs and metadata
+            KnowledgeExtractionResult containing extracted FAQs and metadata
         """
         start_time = time.time()
 
         # Handle empty input
         if not messages:
-            return FAQExtractionResult(
+            return KnowledgeExtractionResult(
                 source=source,
                 faqs=[],
                 total_messages=0,
@@ -704,7 +738,7 @@ class UnifiedFAQExtractor:
                     logger.warning(
                         "Skipping Bisq batch without one exact channel provenance"
                     )
-                    return FAQExtractionResult(
+                    return KnowledgeExtractionResult(
                         source=source,
                         faqs=[],
                         total_messages=len(messages),
@@ -736,7 +770,7 @@ class UnifiedFAQExtractor:
                     "staff" if not has_staff else "user",
                     len(normalized_messages),
                 )
-                return FAQExtractionResult(
+                return KnowledgeExtractionResult(
                     source=source,
                     faqs=[],
                     total_messages=len(messages),
@@ -763,10 +797,12 @@ class UnifiedFAQExtractor:
             )
             if source == "bisq2":
                 faqs = self._validate_bisq_faqs(faqs, normalized_messages)
+            elif source == "matrix":
+                faqs = self._validate_matrix_faqs(faqs, normalized_messages)
 
             processing_time_ms = int((time.time() - start_time) * 1000)
 
-            return FAQExtractionResult(
+            return KnowledgeExtractionResult(
                 source=source,
                 faqs=faqs,
                 total_messages=len(messages),
@@ -781,14 +817,16 @@ class UnifiedFAQExtractor:
             raise
         except Exception as e:
             if source == "bisq2":
-                logger.warning("Bisq FAQ extraction failed (%s)", type(e).__name__)
+                logger.warning(
+                    "Bisq knowledge extraction failed (%s)", type(e).__name__
+                )
                 error = type(e).__name__
             else:
-                logger.exception(f"FAQ extraction error: {e}")
-                error = str(e)
+                logger.warning("Knowledge extraction failed (%s)", type(e).__name__)
+                error = type(e).__name__
             processing_time_ms = int((time.time() - start_time) * 1000)
 
-            return FAQExtractionResult(
+            return KnowledgeExtractionResult(
                 source=source,
                 faqs=[],
                 total_messages=len(messages),
@@ -866,6 +904,8 @@ class UnifiedFAQExtractor:
                 normalized.append(normalized_message)
                 bisq_inputs.append((msg, normalized_message))
             elif source == "matrix":
+                if not is_matrix_text_message(msg):
+                    continue
                 content = msg.get("content", {})
                 body = content.get("body", "") if isinstance(content, dict) else ""
 
@@ -902,11 +942,40 @@ class UnifiedFAQExtractor:
 
         return normalized
 
+    def _validate_matrix_faqs(
+        self,
+        faqs: Sequence[ExtractedKnowledge],
+        messages: Sequence[Mapping[str, Any]],
+    ) -> List[ExtractedKnowledge]:
+        """Bind extracted claims to unique user and trusted staff source events."""
+        id_counts = Counter(msg.get("id", "") for msg in messages if msg.get("id"))
+        by_id = {
+            msg["id"]: msg
+            for msg in messages
+            if msg.get("id") and id_counts[msg["id"]] == 1
+        }
+        validated = []
+        for faq in faqs:
+            question = by_id.get(faq.question_msg_id)
+            answer = by_id.get(faq.answer_msg_id)
+            if (
+                question is None
+                or answer is None
+                or question.get("is_staff") is not False
+                or answer.get("is_staff") is not True
+            ):
+                logger.warning(
+                    "Rejected Matrix knowledge candidate with untrusted source provenance"
+                )
+                continue
+            validated.append(faq)
+        return validated
+
     def _validate_bisq_faqs(
         self,
-        faqs: Sequence[ExtractedFAQ],
+        faqs: Sequence[ExtractedKnowledge],
         messages: Sequence[Mapping[str, Any]],
-    ) -> List[ExtractedFAQ]:
+    ) -> List[ExtractedKnowledge]:
         """Reject LLM-selected pairs that do not preserve trusted provenance."""
         id_counts = Counter(msg.get("id", "") for msg in messages if msg.get("id"))
         messages_by_id = {
@@ -914,7 +983,7 @@ class UnifiedFAQExtractor:
             for msg in messages
             if msg.get("id") and id_counts[msg["id"]] == 1
         }
-        validated: List[ExtractedFAQ] = []
+        validated: List[ExtractedKnowledge] = []
         for faq in faqs:
             question = messages_by_id.get(faq.question_msg_id)
             answer = messages_by_id.get(faq.answer_msg_id)
@@ -1045,7 +1114,7 @@ class UnifiedFAQExtractor:
         *,
         redact_errors: bool = False,
     ) -> Dict[str, Any]:
-        """Call LLM via AISuite to extract Q&A pairs with retry/backoff.
+        """Make one extraction attempt; failures require reconciliation.
 
         Args:
             messages_text: Anonymized message transcript
@@ -1059,10 +1128,9 @@ class UnifiedFAQExtractor:
             or getattr(self.aisuite_client, "is_fallback", False)
             or not hasattr(self.aisuite_client, "chat")
         ):
-            logger.error("AISuite client not initialized")
-            return {"faq_pairs": []}
+            raise RuntimeError("Knowledge extraction client is not initialized")
 
-        user_prompt = f"""Extract FAQ question-answer pairs from this support chat transcript.
+        user_prompt = f"""Extract reusable support knowledge candidates from this support chat transcript.
 
 Staff identifiers in this transcript: Staff_1, Staff_2, etc. (already anonymized)
 User identifiers: User_1, User_2, etc.
@@ -1074,12 +1142,7 @@ TRANSCRIPT:
 
 Return a JSON object with the extracted FAQ pairs. Only include high-quality Q&A pairs (confidence >= 0.7)."""
 
-        model_id = (
-            getattr(self.settings, "LLM_EXTRACTION_MODEL", "")
-            or self.settings.OPENAI_MODEL
-        )
-        if ":" not in model_id:
-            model_id = f"openai:{model_id}"
+        model_id = self.validate_provider()
 
         temperature = getattr(
             self.settings, "LLM_EXTRACTION_TEMPERATURE", self.settings.LLM_TEMPERATURE
@@ -1095,98 +1158,91 @@ Return a JSON object with the extracted FAQ pairs. Only include high-quality Q&A
         if model_id.startswith("openai:"):
             extra_kwargs["response_format"] = _FAQ_EXTRACTION_JSON_SCHEMA
 
-        for attempt in range(self.MAX_RETRIES):
-            try:
-                loop = asyncio.get_running_loop()
-                response = await loop.run_in_executor(
-                    None,
-                    lambda: self.aisuite_client.chat.completions.create(
-                        model=model_id,
-                        messages=[
-                            {"role": "system", "content": FAQ_EXTRACTION_SYSTEM_PROMPT},
-                            {"role": "user", "content": user_prompt},
-                        ],
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        **extra_kwargs,
-                    ),
+        # The caller records an attempt before dispatch. A timeout or malformed
+        # response may still represent a billed call; never retry it here.
+        loop = asyncio.get_running_loop()
+        response = await loop.run_in_executor(
+            None,
+            lambda: self.aisuite_client.chat.completions.create(
+                model=model_id,
+                messages=[
+                    {"role": "system", "content": FAQ_EXTRACTION_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+                **extra_kwargs,
+            ),
+        )
+        if not getattr(response, "choices", None):
+            raise ValueError("Knowledge extraction returned no choices")
+        content = response.choices[0].message.content
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("Knowledge extraction returned no content")
+        content = content.strip()
+        if content.startswith("```"):
+            content = content.replace("```json", "").replace("```", "").strip()
+        parsed = json.loads(content)
+        if not isinstance(parsed, dict) or not isinstance(
+            parsed.get("faq_pairs"), list
+        ):
+            raise ValueError("Knowledge extraction returned an invalid result shape")
+        for pair in parsed["faq_pairs"]:
+            if not isinstance(pair, dict):
+                raise ValueError("Knowledge extraction returned an invalid candidate")
+            for key in (
+                "question_text",
+                "answer_text",
+                "question_msg_id",
+                "answer_msg_id",
+            ):
+                if not isinstance(pair.get(key), str) or not pair[key].strip():
+                    raise ValueError(
+                        "Knowledge extraction candidate is missing required text"
+                    )
+            confidence = pair.get("confidence")
+            if (
+                isinstance(confidence, bool)
+                or not isinstance(confidence, (int, float))
+                or not math.isfinite(confidence)
+                or not 0 <= confidence <= 1
+            ):
+                raise ValueError(
+                    "Knowledge extraction candidate has invalid confidence"
                 )
-
-                # Validate response has choices
-                if not getattr(response, "choices", None):
-                    logger.error("LLM returned no choices in response")
-                    raise ValueError("Empty response from LLM")
-
-                content = response.choices[0].message.content
-                if not content:
-                    return {"faq_pairs": []}
-
-                # Clean up response (remove markdown code blocks if present)
-                content = content.strip()
-                if content.startswith("```"):
-                    content = content.replace("```json", "").replace("```", "").strip()
-
-                try:
-                    return json.loads(content)
-                except json.JSONDecodeError:
-                    logger.warning("Failed to parse LLM response as JSON")
-                    return {"faq_pairs": []}
-
-            except Exception as e:
-                is_rate_limit = "rate limit" in str(e).lower()
-                error_level = logging.WARNING if is_rate_limit else logging.ERROR
-                if redact_errors:
-                    logger.log(
-                        error_level,
-                        "LLM API call attempt %s failed (%s)",
-                        attempt + 1,
-                        type(e).__name__,
+            if "has_correction" in pair and not isinstance(
+                pair["has_correction"], bool
+            ):
+                raise ValueError(
+                    "Knowledge extraction candidate has invalid correction flag"
+                )
+            for key in ("category", "original_question_text", "original_answer_text"):
+                if key in pair and not isinstance(pair[key], str):
+                    raise ValueError(
+                        "Knowledge extraction candidate has invalid optional text"
                     )
-                else:
-                    logger.log(
-                        error_level,
-                        "Error during LLM API call on attempt %s: %s",
-                        attempt + 1,
-                        e,
-                    )
-
-                if attempt < self.MAX_RETRIES - 1:
-                    # Exponential backoff with jitter
-                    jitter = random.uniform(0, 0.1 * (2**attempt))
-                    delay = self.BASE_DELAY * (2**attempt) + jitter
-                    # Use longer delays for rate limits
-                    if is_rate_limit:
-                        delay = max(delay, 5.0 * (attempt + 1))
-                    logger.info(f"Retrying in {delay:.2f} seconds...")
-                    await asyncio.sleep(delay)
-                else:
-                    if redact_errors:
-                        logger.warning("Max retries reached for LLM API call")
-                    else:
-                        logger.exception("Max retries reached for LLM API call")
-
-        return {"faq_pairs": []}
+        return parsed
 
     def _parse_llm_response(
         self,
         response: Dict[str, Any],
         *,
         redact_errors: bool = False,
-    ) -> List[ExtractedFAQ]:
-        """Parse LLM response into ExtractedFAQ objects.
+    ) -> List[ExtractedKnowledge]:
+        """Parse LLM response into ExtractedKnowledge objects.
 
         Args:
             response: Parsed JSON response from LLM
 
         Returns:
-            List of ExtractedFAQ objects
+            List of ExtractedKnowledge objects
         """
         faqs = []
         faq_pairs = response.get("faq_pairs", [])
 
         for pair in faq_pairs:
             try:
-                faq = ExtractedFAQ(
+                faq = ExtractedKnowledge(
                     question_text=pair.get("question_text", ""),
                     answer_text=pair.get("answer_text", ""),
                     question_msg_id=pair.get("question_msg_id", ""),
@@ -1240,3 +1296,9 @@ Return a JSON object with the extracted FAQ pairs. Only include high-quality Q&A
                 continue
 
         return faqs
+
+
+# Compatibility for existing operational imports; implementations live above.
+UnifiedFAQExtractor = KnowledgeExtractor
+ExtractedFAQ = ExtractedKnowledge
+FAQExtractionResult = KnowledgeExtractionResult
