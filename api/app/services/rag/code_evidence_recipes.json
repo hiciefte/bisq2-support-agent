@@ -1,0 +1,189 @@
+[
+  {
+    "repo": "bisq2",
+    "path": "bisq-easy/src/main/java/bisq/bisq_easy/BisqEasyTradeAmountLimits.java",
+    "symbol": "BisqEasyTradeAmountLimits.getReputationBasedQuoteSideAmount",
+    "claim": "The reputation-based quote-side amount calculation depends on both a USD/Bitcoin market-price quote and a quote for the selected market, returning an optional result.",
+    "support_use": "For an unavailable amount or trade-price calculation, staff should distinguish missing/stale market-price data from insufficient reputation. Source code alone does not prove an outage.",
+    "protocol": "bisq_easy",
+    "risk_level": "medium",
+    "name": "market-price-dependency",
+    "excerpt": "    public static Optional<Monetary> getReputationBasedQuoteSideAmount(MarketPriceService marketPriceService,\n                                                                       Market market,\n                                                                       long myReputationScore) {\n        Fiat maxUsdTradeAmount = getMaxUsdTradeAmount(myReputationScore);\n        return marketPriceService.findMarketPriceQuote(MarketRepository.getUSDBitcoinMarket())\n                .map(priceQuote -> priceQuote.toBaseSideMonetary(maxUsdTradeAmount))\n                .flatMap(defaultMaxBtcTradeAmount -> marketPriceService.findMarketPriceQuote(market)\n                        .map(priceQuote -> priceQuote.toQuoteSideMonetary(defaultMaxBtcTradeAmount)));"
+  },
+  {
+    "repo": "bisq2",
+    "path": "bisq-easy/src/main/java/bisq/bisq_easy/BisqEasyTradeAmountLimits.java",
+    "symbol": "BisqEasyTradeAmountLimits.getMaxUsdTradeAmount",
+    "claim": "The reputation-based maximum trade amount takes the smaller of the configured maximum USD amount and the amount allowed by the reputation score.",
+    "support_use": "For a trade amount limit or sell offer rejection, compare the seller profile reputation, requested amount, currency and source release before diagnosing.",
+    "protocol": "bisq_easy",
+    "risk_level": "medium",
+    "name": "trade-amount-cap",
+    "excerpt": "    // TODO add BSQ/USD price into calculation to take into account the value of the investment (at burn time)\n    public static Fiat getMaxUsdTradeAmount(long totalScore) {\n        // A reputation score of 30k gives a max trade amount of 150 USD\n        // Upper limit is 600 USD\n        Monetary maxAmountAllowedByReputation = getUsdAmountFromReputationScore(totalScore);\n        long value = Math.min(MAX_USD_TRADE_AMOUNT.getValue(), maxAmountAllowedByReputation.getValue());\n        return Fiat.fromValue(value, \"USD\");"
+  },
+  {
+    "repo": "bisq2",
+    "path": "bisq-easy/src/main/java/bisq/bisq_easy/BisqEasyTradeAmountLimits.java",
+    "symbol": "BisqEasyTradeAmountLimits.isAllowedToCreateSellOffer",
+    "claim": "The Bisq Easy sell-offer permission check obtains the selected user profile reputation score and compares it with the minimum sell-offer score constant.",
+    "support_use": "For cannot create sell offer or missing reputation, verify which profile is active and its displayed score; do not assume all imported reputation belongs to the selected profile.",
+    "protocol": "bisq_easy",
+    "risk_level": "medium",
+    "name": "sell-offer-score",
+    "excerpt": "    public static boolean isAllowedToCreateSellOffer(ReputationService reputationService,\n                                                     UserProfile userProfile) {\n        long reputationScore = reputationService.getReputationScore(userProfile).getTotalScore();\n        return reputationScore >= MIN_REPUTATION_SCORE_TO_CREATE_SELL_OFFER;"
+  },
+  {
+    "repo": "bisq2",
+    "path": "docs/specifications/reputation/account-age.md",
+    "symbol": "specification:Authorization protocol",
+    "claim": "The release account-age specification requires a target Bisq 2 profile, a Bisq 1 ownership proof and authenticated profile binding; bridge errors, missing witnesses and unsupported requests must fail closed for new issuance.",
+    "support_use": "For imported account age missing on a new profile, investigate selected profile, import authorization result and bridge availability. This is a release specification, not proof that version-2 issuance is activated on the live network; confirm rollout state before prescribing proof regeneration.",
+    "protocol": "bisq_easy",
+    "risk_level": "medium",
+    "name": "account-age-profile-binding",
+    "excerpt": "Only account-age authorization protocol version `2` may create reputation. A version-2 request\ncontains:\n\n- the target Bisq 2 profile id;\n- the 20-byte Bisq 1 account-age witness hash;\n- the exact salted account-input bytes used by Bisq 1;\n- the encoded Bisq 1 owner DSA public key; and\n- the owner's domain-separated signature over the complete proof.\n\nNetwork-message validation applies structural and resource bounds only. The Bisq 1 bridge performs\nthe ownership decision: it recomputes the witness hash from the salted account input and owner key,\nverifies the signature, resolves the witness, derives the nullifier and returns only the fixed\none-day UTC bucket containing the authoritative date. The oracle must not accept a requester-supplied\ndate, nullifier or bucket.\n\nThe request is an authenticated confidential message. Before calling the bridge, the oracle must\nrequire:\n\n```text\nprofileId == hex(HASH160(confidentialSenderPublicKey))\n```\n\nThis transport binding proves control of the target Bisq 2 profile. It is independent of, and\nrequired in addition to, the Bisq 1 witness ownership proof.\n\nAny unsupported or legacy request is rejected before publication. A bridge error, missing witness,\ninvalid proof, sender mismatch, request timeout or persistence failure must fail closed for new\nissuance. Interactive bridge calls have a bounded deadline so an unavailable local bridge cannot\nconsume every oracle request worker indefinitely."
+  },
+  {
+    "repo": "bisq2",
+    "path": "docs/specifications/reputation/signed-witness.md",
+    "symbol": "specification:Authorization protocol",
+    "claim": "The release signed-witness specification requires ownership verification and a qualifying Bisq 1 signed-witness trust chain; an incomplete or untrusted chain must not supply a reputation date.",
+    "support_use": "For missing signed-account reputation after import, distinguish ownership/authorization and trust-chain validation from age alone. Confirm the client version and live rollout state before recommending new proofs; no guaranteed activation or completion time follows from this code.",
+    "protocol": "bisq_easy",
+    "risk_level": "medium",
+    "name": "signed-witness-verification",
+    "excerpt": "\n## Authorization protocol\n\nOnly signed-witness authorization protocol version `2` may create reputation. It contains the\ntarget profile id, witness hash, salted account-input bytes, owner DSA public key and a signature over\nthe domain-separated Bisq 1 ownership proof. Requester-supplied account-age and sign dates are not\npart of version `2` and are not authoritative.\n\nThe Bisq 1 bridge must first verify the account-age hash preimage and owner signature. It must then\nfind at least one signed-witness leaf whose `witnessOwnerPubKey` equals the independently proven owner\nkey and which individually satisfies the complete Bisq 1 trust-chain rules. This includes the\ndeployed witness signature, signer-age, trusted-root, cycle, depth and ban checks. The bridge returns\nthe earliest stored date among qualifying leaves only. A signature-valid leaf from an incomplete or\nuntrusted chain must not supply a reputation date."
+  },
+  {
+    "repo": "bisq2",
+    "path": "network/tor/tor/src/main/java/bisq/network/tor/controller/BootstrapService.java",
+    "symbol": "BootstrapService.bootstrap",
+    "claim": "Tor startup waits for a bootstrap latch with a configured timeout and raises TorBootstrapFailedException when that wait expires or is interrupted.",
+    "support_use": "For Tor bootstrap stuck or connection timeout, ask for the exact error, timestamp and bootstrap progress. This timeout alone does not distinguish local connectivity from a network incident.",
+    "protocol": "all",
+    "risk_level": "medium",
+    "name": "tor-bootstrap-timeout",
+    "excerpt": "    public CompletableFuture<Void> bootstrap() {\n        future = Optional.of(CompletableFuture.runAsync(() -> {\n                    torControlProtocol.addBootstrapEventListener(this);\n\n                    torControlProtocol.takeOwnership();\n                    torControlProtocol.resetConf(EmbeddedTorProcess.ARG_OWNER_PID);\n                    torControlProtocol.setConfig(DISABLE_NETWORK, \"0\");\n\n                    try {\n                        boolean isSuccess = countDownLatch.await(timeout, TimeUnit.MILLISECONDS);\n                        if (!isSuccess) {\n                            throw new TorBootstrapFailedException(\"Could not bootstrap Tor in \" + timeout / 1000 + \" seconds\");\n                        }\n                    } catch (InterruptedException e) {\n                        log.warn(\"Thread got interrupted at bootstrap method\", e);\n                        Thread.currentThread().interrupt(); // Restore interrupted state\n                        throw new TorBootstrapFailedException(e);"
+  },
+  {
+    "repo": "bisq2",
+    "path": "support/src/main/java/bisq/support/mediation/bisq_easy/BisqEasyMediationRequestService.java",
+    "symbol": "BisqEasyMediationRequestService.requestMediation",
+    "claim": "A Bisq Easy mediation request contains the affected trade id, contract, the two trader profiles and that trade channel chat messages, and is sent confidentially to the selected mediator.",
+    "support_use": "For a paid trade, unresponsive peer or mediation request, preserve the existing trade conversation and use its mediation context. Do not ask for payment proofs in a public room or claim a case was opened.",
+    "protocol": "bisq_easy",
+    "risk_level": "medium",
+    "name": "mediation-trade-history",
+    "excerpt": "    public void requestMediation(BisqEasyOpenTradeChannel channel,\n                                 BisqEasyContract contract) {\n        checkArgument(channel.getBisqEasyOffer().equals(contract.getOffer()));\n        UserIdentity myUserIdentity = channel.getMyUserIdentity();\n        checkArgument(!bannedUserService.isUserProfileBanned(myUserIdentity.getUserProfile()));\n\n        UserProfile peer = channel.getPeer();\n        UserProfile mediator = channel.getMediator().orElseThrow();\n        NetworkId mediatorNetworkId = mediator.getNetworkId();\n        BisqEasyMediationRequest bisqEasyMediationRequest = new BisqEasyMediationRequest(channel.getTradeId(),\n                contract,\n                myUserIdentity.getUserProfile(),\n                peer,\n                new ArrayList<>(channel.getChatMessages()),\n                mediatorNetworkId);\n        networkService.confidentialSend(bisqEasyMediationRequest,\n                mediatorNetworkId,\n                myUserIdentity.getNetworkIdWithKeyPair());"
+  },
+  {
+    "repo": "bisq2",
+    "path": "support/src/main/java/bisq/support/mediation/bisq_easy/BisqEasyMediationRequestService.java",
+    "symbol": "BisqEasyMediationRequestService.selectMediator",
+    "claim": "Mediator selection filters the authorized bonded-role set to mediator roles and excludes the two traders themselves.",
+    "support_use": "For uncertainty about mediator identity or an unsolicited contact, staff should verify the existing trade mediator and authorized role rather than trust an external direct message.",
+    "protocol": "bisq_easy",
+    "risk_level": "medium",
+    "name": "authorized-mediator-selection",
+    "excerpt": "    public Optional<UserProfile> selectMediator(String makersUserProfileId,\n                                                String takersUserProfileId,\n                                                String offerId) {\n        Set<AuthorizedBondedRole> mediators = authorizedBondedRolesService.getAuthorizedBondedRoleStream()\n                .filter(role -> role.getBondedRoleType() == BondedRoleType.MEDIATOR)\n                .filter(role -> !role.getProfileId().equals(makersUserProfileId) &&\n                        !role.getProfileId().equals(takersUserProfileId))\n                .collect(Collectors.toSet());\n        return selectMediator(mediators, makersUserProfileId, takersUserProfileId, offerId);"
+  },
+  {
+    "repo": "bisq2",
+    "path": "support/src/main/java/bisq/support/mediation/bisq_easy/BisqEasyMediationRequestService.java",
+    "symbol": "BisqEasyMediationRequestService.processMediationResponse",
+    "claim": "A mediation response received before its trade channel is available is kept pending and reprocessed after a trade channel is added.",
+    "support_use": "For a mediation response that has not appeared after being offline, inspect trade-channel availability and synchronization before treating it as a missing mediator or requesting duplicate cases.",
+    "protocol": "bisq_easy",
+    "risk_level": "medium",
+    "name": "pending-mediation-response",
+    "excerpt": "                        () -> {\n                            // This handles an edge case that the BisqEasyMediatorsResponse arrives before the take offer request was\n                            // processed (in case we are the maker and have been offline at take offer).\n                            log.warn(\"We received a BisqEasyMediatorsResponse but did not find a matching bisqEasyOpenTradeChannel for trade ID {}.\\n\" +\n                                            \"We add it to the pendingBisqEasyMediatorsResponseMessages set and reprocess it once a new trade channel has been added.\",\n                                    bisqEasyMediatorsResponse.getTradeId());\n                            pendingBisqEasyMediatorsResponseMessages.add(bisqEasyMediatorsResponse);\n                            if (channeldPin == null) {\n                                channeldPin = bisqEasyOpenTradeChannelService.getChannels().addObserver(new CollectionObserver<>() {\n                                    @Override\n                                    public void onAdded(BisqEasyOpenTradeChannel element) {\n                                        // Delay and ignore too frequent updates\n                                        if (throttleUpdatesScheduler == null) {\n                                            throttleUpdatesScheduler = Scheduler.run(() -> {\n                                                        maybeProcessPendingMediatorsResponseMessages();\n                                                        throttleUpdatesScheduler = null;\n                                                    })"
+  },
+  {
+    "repo": "bisq2",
+    "path": "trade/src/main/java/bisq/trade/bisq_easy/protocol/BisqEasyTradeState.java",
+    "symbol": "BisqEasyTradeState",
+    "claim": "Bisq Easy represents buyer fiat-sent confirmation, seller fiat receipt, BTC-sent confirmation and BTC-confirmed as separate trade states.",
+    "support_use": "For a paid or stuck trade, ask which payment or confirmation step each peer currently sees. A sent confirmation alone does not establish receipt; do not prescribe another payment or release.",
+    "protocol": "bisq_easy",
+    "risk_level": "medium",
+    "name": "payment-states",
+    "excerpt": "    // Fiat payment\n    BUYER_SENT_FIAT_SENT_CONFIRMATION,\n    SELLER_RECEIVED_FIAT_SENT_CONFIRMATION,\n    SELLER_CONFIRMED_FIAT_RECEIPT,\n    BUYER_RECEIVED_SELLERS_FIAT_RECEIPT_CONFIRMATION,\n\n    // BTC transfer\n    SELLER_SENT_BTC_SENT_CONFIRMATION,\n    BUYER_RECEIVED_BTC_SENT_CONFIRMATION,\n    BTC_CONFIRMED(true),"
+  },
+  {
+    "repo": "bisq2",
+    "path": "trade/src/main/java/bisq/trade/bisq_easy/protocol/messages/BisqEasyTakeOfferRequestHandler.java",
+    "symbol": "BisqEasyTakeOfferRequestHandler",
+    "claim": "When an incoming take-offer request has no matching open offer, Bisq Easy checks existing trades for that offer; it reports NO_MATCHING_OFFER_FOUND only when that check also fails.",
+    "support_use": "For an offer-not-found error, distinguish a stale offer view from an existing trade and collect the exact error and current state. Do not infer that a payment or active trade disappeared.",
+    "protocol": "bisq_easy",
+    "risk_level": "medium",
+    "name": "offer-not-found",
+    "excerpt": "        if (matchingOfferInChannel.isEmpty()) {\n            // If we do not find the offer it might be that another user has taken the offer recently and the offer has\n            // been removed in the meantime. For this case we check if we find the offer in another open trade. If not\n            // found we throw an exception.\n            // We also check if there is not a trade already present with the same trade ID to avoid that we would\n            // create a duplicated trade. We check for both the version 0 and version 1 trade ID to cover all edge cases.\n            BisqEasyTradeService bisqEasyTradeService = serviceProvider.getBisqEasyTradeService();\n            boolean hasOfferInTrades = bisqEasyTradeService.getTrades().stream().anyMatch(trade ->\n                    trade.getOffer().getId().equals(takersOffer.getId()));\n            boolean closeMyOfferWhenTaken = serviceProvider.getSettingsService().getCloseMyOfferWhenTaken().get();\n            if (hasOfferInTrades) {\n                log.info(\"The offer has not been found in open offers, but we found another trade with the same offer.\\n\" +\n                                \"We accept the take offer request as it might be from processing mailbox messages \" +\n                                \"where multiple takers took the same offer.\\n\" +\n                                \"closeMyOfferWhenTaken={}; takersOffer={}\",\n                        closeMyOfferWhenTaken, takersOffer);\n            } else {\n                String errorMessage = String.format(\"Could not find matching offer in BisqEasyOfferbookChannel and no \" +\n                        \"trade with that offer was found.\\n\" +\n                        \"closeMyOfferWhenTaken=%s; takersOffer=%s\", closeMyOfferWhenTaken, takersOffer);\n                log.error(errorMessage);\n                throw new TradeProtocolException(errorMessage, TradeProtocolFailure.NO_MATCHING_OFFER_FOUND);"
+  },
+  {
+    "repo": "bisq2",
+    "path": "trade/src/main/java/bisq/trade/bisq_easy/protocol/messages/BisqEasyTakeOfferRequestHandler.java",
+    "symbol": "BisqEasyTakeOfferRequestHandler",
+    "claim": "The take-offer handler compares its selected mediator with the mediator in the taker contract and raises MEDIATORS_NOT_MATCHING if they differ.",
+    "support_use": "For a mediator mismatch error while taking an offer, compare exact client versions, selected trade context and authorized-role synchronization. This evidence does not establish malicious behavior.",
+    "protocol": "bisq_easy",
+    "risk_level": "medium",
+    "name": "mediator-mismatch",
+    "excerpt": "        Optional<UserProfile> mediator = serviceProvider.getSupportService().getBisqEasyMediationRequestService()\n                .selectMediator(takersOffer.getMakersUserProfileId(),\n                        trade.getTaker().getNetworkId().getId(),\n                        trade.getOffer().getId());\n        if (!mediator.map(UserProfile::getNetworkId).equals(takersContract.getMediator().map(UserProfile::getNetworkId))) {\n            String errorMessage = String.format(\"Mediators do not match.\\n\" +\n                    \"Maker's mediator: %s\\n\" +\n                    \"Taker's mediator: %s\", mediator, takersContract.getMediator());\n            throw new TradeProtocolException(errorMessage, TradeProtocolFailure.MEDIATORS_NOT_MATCHING);"
+  },
+  {
+    "name": "trade-phases",
+    "repo": "bisq",
+    "path": "core/src/main/java/bisq/core/trade/model/bisq_v1/Trade.java",
+    "symbol": "Trade.Phase",
+    "protocol": "multisig_v1",
+    "risk_level": "medium",
+    "claim": "Bisq 1 tracks taker-fee publication, deposit publication, deposit confirmation, fiat sent, fiat received, payout publication and withdrawal as distinct trade phases.",
+    "support_use": "For a stuck trade, establish the phase and exact error on each client. A displayed payment-sent step does not itself prove receipt or payout completion.",
+    "excerpt": "public enum Phase implements TradePhase {\n        INIT,\n        TAKER_FEE_PUBLISHED,\n        DEPOSIT_PUBLISHED,\n        DEPOSIT_CONFIRMED,\n        FIAT_SENT,\n        FIAT_RECEIVED,\n        PAYOUT_PUBLISHED,\n        WITHDRAWN;"
+  },
+  {
+    "name": "deposit-confirmation-state",
+    "repo": "bisq",
+    "path": "core/src/main/java/bisq/core/trade/model/bisq_v1/Trade.java",
+    "symbol": "Trade.isDepositConfirmed",
+    "protocol": "multisig_v1",
+    "risk_level": "medium",
+    "claim": "The Bisq 1 isDepositConfirmed predicate checks whether the stored trade phase is at least DEPOSIT_CONFIRMED; this predicate does not itself query the Bitcoin network.",
+    "support_use": "Distinguish the client trade state from independently observed transaction confirmations when investigating a deposit stuck in the application. Do not infer the cause from this predicate.",
+    "excerpt": "public boolean isDepositConfirmed() {\n        return getTradePhase().ordinal() >= Phase.DEPOSIT_CONFIRMED.ordinal();\n    }"
+  },
+  {
+    "name": "offer-reservation-state",
+    "repo": "bisq",
+    "path": "core/src/main/java/bisq/core/offer/OpenOffer.java",
+    "symbol": "OpenOffer.State",
+    "protocol": "multisig_v1",
+    "risk_level": "medium",
+    "claim": "Bisq 1 represents available, reserved, closed, canceled and deactivated offers as distinct states.",
+    "support_use": "For an offer missing or unavailable during take-offer handling, establish the open-offer state and whether a trade already exists; offer availability alone does not establish a failed trade or refund.",
+    "excerpt": "public enum State {\n        AVAILABLE,\n        RESERVED,\n        CLOSED,\n        CANCELED,\n        DEACTIVATED\n    }"
+  },
+  {
+    "name": "wallet-spv-replay",
+    "repo": "bisq",
+    "path": "core/src/main/java/bisq/core/btc/setup/WalletConfig.java",
+    "symbol": "WalletConfig.startUp",
+    "protocol": "multisig_v1",
+    "risk_level": "high",
+    "claim": "Bisq 1 startup requests wallet replay when an existing BTC wallet has no SPV chain file, or when restoring from a seed.",
+    "support_use": "Use this to distinguish wallet-chain replay from trade-protocol state. It does not show that replay repairs a missing payout address or authorize deleting files, restoring a seed, or repeating recovery steps.",
+    "excerpt": "File chainFile = new File(directory, filePrefix + \".spvchain\");\n            boolean chainFileExists = chainFile.exists();\n            String btcPrefix = \"_BTC\";\n            vBtcWalletFile = new File(directory, filePrefix + btcPrefix + \".wallet\");\n            boolean shouldReplayWallet = (vBtcWalletFile.exists() && !chainFileExists) || restoreFromSeed != null;\n            vBtcWallet = createOrLoadWallet(shouldReplayWallet, vBtcWalletFile, false);"
+  },
+  {
+    "name": "mediation-acceptance-payout",
+    "repo": "bisq",
+    "path": "core/src/main/java/bisq/core/support/dispute/mediation/MediationManager.java",
+    "symbol": "MediationManager.onAcceptMediationResult",
+    "protocol": "multisig_v1",
+    "risk_level": "high",
+    "claim": "After marking a mediation result accepted, Bisq 1 chooses signing versus payout finalization according to whether the peer payout signature exists. In these callbacks it closes the disputed trade only when a payout transaction is present.",
+    "support_use": "For an accepted mediation result with a stuck payout, distinguish acceptance, peer signature availability and payout creation. Acceptance alone is not proof of completed payout; inspect the exact error before recommending recovery.",
+    "excerpt": "trade.setMediationResultState(MediationResultState.MEDIATION_RESULT_ACCEPTED);\n        tradeManager.requestPersistence();\n\n        // If we have not got yet the peers signature we sign and send to the peer our signature.\n        // Otherwise we sign and complete with the peers signature the payout tx.\n        if (processModel.getTradePeer().getMediatedPayoutTxSignature() == null) {\n            tradeProtocol.onAcceptMediationResult(() -> {\n                if (trade.getPayoutTx() != null) {\n                    tradeManager.closeDisputedTrade(tradeId, Trade.DisputeState.MEDIATION_CLOSED);\n                }\n                resultHandler.handleResult();\n            }, errorMessageHandler);\n        } else {\n            tradeProtocol.onFinalizeMediationResultPayout(() -> {\n                if (trade.getPayoutTx() != null) {\n                    tradeManager.closeDisputedTrade(tradeId, Trade.DisputeState.MEDIATION_CLOSED);\n                }\n                resultHandler.handleResult();\n            }, errorMessageHandler);\n        }\n    }"
+  }
+]

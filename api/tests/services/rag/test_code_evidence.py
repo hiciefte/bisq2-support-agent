@@ -347,3 +347,96 @@ def test_version_aware_grounding_uses_real_file_and_never_promotes(
     assert unknown["customer_safe_draft"] is None
     assert unknown["evidence"][0]["audience"] == "staff_only"
     assert source.read_bytes() == original
+
+
+def test_exact_exception_and_product_filter_survive_incident_context(tmp_path):
+    source = tmp_path / "code_evidence.jsonl"
+    rows = [
+        _valid_record(
+            id="bisq1-error",
+            repo="bisq",
+            protocol="multisig_v1",
+            symbol="SignMediatedPayoutTx.checkMediatedPayoutAddresses",
+            match_terms=["sellerPayoutAddressString must not be null"],
+            claim="Mediated payout validates the seller address before signing.",
+        ),
+        _valid_record(
+            id="bisq2-tor",
+            protocol="all",
+            symbol="BootstrapService.bootstrap",
+            claim="The Tor bootstrap timeout follows multiple connection attempts.",
+        ),
+    ]
+    _write_jsonl(source, rows)
+    retriever = StaffCodeEvidenceRetriever(CodeEvidenceLoader(source))
+    query = "Bisq 1: SignMediatedPayoutTx failed: sellerPayoutAddressString must not be null. I already updated multiple times and resynced SPV."
+    docs = retriever.retrieve(query, protocol="multisig_v1")
+    assert [doc.id for doc in docs] == ["bisq1-error"]
+    assert docs[0].score == 1.0
+    assert retriever.retrieve("Tor bootstrap timeout", product="bisq1") == []
+    assert [
+        doc.id for doc in retriever.retrieve("Tor bootstrap timeout", product="bisq2")
+    ] == ["bisq2-tor"]
+
+
+def test_no_substring_or_conversational_filler_code_match(tmp_path):
+    source = tmp_path / "code_evidence.jsonl"
+    _write_jsonl(
+        source,
+        [
+            _valid_record(
+                symbol="BootstrapService.bootstrap",
+                protocol="all",
+                claim="The bootstrap timeout has a configured wait.",
+            )
+        ],
+    )
+    retriever = StaffCodeEvidenceRetriever(CodeEvidenceLoader(source))
+    assert (
+        retriever.retrieve(
+            "I already updated bisq multiple times in the meantime and also resynced spv 5 times"
+        )
+        == []
+    )
+    assert retriever.retrieve("bootstrapped") == []
+
+
+def test_unknown_version_uses_single_latest_snapshot_but_old_user_version_remains(
+    tmp_path,
+):
+    source = tmp_path / "code_evidence.jsonl"
+    _write_jsonl(
+        source,
+        [
+            _valid_record(
+                id=version,
+                commit="a" * 40,
+                release_tag="v" + version,
+                freshness_class="release_bound",
+                source_sha256="b" * 64,
+                applies_to_versions=[version],
+            )
+            for version in ["2.1.9", "2.1.10"]
+        ],
+    )
+    retriever = StaffCodeEvidenceRetriever(CodeEvidenceLoader(source))
+    assert [
+        d.id for d in retriever.retrieve("reputation trade amount", product="bisq2")
+    ] == ["2.1.10"]
+    assert [
+        d.id
+        for d in retriever.retrieve(
+            "reputation trade amount", product="bisq2", user_version="2.1.9"
+        )
+    ] == ["2.1.9"]
+    assert (
+        retriever.retrieve(
+            "reputation trade amount", product="bisq2", user_version="2.1.8"
+        )
+        == []
+    )
+
+
+def test_explicit_bisq1_version_wording():
+    assert explicit_user_version("Bisq 1 version 1.10.8") == "1.10.8"
+    assert explicit_user_version("Bisq 1 v1.10.8") == "1.10.8"

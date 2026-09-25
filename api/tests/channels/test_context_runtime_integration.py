@@ -807,7 +807,7 @@ async def test_nearest_staff_event_defers_generation_in_reverse_context(runtime_
 
 
 @pytest.mark.asyncio
-async def test_recent_prompt_history_is_chronological(runtime_case):
+async def test_unassociated_room_history_is_not_incident_evidence(runtime_case):
     bundle = runtime_case
     before = [
         NS(sender="@user:example.org", body=f"Earlier message {i}", source={})
@@ -821,10 +821,7 @@ async def test_recent_prompt_history_is_chronological(runtime_case):
     bundle.client.room_context.return_value = response
     messages, reason = await bundle.engine._read_source(bundle.incoming)
     assert reason is None
-    assert [message.content for message in messages] == [
-        *(f"Earlier message {i}" for i in reversed(range(10))),
-        "Later message",
-    ]
+    assert messages == []
 
 
 @pytest.mark.asyncio

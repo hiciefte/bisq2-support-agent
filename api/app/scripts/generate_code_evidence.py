@@ -11,6 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from app.services.rag.code_evidence import CodeEvidenceLoader  # noqa: E402
 from app.services.rag.code_evidence_extractor import (  # noqa: E402
     CodeEvidenceExtractor,
     CodeEvidenceFreshnessChecker,
@@ -29,10 +30,34 @@ def main(argv: list[str] | None = None) -> int:
         release_tag=args.release_tag,
     )
     records = extractor.extract()
+    if args.require_symbol:
+        records = [record for record in records if record.symbol in args.require_symbol]
+        missing = set(args.require_symbol) - {record.symbol for record in records}
+        if missing:
+            raise ValueError(
+                "Required source coverage unavailable: " + ", ".join(sorted(missing))
+            )
     report = CodeEvidenceFreshnessChecker(args.repo_path).check(records)
     if report.stale:
         raise ValueError("Source changed during extraction; evidence was not written")
-    write_code_evidence_jsonl(records, args.output)
+    if args.merge_existing:
+        if not args.release_tag:
+            raise ValueError("Merging evidence requires an exact release tag")
+        # Preserve all prior releases and other repositories. A same-tag commit
+        # change is rejected rather than silently replacing the release identity.
+        previous = CodeEvidenceLoader(args.merge_existing).load()
+        if any(
+            record.repo == args.repo
+            and record.release_tag == args.release_tag
+            and record.commit != commit
+            for record in previous
+        ):
+            raise ValueError("Existing release tag is bound to a different commit")
+        merged = {record.id: record for record in previous}
+        merged.update({record.id: record for record in records})
+        write_code_evidence_jsonl(merged.values(), args.output)
+    else:
+        write_code_evidence_jsonl(records, args.output)
 
     summary = {
         "repo": args.repo,
@@ -66,6 +91,17 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--freshness-class",
         default="main_branch",
         choices=["main_branch", "release_bound", "generated"],
+    )
+    parser.add_argument(
+        "--require-symbol",
+        action="append",
+        default=[],
+        help="Retain these exact symbols only; fail if any is absent. Repeatable coverage gate.",
+    )
+    parser.add_argument(
+        "--merge-existing",
+        type=Path,
+        help="Merge the verified slice with this existing corpus, preserving other releases.",
     )
     parser.add_argument(
         "--output",

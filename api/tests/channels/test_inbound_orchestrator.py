@@ -11,6 +11,46 @@ from app.channels.models import ChannelType, IncomingMessage, UserContext
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_staff_context_prefiltered_fragment_reaches_incident_intake():
+    from app.channels.models import ClassificationDecision
+
+    context = SimpleNamespace(process=AsyncMock(return_value=False))
+    runtime = SimpleNamespace(
+        resolve_optional=lambda key: (
+            context if key == "matrix_context_runtime" else None
+        )
+    )
+    channel = SimpleNamespace(runtime=runtime, handle_incoming=AsyncMock())
+    dispatcher = SimpleNamespace(dispatch=AsyncMock())
+    policy = SimpleNamespace(
+        get_policy=lambda _: SimpleNamespace(response_kind="public_context")
+    )
+    event = IncomingMessage(
+        message_id="$count",
+        channel=ChannelType.MATRIX,
+        question="2 times",
+        user=UserContext(user_id="@user:example.org"),
+        channel_metadata={
+            "room_id": "!source:example.org",
+            "reply_to_event_id": "$root",
+        },
+        classification=ClassificationDecision(should_process=False),
+    )
+    orchestrator = InboundMessageOrchestrator(
+        channel=channel,
+        channel_id="matrix",
+        dispatcher=dispatcher,
+        autoresponse_policy_service=policy,
+        coordination_store=InMemoryCoordinationStore(),
+    )
+    assert not await orchestrator.process_incoming(event)
+    context.process.assert_awaited_once_with(event, channel)
+    channel.handle_incoming.assert_not_awaited()
+    dispatcher.dispatch.assert_not_awaited()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_orchestrator_processes_when_generation_policy_is_disabled_elsewhere():
     policy_service = MagicMock()
     policy_service.get_policy.return_value = SimpleNamespace(

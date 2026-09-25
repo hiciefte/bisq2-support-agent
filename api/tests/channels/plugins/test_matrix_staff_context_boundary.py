@@ -61,6 +61,108 @@ def setup_boundary(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("relation_type", [None, "m.thread", "m.replace"])
+async def test_context_intake_normalizes_replies_and_edits(tmp_path, relation_type):
+    service, runtime, client, channel = setup_boundary(tmp_path)
+    handler = MatrixMessageHandler(
+        client=client,
+        connection_manager=SimpleNamespace(),
+        channel=channel,
+        autoresponse_policy_service=service,
+        allowed_room_ids=[SOURCE],
+    )
+    handler._record_trust_event = AsyncMock()
+    handler._is_staff_sender = MagicMock(return_value=False)
+    handler._is_self_sender = MagicMock(return_value=False)
+    process = AsyncMock()
+    handler._get_orchestrator = MagicMock(
+        return_value=SimpleNamespace(process_incoming=process)
+    )
+    relation = {"m.in_reply_to": {"event_id": "$parent"}}
+    if relation_type:
+        relation.update(rel_type=relation_type, event_id="$parent")
+    event = SimpleNamespace(
+        event_id="$new",
+        sender="@participant:example.invalid",
+        body="> <@someone:example.invalid> Ask the arbitrator?\n\nThanks",
+        source={
+            "content": {
+                "m.relates_to": relation,
+                "m.new_content": {"body": "Corrected question"},
+            }
+        },
+    )
+    await handler._on_message(SimpleNamespace(room_id=SOURCE), event)
+    handler._record_trust_event.assert_awaited_once()
+    process.assert_awaited_once()
+    normalized = process.await_args.args[0]
+    assert normalized.question == (
+        "Corrected question" if relation_type == "m.replace" else "Thanks"
+    )
+    if relation_type == "m.replace":
+        assert normalized.channel_metadata["replaces_event_id"] == "$parent"
+    else:
+        assert normalized.channel_metadata["reply_to_event_id"] == "$parent"
+
+
+@pytest.mark.asyncio
+async def test_staff_edit_still_records_staff_activity(tmp_path):
+    service, _, client, channel = setup_boundary(tmp_path)
+    handler = MatrixMessageHandler(
+        client=client,
+        connection_manager=SimpleNamespace(),
+        channel=channel,
+        autoresponse_policy_service=service,
+    )
+    handler._is_self_sender = MagicMock(return_value=False)
+    handler._is_staff_sender = MagicMock(return_value=True)
+    handler._record_trust_event = AsyncMock()
+    handler._record_staff_activity = AsyncMock()
+    handler._maybe_handle_staff_command = AsyncMock()
+    handler._get_orchestrator = MagicMock()
+    event = SimpleNamespace(
+        event_id="$edit",
+        sender="@staff:example.invalid",
+        body="* Corrected staff answer",
+        source={"content": {"m.relates_to": {"rel_type": "m.replace"}}},
+    )
+    await handler._on_message(SimpleNamespace(room_id=SOURCE), event)
+    handler._record_staff_activity.assert_awaited_once()
+    handler._record_trust_event.assert_awaited_once()
+    handler._get_orchestrator.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("is_staff", [False, True])
+async def test_quote_only_reply_preserves_activity_without_admission(
+    tmp_path, is_staff
+):
+    service, _, client, channel = setup_boundary(tmp_path)
+    handler = MatrixMessageHandler(
+        client=client,
+        connection_manager=SimpleNamespace(),
+        channel=channel,
+        autoresponse_policy_service=service,
+    )
+    handler._is_self_sender = MagicMock(return_value=False)
+    handler._is_staff_sender = MagicMock(return_value=is_staff)
+    handler._record_trust_event = AsyncMock()
+    handler._record_staff_activity = AsyncMock()
+    handler._maybe_handle_staff_command = AsyncMock()
+    handler._get_orchestrator = MagicMock()
+    event = SimpleNamespace(
+        event_id="$quote",
+        sender="@participant:example.invalid",
+        body="> <@other:example.invalid> Only quoted text\n\n",
+        source={"content": {"m.relates_to": {"m.in_reply_to": {"event_id": "$old"}}}},
+    )
+    await handler._on_message(SimpleNamespace(room_id=SOURCE), event)
+    handler._record_trust_event.assert_awaited_once()
+    assert handler._record_staff_activity.await_count == int(is_staff)
+    handler._get_orchestrator.assert_not_called()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("target", [SOURCE, DM, STAFF])
 async def test_staff_policy_blocks_all_generic_writes_even_if_legacy_scope_allows(
     tmp_path, target
@@ -209,7 +311,9 @@ async def test_context_source_is_read_only_and_requires_generation(
         user=UserContext(user_id="test"),
         channel_metadata={"room_id": room},
     )
-    handler._resolve_event = AsyncMock(return_value=object())
+    handler._resolve_event = AsyncMock(
+        return_value=SimpleNamespace(body=incoming.question, source={})
+    )
     handler._to_incoming_message = MagicMock(return_value=incoming)
     handler._is_self_sender = MagicMock(return_value=False)
     handler._is_staff_sender = MagicMock(return_value=False)

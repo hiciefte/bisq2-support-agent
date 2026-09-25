@@ -8,6 +8,9 @@ from typing import Any
 from app.services.rag.code_evidence import (
     CODE_EVIDENCE_TYPE,
     STAFF_ONLY_AUDIENCE,
+    canonical_code_repo,
+    code_repo_for_context,
+    explicit_product,
     explicit_user_version,
 )
 from app.services.rag.interfaces import RetrievedDocument
@@ -31,14 +34,21 @@ class GroundingBriefService:
         knowledge_sources: list[dict[str, Any]],
         draft_answer: str | None = None,
         user_version: str | None = None,
+        product: str | None = None,
     ) -> dict[str, Any] | None:
         query = str(question or "").strip()
         if not query:
             return None
 
-        protocol = self._infer_protocol(knowledge_sources)
+        product = product or explicit_product(query)
+        protocol = {"bisq1": "multisig_v1", "bisq2": "all"}.get(
+            product
+        ) or self._infer_protocol(knowledge_sources)
+        repo = code_repo_for_context(product, protocol)
         user_version = user_version or explicit_user_version(query)
         version_kwargs = {"user_version": user_version} if user_version else {}
+        if product:
+            version_kwargs["product"] = product
         try:
             docs = self.code_retriever.retrieve(
                 query,
@@ -54,6 +64,7 @@ class GroundingBriefService:
             self._format_code_fact(doc)
             for doc in docs
             if self._is_staff_code_fact(doc, expected_protocol=protocol)
+            and (repo is None or canonical_code_repo(doc.metadata.get("repo")) == repo)
             and (
                 user_version is None
                 or (
@@ -63,7 +74,16 @@ class GroundingBriefService:
                 )
             )
         ]
-        if not evidence:
+        release_notes = []
+        read_notes = getattr(self.code_retriever, "retrieve_release_notes", None)
+        if callable(read_notes):
+            try:
+                release_notes = read_notes(
+                    query, product=product, protocol=protocol, user_version=user_version
+                )
+            except Exception:
+                logger.exception("Release snapshot unavailable")
+        if not evidence and not release_notes:
             return None
 
         safe_customer_guidance = [
@@ -86,8 +106,10 @@ class GroundingBriefService:
 
         return {
             "summary": "Staff-only grounding for this support request.",
-            "likely_protocol": protocol or self._infer_protocol_from_evidence(evidence),
+            "likely_protocol": (protocol if protocol != "all" else None)
+            or self._infer_protocol_from_evidence(evidence),
             "evidence": evidence,
+            "release_notes": release_notes,
             "safe_customer_guidance": safe_customer_guidance,
             "customer_safe_draft": None,
             "uncertainties": uncertainties,
@@ -116,7 +138,8 @@ class GroundingBriefService:
             metadata.get("type") == CODE_EVIDENCE_TYPE
             and metadata.get("audience") == STAFF_ONLY_AUDIENCE
             and (
-                expected_protocol is None or doc_protocol in {expected_protocol, "all"}
+                expected_protocol in (None, "all")
+                or doc_protocol in {expected_protocol, "all"}
             )
         )
 
@@ -145,6 +168,7 @@ class GroundingBriefService:
             "applies_to_versions": metadata.get("applies_to_versions") or [],
             "release_tag": metadata.get("release_tag"),
             "source_sha256": metadata.get("source_sha256"),
+            "match_terms": metadata.get("match_terms") or [],
             "score": round(float(doc.score or 0.0), 4),
         }
 

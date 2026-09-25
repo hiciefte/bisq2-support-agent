@@ -1,0 +1,119 @@
+name: Prepare upstream release evidence
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 */6 * * *"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: upstream-release-evidence
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      PYTHONPATH: api
+    steps:
+      - name: Check out reviewed extraction code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11.11"
+
+      - name: Discover stable official releases
+        id: discovery
+        run: |
+          python -B - <<'PY'
+          import hashlib, json, os, re, subprocess
+          from pathlib import Path
+          from app.scripts.refresh_release_evidence import fetch_releases
+          cache = Path("release-discovery")
+          cache.mkdir()
+          fingerprint = hashlib.sha256()
+          tag_commits = {}
+          for repo in ("bisq", "bisq2"):
+              rows = fetch_releases(repo)
+              (cache / f"{repo}.json").write_text(json.dumps(rows))
+              stable = [{key: row[key] for key in ("tag_name", "body", "published_at", "html_url")} for row in rows]
+              for row in stable:
+                  tag = row["tag_name"]
+                  refs = subprocess.check_output([
+                      "git", "ls-remote", f"https://github.com/bisq-network/{repo}.git",
+                      f"refs/tags/{tag}", f"refs/tags/{tag}^{{}}",
+                  ], text=True, timeout=60)
+                  hashes = {ref: sha for sha, ref in (line.split() for line in refs.splitlines())}
+                  commit = hashes.get(f"refs/tags/{tag}^{{}}") or hashes.get(f"refs/tags/{tag}")
+                  if not commit or not re.fullmatch(r"[0-9a-f]{40}", commit):
+                      raise ValueError("Official release tag is unavailable or invalid")
+                  row["tag_commit"] = commit
+                  tag_commits[f"{repo}:{tag}"] = commit
+              fingerprint.update(json.dumps([repo, stable], sort_keys=True).encode())
+          (cache / "tag-commits.json").write_text(json.dumps(tag_commits, sort_keys=True))
+          for name in (
+              "api/app/scripts/refresh_release_evidence.py",
+              "api/app/services/rag/code_evidence.py",
+              "api/app/services/rag/code_evidence_extractor.py",
+              "api/app/services/rag/code_evidence_recipes.json",
+              "api/app/services/rag/release_notes.py",
+              "api/app/services/rag/interfaces.py",
+              "api/app/services/rag/source_refs.py",
+          ):
+              fingerprint.update(name.encode())
+              fingerprint.update(Path(name).read_bytes())
+          with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
+              stream.write(f"key={fingerprint.hexdigest()}\n")
+          PY
+
+      - name: Skip an already prepared snapshot
+        id: previous
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVIDENCE_KEY: ${{ steps.discovery.outputs.key }}
+        run: |
+          existing=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=release-evidence-$EVIDENCE_KEY&per_page=1" --jq '[.artifacts[] | select(.expired == false)] | length')
+          if [ "$existing" -gt 0 ]; then
+            echo "prepared=true" >> "$GITHUB_OUTPUT"
+            echo "The same verified tag commits, release notes and extraction rules already have a prepared artifact." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "prepared=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Prepare exact release code and notes
+        if: steps.previous.outputs.prepared != 'true'
+        run: |
+          git clone --filter=blob:none --depth=1 https://github.com/bisq-network/bisq.git "$RUNNER_TEMP/bisq-source"
+          git clone --filter=blob:none --depth=1 https://github.com/bisq-network/bisq2.git "$RUNNER_TEMP/bisq2-source"
+          python -B -m app.scripts.refresh_release_evidence \
+            --bisq-checkout "$RUNNER_TEMP/bisq-source" \
+            --bisq2-checkout "$RUNNER_TEMP/bisq2-source" \
+            --discovery-cache release-discovery \
+            --output prepared-release-evidence
+          python -B - <<'PY'
+          import json
+          from pathlib import Path
+          expected = json.loads(Path("release-discovery/tag-commits.json").read_text())
+          coverage = json.loads(Path("prepared-release-evidence/coverage.json").read_text())["coverage"]
+          actual = {f"{row['repo']}:{row['tag']}": row["commit"] for row in coverage}
+          if actual != expected:
+              raise ValueError("Official tag changed between discovery and preparation; do not publish this candidate")
+          PY
+          echo "Prepared a candidate snapshot. Review coverage.json and changed claims before installation. This job does not access production, call a model, or change live knowledge." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Retain snapshot for review and installation
+        if: steps.previous.outputs.prepared != 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-evidence-${{ steps.discovery.outputs.key }}
+          path: prepared-release-evidence/
+          if-no-files-found: error
+          retention-days: 90

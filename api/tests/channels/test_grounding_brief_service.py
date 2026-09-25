@@ -7,7 +7,9 @@ class FakeRetriever:
         self.docs = docs
         self.calls = []
 
-    def retrieve(self, query: str, *, protocol=None, k: int = 3):
+    def retrieve(
+        self, query: str, *, protocol=None, k: int = 3, product=None, user_version=None
+    ):
         self.calls.append({"query": query, "protocol": protocol, "k": k})
         return self.docs[:k]
 
@@ -141,3 +143,32 @@ def test_grounding_brief_rejects_wrong_protocol_evidence_from_retriever() -> Non
     )
 
     assert brief is None
+
+
+def test_explicit_product_overrides_wrong_retrieved_protocol():
+    retriever = FakeRetriever([_code_doc(repo="bisq2", protocol="all")])
+    brief = GroundingBriefService(code_retriever=retriever).build(
+        question="Bisq 1 SignMediatedPayoutTx error",
+        knowledge_sources=[{"protocol": "bisq_easy"}],
+    )
+    assert brief is None
+    assert retriever.calls[0]["protocol"] == "multisig_v1"
+
+
+def test_version_unknown_remains_explicit_with_release_fact():
+    retriever = FakeRetriever(
+        [
+            _code_doc(
+                repo="bisq",
+                protocol="multisig_v1",
+                freshness_class="release_bound",
+                applies_to_versions=["1.10.8"],
+            )
+        ]
+    )
+    brief = GroundingBriefService(code_retriever=retriever).build(
+        question="Bisq 1 mediation error", knowledge_sources=[]
+    )
+    assert brief is not None
+    assert any("unconfirmed" in value for value in brief["uncertainties"])
+    assert "1.10.8" in brief["staff_enriched_answer"]

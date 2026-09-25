@@ -87,7 +87,7 @@ class PublicEvidence(_StrictModel):
     content: str = Field(min_length=1, max_length=16000)
     url: str
     audience: Literal["public"] = "public"
-    kind: Literal["wiki", "faq", "monitoring"] = "wiki"
+    kind: Literal["wiki", "faq", "monitoring", "support_guide", "release_note"] = "wiki"
     source_refs: list[str] = Field(default_factory=list, max_length=30)
     provenance: dict[str, Any] = Field(default_factory=dict)
 
@@ -99,6 +99,7 @@ class PublicEvidence(_StrictModel):
 
         parsed = urlparse(value)
         faq_origin = urlparse(BISQ2_FAQ_ONION_BASE_URL)
+        guide_url = _is_support_guide_url(value)
         faq_url = (
             parsed.scheme == faq_origin.scheme
             and parsed.netloc == faq_origin.netloc
@@ -122,8 +123,13 @@ class PublicEvidence(_StrictModel):
             and not any(part in {".", ".."} for part in decoded_path.split("/"))
         )
         if (
-            (not faq_url and parsed.scheme != "https")
-            or (not faq_url and parsed.hostname not in allowed and not github)
+            (not faq_url and not guide_url and parsed.scheme != "https")
+            or (
+                not faq_url
+                and not guide_url
+                and parsed.hostname not in allowed
+                and not github
+            )
             or parsed.username
             or parsed.password
             or parsed.port not in (None, 443)
@@ -131,6 +137,70 @@ class PublicEvidence(_StrictModel):
         ):
             raise ValueError("Evidence requires a public Bisq source URL")
         return value
+
+    @model_validator(mode="after")
+    def guide_type_matches_url(self) -> "PublicEvidence":
+        if (self.kind == "support_guide") != _is_support_guide_url(self.url):
+            raise ValueError(
+                "Support guide evidence requires its exact public section URL"
+            )
+        if self.kind == "release_note":
+            parsed = urlparse(self.url)
+            if (
+                parsed.hostname != "github.com"
+                or not re.fullmatch(
+                    r"/bisq-network/(bisq|bisq2)/releases/tag/[A-Za-z0-9._-]+",
+                    parsed.path,
+                )
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise ValueError(
+                    "Release notes require an official product release URL"
+                )
+        return self
+
+
+def _is_support_guide_url(value: str) -> bool:
+    from app.channels.plugins.support_markdown import BISQ2_FAQ_ONION_BASE_URL
+    from app.services.public_knowledge_service import PAGE_ID_PATTERN, PUBLIC_SECTIONS
+
+    parsed, origin = urlparse(value), urlparse(BISQ2_FAQ_ONION_BASE_URL)
+    return bool(
+        parsed.scheme == origin.scheme
+        and parsed.netloc == origin.netloc
+        and re.fullmatch(r"/knowledge/" + PAGE_ID_PATTERN, parsed.path)
+        and parsed.fragment in {anchor for anchor, _ in PUBLIC_SECTIONS}
+        and not parsed.query
+    )
+
+
+def _code_inspection_links(refs: list[str]) -> list[str]:
+    from app.services.rag.source_refs import parse_code_source_ref
+
+    links = []
+    for ref in refs:
+        parsed = parse_code_source_ref(ref)
+        if (
+            parsed is None
+            or parsed.repo not in {"bisq", "bisq2"}
+            or not re.fullmatch(r"[a-fA-F0-9]{40}", parsed.commit)
+            or parsed.path.startswith("/")
+            or "\\" in parsed.path
+            or any(part in {"", ".", ".."} for part in parsed.path.split("/"))
+        ):
+            continue
+        url = (
+            f"https://github.com/bisq-network/{parsed.repo}/blob/{parsed.commit}/"
+            + quote(parsed.path, safe="/")
+            + f"#L{parsed.line_start}-L{parsed.line_end}"
+        )
+        link = f"[Source lines]({url})"
+        if link not in links:
+            links.append(link)
+        if len(links) == 2:
+            break
+    return links
 
 
 class StaffEvidence(_StrictModel):
@@ -336,13 +406,35 @@ class PublicContextService:
                         + quote(source.url, safe=":/?#[]@!$&'()*+,;=%")
                         + ")"
                     )
+                    if source.kind == "support_guide":
+                        citation = "Reviewed support guide: " + citation
+                    elif source.kind == "release_note":
+                        citation = "Release notes: " + citation
                 else:
                     labels = {
-                        "llm_wiki": "Internal LLM wiki",
+                        "llm_wiki": "Internal support guide",
                         "code_fact": "Staff code evidence",
                         "live_tool": "Live tool observation",
                     }
                     citation = f"{labels[source.kind]}: {title}"
+                    if source.kind == "llm_wiki" and request.audience == "staff_only":
+                        from app.services.public_knowledge_service import (
+                            support_guide_url,
+                        )
+
+                        page_id = source.provenance.get("page_id")
+                        try:
+                            internal_url = (
+                                support_guide_url(page_id, internal=True)
+                                if isinstance(page_id, str)
+                                else None
+                            )
+                        except ValueError:
+                            internal_url = None
+                        if internal_url:
+                            citation = (
+                                f"Internal support guide: [{title}]({internal_url})"
+                            )
                     status = source.provenance.get("status")
                     if source.kind == "llm_wiki" and status in {"reviewed", "active"}:
                         citation += f" ({status})"
@@ -358,6 +450,10 @@ class PublicContextService:
                             )
                         else:
                             citation += " (source release unconfirmed)"
+                        if request.audience == "staff_only":
+                            code_links = _code_inspection_links(source.source_refs)
+                            if code_links:
+                                citation += " · " + " · ".join(code_links)
                 if citation not in links:
                     links.append(citation)
             # Only deterministic citations are Markdown; model prose stays literal.

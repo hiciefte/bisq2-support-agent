@@ -1,6 +1,6 @@
 """Durable, staff-only Matrix context reviews.
 
-The source room is read-only. Every eligible question is persisted before model
+The source room is read-only. Each eligible incident is persisted before model
 work, and every send is reserved before transport. An interrupted or uncertain
 attempt remains visible in Admin; it is never automatically replayed.
 """
@@ -13,10 +13,11 @@ import json
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any
 from urllib.parse import quote
 
 import aiosqlite
+from app.channels.plugins.matrix.context_text import context_relationships, context_text
 from app.channels.policy import (
     get_first_response_delay_seconds,
     get_staff_active_cooldown_seconds,
@@ -24,6 +25,11 @@ from app.channels.policy import (
 )
 from app.channels.security import PIIDetector
 from app.channels.staff import resolve_channel_staff_resolver
+from app.channels.staff_assist.context_incidents import (
+    ContextIncidentStore,
+    context_only,
+    incident_texts,
+)
 from app.channels.staff_assist.context_trial import (
     ContextTrial,
     ContextTrialStore,
@@ -182,6 +188,7 @@ class MatrixContextRuntime:
             "staff_context_destination_invalid",
             "staff_context_content_invalid",
             "staff_context_thread_invalid",
+            "staff_context_case_changed",
             "matrix_client_unavailable",
         }
     )
@@ -192,6 +199,8 @@ class MatrixContextRuntime:
 
         self._network_status_service = BisqNetworkStatusService()
         self._tasks: set[asyncio.Task] = set()
+        self._intake_lock = asyncio.Lock()
+        self._active_cases: set[int] = set()
         self._closed = False
         self._trial = ContextTrial.from_settings(runtime.settings)
         self._expiry_task: asyncio.Task | None = None
@@ -239,12 +248,16 @@ class MatrixContextRuntime:
 
     async def check_trial_delivery(self, transaction_id: str) -> str | None:
         """Called again inside the publisher lifecycle lock before transport."""
-        if self._trial is None:
-            return None
         match = re.fullmatch(r"context-(\d+)-(?:root|note)", transaction_id)
         if match is None:
             return "context_trial_case_not_reserved"
-        return await self._trial_reason(int(match.group(1)))
+        case_id = int(match.group(1))
+        reason = await self._trial_reason(case_id)
+        if reason:
+            return reason
+        if self._closed or not await self._case_is_open(case_id):
+            return "staff_context_case_changed"
+        return None
 
     async def drain(self) -> None:
         """Wait for in-flight work (used by deterministic integration tests)."""
@@ -264,6 +277,12 @@ class MatrixContextRuntime:
         await asyncio.gather(*tasks, return_exceptions=True)
 
     async def process(self, incoming: Any, channel: Any) -> bool:
+        # The coordinator's room/user accumulation is durable here in the Admin
+        # case. Serializing only intake prevents two callbacks creating roots.
+        async with self._intake_lock:
+            return await self._process_incident(incoming, channel)
+
+    async def _process_incident(self, incoming: Any, channel: Any) -> bool:
         if self._closed:
             return False
         policy_service = self.runtime.resolve_optional(
@@ -283,6 +302,27 @@ class MatrixContextRuntime:
             logger.error("Matrix context requires durable Admin escalations")
             return False
         question = sanitize_question(incoming.question)
+        incidents = ContextIncidentStore(service.repository.db_path)
+        case_id, duplicate = await incidents.find(
+            incoming, self._trial.trial_id if self._trial else None
+        )
+        if case_id is not None:
+            if not duplicate:
+                await incidents.append(
+                    case_id,
+                    incoming,
+                    question,
+                    worker_active=case_id in self._active_cases,
+                )
+            return False
+        # Detached edits, counts, offers and acknowledgments are not incidents.
+        # Non-question inputs still reach this path so they can enrich a known
+        # incident even when the shared prefilter would discard them.
+        if incoming.channel_metadata.get("replaces_event_id") or context_only(question):
+            return False
+        classification = getattr(incoming, "classification", None)
+        if classification is not None and not classification.should_process:
+            return False
         case = await service.create_escalation(
             EscalationCreate(
                 message_id="matrix-context:" + _digest([room_id, incoming.message_id]),
@@ -304,6 +344,8 @@ class MatrixContextRuntime:
                     "context_reason": "context_preparing",
                     "model_called": False,
                     "model_call_status": "not_started",
+                    "incident_messages": [incidents.message(incoming, question)],
+                    "incident_frozen": False,
                     **(
                         {"context_trial_id": self._trial.trial_id}
                         if self._trial
@@ -332,7 +374,9 @@ class MatrixContextRuntime:
             self._run_case(incoming, channel, case.id, store, question, policy_service)
         )
         self._tasks.add(task)
+        self._active_cases.add(case.id)
         task.add_done_callback(self._tasks.discard)
+        task.add_done_callback(lambda _: self._active_cases.discard(case.id))
         # Persisted work is queued, not a delivered customer response.
         return False
 
@@ -352,6 +396,41 @@ class MatrixContextRuntime:
             if not is_staff_context_enabled(policy_service, "matrix"):
                 await store.update(case_id, status="deferred", reason="policy_changed")
                 return
+            question, messages, overflow = await ContextIncidentStore(
+                store.db_path
+            ).freeze(case_id)
+            if overflow:
+                await store.update(
+                    case_id,
+                    status="needs_human",
+                    reason="incident_context_capacity_reached",
+                )
+                return
+            if not question:
+                await store.update(
+                    case_id,
+                    status="needs_human",
+                    reason="incident_no_substantive_context",
+                )
+                return
+            if messages:
+                anchor = messages[-1]
+                incoming = incoming.model_copy(
+                    update={
+                        "message_id": anchor["event_id"],
+                        "question": anchor["text"],
+                        "channel_metadata": {
+                            **incoming.channel_metadata,
+                            "incident_source_ids": [
+                                message["event_id"] for message in messages
+                            ],
+                            "incident_context": messages,
+                            "incident_high_risk": any(
+                                message.get("high_risk") for message in messages
+                            ),
+                        },
+                    }
+                )
             await self._prepare_and_publish(
                 incoming, channel, case_id, store, question, policy_service
             )
@@ -407,10 +486,9 @@ class MatrixContextRuntime:
                 case_id, status="deferred", reason="staff_context_destination_invalid"
             )
             return False
-        if (
-            getattr(getattr(incoming, "classification", None), "topic_risk", None)
-            == "high"
-        ):
+        if getattr(
+            getattr(incoming, "classification", None), "topic_risk", None
+        ) == "high" or incoming.channel_metadata.get("incident_high_risk"):
             await store.update(case_id, status="needs_human", reason="high_risk_action")
             return False
         snapshot, reason = await self._read_source(incoming)
@@ -468,6 +546,9 @@ class MatrixContextRuntime:
         resolver = StaffEvidenceResolver(
             faq_service=getattr(rag, "faq_service", None),
             public_faq_service=self.runtime.resolve_optional("public_faq_service"),
+            public_knowledge_service=self.runtime.resolve_optional(
+                "public_knowledge_service"
+            ),
             grounding_service=self.runtime.resolve_optional(
                 "staff_grounding_brief_service"
             ),
@@ -598,6 +679,16 @@ class MatrixContextRuntime:
             sources=sources,
             **versions,
         )
+        current_case = await self.runtime.resolve_optional(
+            "escalation_service"
+        ).repository.get_by_id(case_id)
+        if current_case is not None and (current_case.channel_metadata or {}).get(
+            "incident_late_meaningful_update"
+        ):
+            await store.update(
+                case_id, status="deferred", reason="incident_updated_after_generation"
+            )
+            return False
         # Refresh after model work. Source edits/redactions and intervening staff
         # participation suppress publication; the durable review remains available.
         _, reason = await self._read_source(incoming)
@@ -611,11 +702,14 @@ class MatrixContextRuntime:
             )
             return False
         room_id = incoming.channel_metadata["room_id"]
+        source_event_id = (getattr(current_case, "channel_metadata", None) or {}).get(
+            "source_event_id", incoming.message_id
+        )
         root = (
             f"Support question · staff review #{case_id}\n\n"
             + _markdown_literal(question)
             + "\n\nSource: "
-            + matrix_link(room_id, incoming.message_id)
+            + matrix_link(room_id, source_event_id)
             + "\n\nAI context is in this thread. Review in Admin; approval stays internal."
         )
         await store.update(
@@ -686,7 +780,11 @@ class MatrixContextRuntime:
     async def _case_is_open(self, case_id: int) -> bool:
         service = self.runtime.resolve_optional("escalation_service")
         case = await service.repository.get_by_id(case_id)
-        return case is not None and case.status.value in {"pending", "in_review"}
+        return (
+            case is not None
+            and case.status.value in {"pending", "in_review"}
+            and not (case.channel_metadata or {}).get("incident_late_meaningful_update")
+        )
 
     async def _send_if_open(
         self, case_id: int, channel: Any, text: str, **kwargs: Any
@@ -713,6 +811,10 @@ class MatrixContextRuntime:
             reason = await self.check_trial_delivery(kwargs.get("transaction_id", ""))
             if reason:
                 raise PublicationSuppressed(reason)
+            # The trial check awaits storage; a newly received incident update
+            # during that wait must still prevent starting stale publication.
+            if self._closed or not await self._case_is_open(case_id):
+                raise PublicationSuppressed("staff_context_case_changed")
             result = await channel.send_staff_context(text, **kwargs)
             reason = getattr(result, "error", None)
             if not result and (
@@ -749,8 +851,12 @@ class MatrixContextRuntime:
         event = getattr(response, "event", None)
         if event is None or getattr(event, "event_id", None) != incoming.message_id:
             return [], "source_unavailable"
-        if str(getattr(event, "body", "") or "").strip() != incoming.question:
+        if sanitize_question(context_text(event)) != sanitize_question(
+            incoming.question
+        ):
             return [], "source_changed_or_redacted"
+        if getattr(event, "sender", incoming.user.user_id) != incoming.user.user_id:
+            return [], "source_author_changed"
         timestamp = getattr(event, "server_timestamp", 0)
         if self._trial and (
             not timestamp or timestamp / 1000 < self._trial.start_at.timestamp()
@@ -772,6 +878,33 @@ class MatrixContextRuntime:
             self.runtime.resolve_optional("channel_autoresponse_policy_service"),
             "matrix",
         )
+        incident_ids = set(
+            incoming.channel_metadata.get("incident_source_ids", [incoming.message_id])
+        )
+        saved = incoming.channel_metadata.get("incident_context", [])
+        visible = {
+            getattr(item, "event_id", None): item for item in before + after + [event]
+        }
+        for message in saved:
+            observed = visible.get(message["event_id"])
+            if observed is None:
+                return [], "incident_source_context_incomplete"
+            observed_at = getattr(observed, "server_timestamp", 0)
+            if self._trial and (
+                not observed_at or observed_at / 1000 < self._trial.start_at.timestamp()
+            ):
+                return [], "context_trial_before_activation"
+            if (
+                not observed_at
+                or datetime.now(timezone.utc).timestamp() - observed_at / 1000 > 3600
+            ):
+                return [], "source_stale"
+            if (
+                getattr(observed, "sender", incoming.user.user_id)
+                != incoming.user.user_id
+                or sanitize_question(context_text(observed)) != message["text"]
+            ):
+                return [], "source_changed_or_redacted"
         # Matrix returns preceding events newest first. Check the complete
         # bounded window before selecting a smaller chronological prompt history.
         for item in before + after:
@@ -787,21 +920,17 @@ class MatrixContextRuntime:
                 return [], "staff_active"
             if item in after and sender == getattr(client, "user_id", None):
                 return [], "recent_bot_reply"
-            source = getattr(item, "source", {}) or {}
+            replacement = context_relationships(item).get("replaces_event_id")
             if (
-                item in after
-                and source.get("content", {}).get("m.relates_to", {}).get("rel_type")
-                == "m.replace"
+                replacement in incident_ids
+                and getattr(item, "event_id", None) not in incident_ids
             ):
                 return [], "source_context_changed"
-        messages = []
-        for item in list(reversed(before[:10])) + after:
-            sender = str(getattr(item, "sender", ""))
-            body = getattr(item, "body", None)
-            if not isinstance(body, str) or not body.strip() or len(body) > 4000:
-                continue
-            role: Literal["staff", "user"] = (
-                "staff" if resolver.is_staff(sender) else "user"
-            )
-            messages.append(RoomMessage(role=role, content=sanitize_question(body)))
-        return messages[-20:], None
+        # Only the incident owner's captured messages enter model context.
+        # Unrelated room participants are never presented as this user's facts.
+        messages = [
+            RoomMessage(role="user", content=text)
+            for text in incident_texts(saved)[:-1]
+            if not context_only(text)
+        ]
+        return messages[-10:], None

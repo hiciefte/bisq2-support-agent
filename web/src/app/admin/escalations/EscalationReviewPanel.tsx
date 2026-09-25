@@ -1130,7 +1130,7 @@ export function EscalationReviewPanel({
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <MessageSquare className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-                    <h3 className="text-sm font-medium">Question</h3>
+                    <h3 className="text-sm font-medium">{context?.late_update_requires_review ? "Current incident context" : "Question"}</h3>
                     {escalation.user_language && escalation.user_language !== "en" && (
                       <Badge variant="secondary" className="ml-1 text-[10px] uppercase tracking-wide">
                         User language: {escalation.user_language}

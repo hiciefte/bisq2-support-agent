@@ -16,6 +16,7 @@ from app.services.rag.code_evidence import (
     CodeEvidenceRecord,
     release_version,
 )
+from app.services.rag.source_refs import parse_code_source_ref
 
 _EXCLUDED_DIRS = {
     ".git",
@@ -167,6 +168,8 @@ class CodeEvidenceExtractor:
             elif suffix == ".md" and self._is_spec_markdown(relative_path):
                 records.extend(self._extract_markdown_spec(relative_path, lines))
 
+        records.extend(self._extract_bisq_mediation_validation())
+        records.extend(self._extract_reviewed_excerpts())
         _validate_source(self.repo_path, self.commit, self.release_tag)
         unique: dict[str, CodeEvidenceRecord] = {}
         for record in records:
@@ -175,6 +178,144 @@ class CodeEvidenceExtractor:
             unique.values(),
             key=lambda item: (item.path, item.line_start, item.symbol),
         )
+
+    def _extract_reviewed_excerpts(self) -> list[CodeEvidenceRecord]:
+        """Reuse reviewed claims only while their complete source span is unchanged."""
+        if not self.release_tag:
+            return []
+        recipes = json.loads(
+            Path(__file__).with_name("code_evidence_recipes.json").read_text()
+        )
+        records = []
+        for recipe in recipes:
+            if recipe["repo"] != self.repo:
+                continue
+            file = self.repo_path / recipe["path"]
+            if not file.is_file() or file.is_symlink():
+                continue
+            text = file.read_text(encoding="utf-8")
+            pattern = r"\s+".join(re.escape(part) for part in recipe["excerpt"].split())
+            matches = list(re.finditer(pattern, text))
+            if len(matches) != 1:
+                continue
+            match = matches[0]
+            start, end = (
+                text.count("\n", 0, match.start()) + 1,
+                text.count("\n", 0, match.end()) + 1,
+            )
+            record = self._record(
+                path=recipe["path"],
+                line_start=start,
+                line_end=end,
+                symbol=recipe["symbol"],
+                claim=recipe["claim"],
+                support_use=recipe["support_use"],
+                risk_level=recipe["risk_level"],
+            ).to_dict()
+            record["protocol"] = recipe["protocol"]
+            record["id"] = f"{self.repo}:{self.commit[:12]}:{recipe['name']}"
+            records.append(CodeEvidenceRecord.from_dict(record))
+        return records
+
+    def _extract_bisq_mediation_validation(self) -> list[CodeEvidenceRecord]:
+        """A bounded reviewed source recipe, revalidated on every release.
+
+        Java's formatted preconditions do not contain the resulting error as a
+        literal. Require the complete address-selection/validation chain; if it
+        changes, omit this fact and let the CLI's required-symbol gate fail.
+        """
+        if (
+            self.repo not in {"bisq", "bisq1", "bisq-network/bisq"}
+            or not self.release_tag
+        ):
+            return []
+        task_path = "core/src/main/java/bisq/core/trade/protocol/bisq_v1/tasks/mediation/SignMediatedPayoutTx.java"
+        validation_path = "core/src/main/java/bisq/core/trade/validation/MediatedPayoutTxValidation.java"
+        helper_path = "core/src/main/java/bisq/core/util/Validator.java"
+        required_imports = {
+            task_path: "import static bisq.core.trade.validation.MediatedPayoutTxValidation.checkMediatedPayoutAddresses;",
+            validation_path: "import static bisq.core.util.Validator.checkNonBlankString;",
+            helper_path: "import static com.google.common.base.Preconditions.checkNotNull;",
+        }
+        snippets = [
+            (
+                task_path,
+                """boolean isMyRoleBuyer = contract.isMyRoleBuyer(processModel.getPubKeyRing());
+            String myPayoutAddressString = walletService.getOrCreateAddressEntry(tradeId, AddressEntry.Context.TRADE_PAYOUT).getAddressString();
+            String peersPayoutAddressString = tradingPeer.getPayoutAddressString();
+            String buyerPayoutAddressString = isMyRoleBuyer ? myPayoutAddressString : peersPayoutAddressString;
+            String sellerPayoutAddressString = isMyRoleBuyer ? peersPayoutAddressString : myPayoutAddressString;
+            checkMediatedPayoutAddresses(buyerPayoutAddressString, buyerPayoutAmount,
+                sellerPayoutAddressString, sellerPayoutAmount, walletService);""",
+            ),
+            (
+                validation_path,
+                """public static void checkMediatedPayoutAddresses(String buyerPayoutAddressString,
+                Coin buyerPayoutAmount, String sellerPayoutAddressString,
+                Coin sellerPayoutAmount, BtcWalletService btcWalletService) {
+                String checkedBuyerPayoutAddressString = checkNonBlankString(buyerPayoutAddressString, "buyerPayoutAddressString");
+                Coin checkedBuyerPayoutAmount = checkIsNotNegative(buyerPayoutAmount, "buyerPayoutAmount");
+                String checkedSellerPayoutAddressString = checkNonBlankString(sellerPayoutAddressString, "sellerPayoutAddressString");""",
+            ),
+            (
+                helper_path,
+                """public static String checkNonBlankString(String value, String fieldName) {
+                checkNotNull(value, "%s must not be null", fieldName);
+                checkArgument(!value.isBlank(), "%s must not be blank", fieldName);
+                return value;
+            }""",
+            ),
+        ]
+        spans = []
+        for path, snippet in snippets:
+            file = self.repo_path / path
+            if not file.is_file() or file.is_symlink():
+                return []
+            text = file.read_text(encoding="utf-8")
+            if required_imports[path] not in text.splitlines():
+                return []
+            pattern = r"\s+".join(re.escape(part) for part in snippet.split())
+            matches = list(re.finditer(pattern, text))
+            if len(matches) != 1:
+                return []
+            match = matches[0]
+            if (
+                path == task_path
+                and not text.find(".signMediatedPayoutTx(", match.end()) > match.end()
+            ):
+                return []
+            start = text.count("\n", 0, match.start()) + 1
+            end = text.count("\n", 0, match.end()) + 1
+            spans.append((path, start, end))
+        path, start, end = spans[0]
+        record = self._record(
+            path=path,
+            line_start=start,
+            line_end=end,
+            symbol="SignMediatedPayoutTx.checkMediatedPayoutAddresses",
+            claim=(
+                "In this Bisq 1 release, SignMediatedPayoutTx validates the mediated payout addresses before signing. "
+                "A null seller payout address produces 'sellerPayoutAddressString must not be null' through "
+                "MediatedPayoutTxValidation and Validator.checkNonBlankString. The seller address is selected "
+                "from the trading peer when the local role is buyer, and from the local payout address otherwise."
+            ),
+            support_use=(
+                "Match the exact exception and confirm the installed Bisq 1 version and trade role. "
+                "This identifies the failing validation, not why the address is missing, the state of funds, "
+                "or a repair. It does not establish that SPV resync fixes this failure."
+            ),
+            risk_level="high",
+        ).to_dict()
+        record["protocol"] = "multisig_v1"
+        record["match_terms"] = [
+            "sellerPayoutAddressString must not be null",
+            "SignMediatedPayoutTx",
+        ]
+        record["source_refs"] = [
+            f"code:{self.repo}@{self.commit}:{path}:{start}-{end}"
+            for path, start, end in spans
+        ]
+        return [CodeEvidenceRecord.from_dict(record)]
 
     def _iter_candidate_files(self) -> Iterable[Path]:
         # Read only committed regular files; ignored/untracked files cannot become evidence.
@@ -658,6 +799,35 @@ class CodeEvidenceFreshnessChecker:
                 "path": record.path,
                 "reason": "source_ref_mismatch",
             }
+        # Multi-file recipes must retain provenance for the entire validation
+        # chain, not just a valid primary file.
+        for source_ref in record.source_refs:
+            if source_ref == expected_ref:
+                continue
+            ref = parse_code_source_ref(source_ref)
+            if ref is None or ref.repo != record.repo or ref.commit != record.commit:
+                return {"id": record.id, "reason": "secondary_source_ref_mismatch"}
+            path = self.repo_path / ref.path
+            if (
+                not path.resolve().is_relative_to(self.repo_path.resolve())
+                or path.is_symlink()
+                or not path.is_file()
+            ):
+                return {"id": record.id, "reason": "secondary_source_unavailable"}
+            content = path.read_bytes()
+            if ref.line_end > len(content.splitlines()):
+                return {"id": record.id, "reason": "secondary_source_range_invalid"}
+            actual = hashlib.sha1(
+                b"blob " + str(len(content)).encode() + b"\0" + content
+            ).hexdigest()
+            try:
+                expected = _git(
+                    self.repo_path, "rev-parse", f"{record.commit}:{ref.path}"
+                )
+            except ValueError:
+                return {"id": record.id, "reason": "secondary_source_not_at_commit"}
+            if actual != expected:
+                return {"id": record.id, "reason": "secondary_source_not_at_commit"}
         return None
 
 
@@ -684,7 +854,7 @@ def _infer_protocol(relative_path: str) -> str:
         return "bisq_easy"
     if "mu_sig" in normalized or "musig" in normalized:
         return "musig"
-    if "multisig" in normalized or "bisq1" in normalized:
+    if "multisig" in normalized or "bisq1" in normalized or "bisq_v1" in normalized:
         return "multisig_v1"
     return "all"
 

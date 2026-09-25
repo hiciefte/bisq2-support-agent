@@ -6,7 +6,7 @@ import json
 import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from app.services.rag.interfaces import RetrievedDocument
 
@@ -40,6 +40,42 @@ _SENSITIVE_ASSIGNMENT_RE = re.compile(
     r"(?P<value>[A-Za-z0-9._/\-+=]{4,})",
     re.IGNORECASE,
 )
+_STOP_WORDS = set(
+    "why can how what when where does did do the and for from with this that have has had are was were been into only not user users bisq already multiple meantime times running using updated version also should would could use support staff evidence".split()
+)
+_PRODUCT_REPOS = {"bisq1": "bisq", "bisq2": "bisq2"}
+
+
+def canonical_code_repo(repo: str | None) -> str | None:
+    return {
+        "bisq": "bisq",
+        "bisq1": "bisq",
+        "bisq-network/bisq": "bisq",
+        "bisq2": "bisq2",
+        "bisq-network/bisq2": "bisq2",
+    }.get(str(repo or "").lower())
+
+
+def explicit_product(question: str) -> str | None:
+    """Infer product from explicit user wording, never a retrieved document."""
+    products = set()
+    if re.search(r"\bbisq[ _-]?1\b|\bmultisig(?:[ _-]?v?1)?\b", question, re.I):
+        products.add("bisq1")
+    if re.search(r"\bbisq[ _-]?2\b|\bbisq[ _-]?easy\b|\bmusig\b", question, re.I):
+        products.add("bisq2")
+    return products.pop() if len(products) == 1 else None
+
+
+def code_repo_for_context(
+    product: str | None, protocol: str | None = None
+) -> str | None:
+    return _PRODUCT_REPOS.get(str(product)) or {
+        "multisig_v1": "bisq",
+        "bisq_easy": "bisq2",
+        "musig": "bisq2",
+    }.get(str(protocol))
+
+
 _TOKEN_RE = re.compile(r"[a-z0-9_]{3,}", re.IGNORECASE)
 # Bound user-supplied version components and prerelease labels before matching.
 _VERSION_PATTERN = r"[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}(?:-[A-Za-z0-9.-]{1,32})?"
@@ -71,7 +107,7 @@ def release_version(tag: str) -> str:
 def explicit_user_version(question: str) -> str | None:
     """Read explicit version wording from the user, never retrieved evidence."""
     matches = re.findall(
-        r"\b(?:bisq(?:\s+(?:2|easy))?\s*(?:version\s*|v)?|(?:version|running|using)\s+|v)"
+        r"\b(?:bisq(?:\s+(?:1|2|easy))?\s*(?:version\s*|v)?|(?:version|running|using)\s+|v)"
         rf"({_VERSION_PATTERN})(?![\w+-]|\.[\w.-])\b",
         question,
         re.IGNORECASE,
@@ -169,6 +205,7 @@ class CodeEvidenceRecord:
     applies_to_versions: list[str] = field(default_factory=list)
     release_tag: str | None = None
     source_sha256: str | None = None
+    match_terms: list[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "CodeEvidenceRecord":
@@ -242,6 +279,10 @@ class CodeEvidenceRecord:
             applies_to_versions=versions,
             release_tag=tag,
             source_sha256=source_sha256,
+            match_terms=[
+                _redact_sensitive_text(term)
+                for term in _optional_string_list(data.get("match_terms"))
+            ],
         )
 
     def to_retrieved_document(self, *, score: float = 0.0) -> RetrievedDocument:
@@ -276,6 +317,7 @@ class CodeEvidenceRecord:
                 "applies_to_versions": list(self.applies_to_versions),
                 "release_tag": self.release_tag,
                 "source_sha256": self.source_sha256,
+                "match_terms": list(self.match_terms),
             },
             score=score,
         )
@@ -320,6 +362,15 @@ class StaffCodeEvidenceRetriever:
     def __init__(self, loader: CodeEvidenceLoader):
         self.loader = loader
 
+    def retrieve_release_notes(
+        self, query: str, **context: Any
+    ) -> list[dict[str, Any]]:
+        from app.services.rag.release_notes import ReleaseNotesLoader
+
+        return ReleaseNotesLoader(
+            self.loader.path.with_name("release_notes.jsonl")
+        ).retrieve(query, **context)
+
     def retrieve(
         self,
         query: str,
@@ -328,13 +379,17 @@ class StaffCodeEvidenceRetriever:
         k: int = 3,
         min_score: float = 0.3,
         user_version: str | None = None,
+        product: str | None = None,
     ) -> list[RetrievedDocument]:
-        query_terms = set(_TOKEN_RE.findall(str(query or "").lower()))
+        query = str(query or "")
+        repo = code_repo_for_context(product or explicit_product(query), protocol)
+        query_terms = set(_TOKEN_RE.findall(query.lower())) - _STOP_WORDS
         candidates = [
             record
             for record in self.loader.load()
             if record.audience == STAFF_ONLY_AUDIENCE
-            and (protocol is None or record.protocol in {protocol, "all"})
+            and (repo is None or canonical_code_repo(record.repo) == repo)
+            and (protocol in (None, "all") or record.protocol in {protocol, "all"})
             and (
                 user_version is None
                 or (
@@ -344,8 +399,29 @@ class StaffCodeEvidenceRetriever:
             )
         ]
 
+        if user_version is None:
+            latest: dict[str, str] = {}
+            for record in candidates:
+                if record.freshness_class == "release_bound" and record.release_tag:
+                    identity = canonical_code_repo(record.repo) or record.repo
+                    version = release_version(record.release_tag)
+                    if "-" not in version and (
+                        identity not in latest
+                        or tuple(map(int, version.split(".")))
+                        > tuple(map(int, latest[identity].split(".")))
+                    ):
+                        latest[identity] = version
+            candidates = [
+                record
+                for record in candidates
+                if not record.release_tag
+                or (canonical_code_repo(record.repo) or record.repo) not in latest
+                or release_version(record.release_tag)
+                == latest[canonical_code_repo(record.repo) or record.repo]
+            ]
         scored = [
-            (record, self._score_record(record, query_terms)) for record in candidates
+            (record, self._score_record(record, query, query_terms))
+            for record in candidates
         ]
         scored = [(record, score) for record, score in scored if score >= min_score]
         scored.sort(key=lambda item: item[1], reverse=True)
@@ -357,8 +433,22 @@ class StaffCodeEvidenceRetriever:
     def _score_record(
         self,
         record: CodeEvidenceRecord,
-        query_terms: Iterable[str],
+        query: str,
+        query_terms: set[str],
     ) -> float:
+        # Exact errors and complete identifiers survive conversational filler;
+        # lexical fallback uses whole tokens, never substring matches.
+        lower = query.casefold()
+        for term in record.match_terms:
+            if re.search(r"(?<!\w)" + re.escape(term.casefold()) + r"(?!\w)", lower):
+                return 1.0
+        symbols = {
+            symbol
+            for symbol in re.findall(r"[A-Za-z_][A-Za-z0-9_]{3,}", record.symbol)
+            if "_" in symbol or any(char.isupper() for char in symbol[1:])
+        }
+        if any(symbol.casefold() in query_terms for symbol in symbols):
+            return 0.95
         haystack = " ".join(
             [
                 record.claim,
@@ -371,5 +461,5 @@ class StaffCodeEvidenceRetriever:
         terms = set(query_terms)
         if not terms:
             return 0.0
-        matches = sum(1 for term in terms if term in haystack)
+        matches = len(terms & set(_TOKEN_RE.findall(haystack)))
         return matches / len(terms)
