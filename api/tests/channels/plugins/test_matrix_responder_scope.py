@@ -19,7 +19,7 @@ from app.channels.runtime import ChannelRuntime
 from app.core.config import Settings
 from app.models.escalation import Escalation, EscalationStatus
 from app.services.escalation.response_delivery import ResponseDelivery
-from app.services.training.ingest.matrix_sync_service import MatrixSyncService
+from app.services.knowledge.ingest.matrix_sync_service import MatrixSyncService
 
 PILOT = "!pilot:example.invalid"
 PUBLIC = "!support:example.invalid"

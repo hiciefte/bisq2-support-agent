@@ -14,10 +14,10 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from typing import Any, Iterable, Sequence
 
+from app.services.knowledge.candidate_repository import KnowledgeCandidate
 from app.services.knowledge_updates.topic_clusters import topic_cluster_key
 from app.services.rag.llm_wiki_loader import ALLOWED_PROTOCOLS
 from app.services.rag.protocol_detector import ProtocolDetector
-from app.services.training.unified_repository import UnifiedFAQCandidate
 
 REWORK_ACTION_PRIORITY = {
     "bulk_reject_non_durable": 0,
@@ -46,7 +46,7 @@ class CandidateReworkExample:
 
 @dataclass(frozen=True)
 class CandidateReworkSignal:
-    candidate: UnifiedFAQCandidate
+    candidate: KnowledgeCandidate
     issue_codes: tuple[str, ...]
     inferred_protocol: str | None
     inferred_protocol_confidence: float
@@ -124,7 +124,7 @@ class CandidateReworkTriageService:
 
     def build(
         self,
-        candidates: Sequence[UnifiedFAQCandidate],
+        candidates: Sequence[KnowledgeCandidate],
         *,
         limit: int | None = None,
     ) -> CandidateReworkTriage:
@@ -155,7 +155,7 @@ class CandidateReworkTriageService:
             groups=visible_groups,
         )
 
-    def _signal(self, candidate: UnifiedFAQCandidate) -> CandidateReworkSignal:
+    def _signal(self, candidate: KnowledgeCandidate) -> CandidateReworkSignal:
         issues = tuple(
             self.knowledge_update_service.candidate_reviewability_issues(candidate)
         )
@@ -229,7 +229,7 @@ class CandidateReworkTriageService:
 
     def _inferred_protocol(
         self,
-        candidate: UnifiedFAQCandidate,
+        candidate: KnowledgeCandidate,
         *,
         force_inference: bool = False,
     ) -> tuple[str | None, float]:

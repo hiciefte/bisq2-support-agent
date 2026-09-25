@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from app.services.training.conversation_handler import ConversationHandler
+from app.services.knowledge.conversation_handler import ConversationHandler
 
 # Configure logging
 logging.basicConfig(

@@ -14,6 +14,8 @@ from app.routes.admin.training import (
     get_pipeline_service,
 )
 from app.services.faq.duplicate_guard import build_duplicate_faq_detail
+from app.services.knowledge.candidate_repository import KnowledgeCandidate
+from app.services.knowledge.knowledge_pipeline_service import DuplicateFAQError
 from app.services.knowledge_updates.candidate_rework_triage import (
     CandidateReworkTriageService,
 )
@@ -27,14 +29,16 @@ from app.services.knowledge_updates.llm_wiki_update_service import (
     KnowledgeUpdateProposal,
     KnowledgeUpdateService,
 )
+from app.services.knowledge_updates.publication_status import (
+    check_publication_status,
+    saved_publication_status,
+)
 from app.services.knowledge_updates.topic_clusters import (
     KnowledgeReviewItem,
     KnowledgeTopicCluster,
     build_knowledge_review_items,
 )
 from app.services.rag.code_evidence import CODE_EVIDENCE_TYPE, CodeEvidenceRecord
-from app.services.training.unified_pipeline_service import DuplicateFAQError
-from app.services.training.unified_repository import UnifiedFAQCandidate
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -119,6 +123,7 @@ class ActionResponse(BaseModel):
 class KnowledgeUpdateApproveResponse(BaseModel):
     success: bool
     page_id: Optional[str] = None
+    publication_status: Optional[Dict[str, Any]] = None
 
 
 class CreateFAQFromKnowledgeUpdateResponse(BaseModel):
@@ -301,7 +306,7 @@ def _rework_action_response(
 
 def _create_forced_knowledge_update_proposal(
     service: KnowledgeUpdateService,
-    candidate: UnifiedFAQCandidate,
+    candidate: KnowledgeCandidate,
 ) -> KnowledgeUpdateProposal:
     return service.get_or_create_proposal(candidate=candidate, force=True)
 
@@ -996,6 +1001,29 @@ def _code_evidence_record_from_payload(
     return CodeEvidenceRecord.from_dict(data)
 
 
+@router.get("/{candidate_id}/publication-status")
+async def get_knowledge_publication_status(
+    candidate_id: int,
+    request: Request,
+    pipeline_service=Depends(get_pipeline_service()),
+    service: KnowledgeUpdateService = Depends(get_knowledge_update_service),
+):
+    """Verify saved content in the active index; never generate an answer."""
+    candidate = await run_in_threadpool(
+        lambda: pipeline_service.repository.get_by_id(candidate_id)
+    )
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    proposal = await run_in_threadpool(
+        lambda: service.get_by_candidate_id(candidate_id)
+    )
+    return await run_in_threadpool(
+        lambda: check_publication_status(
+            proposal, getattr(request.app.state, "rag_service", None)
+        )
+    )
+
+
 @router.post("/{candidate_id}/approve", response_model=KnowledgeUpdateApproveResponse)
 async def approve_knowledge_update(
     candidate_id: int,
@@ -1061,7 +1089,11 @@ async def approve_knowledge_update(
             service=service,
             trigger_page_id=str(page_id),
         )
-        return KnowledgeUpdateApproveResponse(success=True, page_id=page_id)
+        return KnowledgeUpdateApproveResponse(
+            success=True,
+            page_id=page_id,
+            publication_status=saved_publication_status(page_id),
+        )
     except ValueError as exc:
         logger.warning(
             "Knowledge update approval rejected invalid input for candidate %s: %s",

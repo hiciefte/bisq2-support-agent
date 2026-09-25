@@ -51,7 +51,7 @@ import { MarkdownContent } from '@/components/chat/components/markdown-content';
 import { makeAuthenticatedRequest } from '@/lib/auth';
 import { stripGeneratedAnswerFooter } from '@/lib/answer-format';
 import debounce from 'lodash.debounce';
-import type { ProtocolType, UnifiedCandidate } from './types';
+import type { ProtocolType, KnowledgeCandidate } from "../knowledge-updates/types";
 
 // Type for conversation context message
 interface ConversationMessage {
@@ -61,7 +61,7 @@ interface ConversationMessage {
 }
 
 interface TrainingReviewItemProps {
-  pair: UnifiedCandidate;
+  pair: KnowledgeCandidate;
   onApprove: () => Promise<void>;
   onReject: (reason: string, reasonNote?: string) => Promise<void>;
   onSkip: () => Promise<void>;

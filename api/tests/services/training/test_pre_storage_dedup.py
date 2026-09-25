@@ -7,7 +7,7 @@ to avoid suppressing legitimately different questions.
 
 from __future__ import annotations
 
-from app.services.training.validation import is_pre_extraction_duplicate
+from app.services.knowledge.validation import is_pre_extraction_duplicate
 
 
 def test_high_similarity_is_duplicate() -> None:

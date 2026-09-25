@@ -2,12 +2,12 @@ import json
 from pathlib import Path
 
 from app.core.config import Settings
+from app.services.knowledge.candidate_repository import KnowledgeCandidateRepository
 from app.services.knowledge_updates.code_evidence_promotion import (
     CodeEvidencePromotionService,
 )
 from app.services.rag.code_evidence import CodeEvidenceRecord
 from app.services.rag.llm_wiki_loader import LLMWikiLoader
-from app.services.training.unified_repository import UnifiedFAQCandidateRepository
 
 
 def _record(**overrides) -> CodeEvidenceRecord:
@@ -45,7 +45,7 @@ def test_code_evidence_promotion_creates_review_queue_candidate_and_proposal(
     tmp_path: Path,
 ) -> None:
     settings = Settings(DATA_DIR=str(tmp_path))
-    repository = UnifiedFAQCandidateRepository(str(tmp_path / "unified_training.db"))
+    repository = KnowledgeCandidateRepository(str(tmp_path / "unified_training.db"))
     service = CodeEvidencePromotionService(
         settings=settings,
         repository=repository,
@@ -82,7 +82,7 @@ def test_code_evidence_promotion_creates_review_queue_candidate_and_proposal(
 
 def test_code_evidence_promotion_is_idempotent_by_source_ref(tmp_path: Path) -> None:
     settings = Settings(DATA_DIR=str(tmp_path))
-    repository = UnifiedFAQCandidateRepository(str(tmp_path / "unified_training.db"))
+    repository = KnowledgeCandidateRepository(str(tmp_path / "unified_training.db"))
     service = CodeEvidencePromotionService(
         settings=settings,
         repository=repository,
@@ -100,7 +100,7 @@ def test_approved_code_evidence_proposal_enters_public_rag_via_llm_wiki(
     tmp_path: Path,
 ) -> None:
     settings = Settings(DATA_DIR=str(tmp_path))
-    repository = UnifiedFAQCandidateRepository(str(tmp_path / "unified_training.db"))
+    repository = KnowledgeCandidateRepository(str(tmp_path / "unified_training.db"))
     service = CodeEvidencePromotionService(
         settings=settings,
         repository=repository,
@@ -125,7 +125,7 @@ def test_code_evidence_promotion_rejects_record_without_public_guidance(
     tmp_path: Path,
 ) -> None:
     settings = Settings(DATA_DIR=str(tmp_path))
-    repository = UnifiedFAQCandidateRepository(str(tmp_path / "unified_training.db"))
+    repository = KnowledgeCandidateRepository(str(tmp_path / "unified_training.db"))
     service = CodeEvidencePromotionService(
         settings=settings,
         repository=repository,
@@ -144,7 +144,7 @@ def test_code_evidence_promotion_rejects_mismatched_source_ref(
     tmp_path: Path,
 ) -> None:
     settings = Settings(DATA_DIR=str(tmp_path))
-    repository = UnifiedFAQCandidateRepository(str(tmp_path / "unified_training.db"))
+    repository = KnowledgeCandidateRepository(str(tmp_path / "unified_training.db"))
     service = CodeEvidencePromotionService(
         settings=settings,
         repository=repository,
@@ -167,7 +167,7 @@ def test_code_evidence_promotion_rejects_any_mismatched_source_ref(
     tmp_path: Path,
 ) -> None:
     settings = Settings(DATA_DIR=str(tmp_path))
-    repository = UnifiedFAQCandidateRepository(str(tmp_path / "unified_training.db"))
+    repository = KnowledgeCandidateRepository(str(tmp_path / "unified_training.db"))
     service = CodeEvidencePromotionService(
         settings=settings,
         repository=repository,

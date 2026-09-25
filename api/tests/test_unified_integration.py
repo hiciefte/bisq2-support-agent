@@ -14,7 +14,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from app.services.training.unified_pipeline_service import UnifiedPipelineService
+from app.services.knowledge.knowledge_pipeline_service import KnowledgePipelineService
 
 # =============================================================================
 # Test Fixtures
@@ -66,8 +66,8 @@ def mock_settings():
 
 @pytest.fixture
 def unified_pipeline(temp_db_path, mock_settings, mock_rag_service, mock_faq_service):
-    """Create a UnifiedPipelineService for testing."""
-    return UnifiedPipelineService(
+    """Create a KnowledgePipelineService for testing."""
+    return KnowledgePipelineService(
         settings=mock_settings,
         db_path=temp_db_path,
         rag_service=mock_rag_service,
@@ -347,7 +347,7 @@ class TestCalibrationModeIntegration:
     ):
         """Test that AUTO_APPROVE works after calibration is complete."""
         # Create pipeline
-        pipeline = UnifiedPipelineService(
+        pipeline = KnowledgePipelineService(
             db_path=temp_db_path,
             rag_service=mock_rag_service,
             faq_service=mock_faq_service,

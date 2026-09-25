@@ -2,7 +2,7 @@ from pathlib import Path
 
 from app.core.config import Settings
 from app.scripts.reconcile_llm_wiki_coverage import run_reconciliation
-from app.services.training.unified_repository import UnifiedFAQCandidateRepository
+from app.services.knowledge.candidate_repository import KnowledgeCandidateRepository
 
 
 def _write_page(data_dir: Path) -> None:
@@ -45,7 +45,7 @@ Buyers can buy BTC in Bisq Easy without reputation. Seller reputation is the mai
 def test_run_reconciliation_applies_pending_covered_candidates(tmp_path: Path) -> None:
     _write_page(tmp_path)
     db_path = tmp_path / "unified_training.db"
-    repository = UnifiedFAQCandidateRepository(str(db_path))
+    repository = KnowledgeCandidateRepository(str(db_path))
     candidate = repository.create(
         source="matrix",
         source_event_id="$covered",
@@ -82,7 +82,7 @@ def test_run_reconciliation_applies_pending_covered_candidates(tmp_path: Path) -
 def test_run_reconciliation_supports_dry_run(tmp_path: Path) -> None:
     _write_page(tmp_path)
     db_path = tmp_path / "unified_training.db"
-    repository = UnifiedFAQCandidateRepository(str(db_path))
+    repository = KnowledgeCandidateRepository(str(db_path))
     candidate = repository.create(
         source="matrix",
         source_event_id="$covered",

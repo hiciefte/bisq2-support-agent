@@ -1,4 +1,4 @@
-"""Post-extraction quality gates for the FAQ training pipeline.
+"""Post-extraction quality gates for the knowledge review pipeline.
 
 Pure functions — no I/O, no mocks needed, fast to test.
 """

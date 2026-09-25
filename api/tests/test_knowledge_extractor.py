@@ -1,11 +1,11 @@
 """
-TDD Tests for UnifiedFAQExtractor.
+TDD Tests for KnowledgeExtractor.
 
 This test suite follows RED-GREEN-REFACTOR cycle for implementing
 a simplified FAQ extraction approach that uses a single LLM call
 to extract Q&A pairs from chat messages.
 
-UnifiedFAQExtractor extracts FAQ Q&A PAIRS (question + staff answer).
+KnowledgeExtractor extracts FAQ Q&A PAIRS (question + staff answer).
 
 The extractor should:
 1. Accept raw messages + staff identifiers
@@ -22,24 +22,24 @@ import pytest
 
 # Import will fail until implementation exists - that's the RED phase
 try:
-    from app.services.training.unified_faq_extractor import (
-        ExtractedFAQ,
-        FAQExtractionResult,
-        UnifiedFAQExtractor,
+    from app.services.knowledge.knowledge_extractor import (
+        ExtractedKnowledge,
+        KnowledgeExtractionResult,
+        KnowledgeExtractor,
     )
 
     IMPLEMENTATION_EXISTS = True
 except ImportError:
     IMPLEMENTATION_EXISTS = False
-    UnifiedFAQExtractor = None
-    ExtractedFAQ = None
-    FAQExtractionResult = None
+    KnowledgeExtractor = None
+    ExtractedKnowledge = None
+    KnowledgeExtractionResult = None
 
 
 # Skip all tests if implementation doesn't exist yet (RED phase)
 pytestmark = pytest.mark.skipif(
     not IMPLEMENTATION_EXISTS,
-    reason="UnifiedFAQExtractor not yet implemented (RED phase)",
+    reason="KnowledgeExtractor not yet implemented (RED phase)",
 )
 
 
@@ -265,7 +265,7 @@ class TestExtractorInstantiation:
         mock_settings.LLM_TEMPERATURE = 0.1
         mock_settings.MAX_TOKENS = 4096
 
-        extractor = UnifiedFAQExtractor(
+        extractor = KnowledgeExtractor(
             aisuite_client=mock_client,
             settings=mock_settings,
         )
@@ -282,7 +282,7 @@ class TestExtractorInstantiation:
         mock_settings.LLM_TEMPERATURE = 0.1
         mock_settings.MAX_TOKENS = 4096
 
-        extractor = UnifiedFAQExtractor(
+        extractor = KnowledgeExtractor(
             aisuite_client=mock_client,
             settings=mock_settings,
             staff_identifiers=staff_identifiers,
@@ -298,7 +298,7 @@ class TestExtractorInstantiation:
         mock_settings.LLM_TEMPERATURE = 0.1
         mock_settings.MAX_TOKENS = 4096
 
-        extractor = UnifiedFAQExtractor(
+        extractor = KnowledgeExtractor(
             aisuite_client=mock_client,
             settings=mock_settings,
         )
@@ -324,7 +324,7 @@ class TestSimpleQAExtraction:
         mock_settings.LLM_TEMPERATURE = 0.1
         mock_settings.MAX_TOKENS = 4096
 
-        return UnifiedFAQExtractor(
+        return KnowledgeExtractor(
             aisuite_client=mock_client,
             settings=mock_settings,
             staff_identifiers=staff_identifiers,
@@ -355,7 +355,7 @@ class TestSimpleQAExtraction:
             )
 
         assert result is not None
-        assert isinstance(result, FAQExtractionResult)
+        assert isinstance(result, KnowledgeExtractionResult)
         assert len(result.faqs) == 1
         assert result.faqs[0].question_text == "How do I start trading on Bisq Easy?"
         assert "Trade Wizard" in result.faqs[0].answer_text
@@ -436,7 +436,7 @@ class TestCorrectionHandling:
         mock_settings.MAX_TOKENS = 4096
         mock_client = MagicMock()
 
-        return UnifiedFAQExtractor(
+        return KnowledgeExtractor(
             aisuite_client=mock_client,
             settings=mock_settings,
             staff_identifiers=staff_identifiers,
@@ -524,7 +524,7 @@ class TestMultiSourceSupport:
         ]
         mock_client = MagicMock()
 
-        return UnifiedFAQExtractor(
+        return KnowledgeExtractor(
             aisuite_client=mock_client,
             settings=mock_settings,
             staff_identifiers=staff_ids,
@@ -600,7 +600,7 @@ class TestChatterFiltering:
         mock_settings.MAX_TOKENS = 4096
         mock_client = MagicMock()
 
-        return UnifiedFAQExtractor(
+        return KnowledgeExtractor(
             aisuite_client=mock_client,
             settings=mock_settings,
             staff_identifiers=staff_identifiers,
@@ -654,7 +654,7 @@ class TestResultStructure:
         mock_settings.MAX_TOKENS = 4096
         mock_client = MagicMock()
 
-        return UnifiedFAQExtractor(
+        return KnowledgeExtractor(
             aisuite_client=mock_client,
             settings=mock_settings,
             staff_identifiers=staff_identifiers,
@@ -692,7 +692,7 @@ class TestResultStructure:
     async def test_extracted_faq_has_required_fields(
         self, extractor, simple_qa_messages
     ):
-        """Each ExtractedFAQ should have all required fields."""
+        """Each ExtractedKnowledge should have all required fields."""
         mock_llm_response = {
             "faq_pairs": [
                 {
@@ -739,7 +739,7 @@ class TestPrivacyAnonymization:
         mock_settings.MAX_TOKENS = 4096
         mock_client = MagicMock()
 
-        return UnifiedFAQExtractor(
+        return KnowledgeExtractor(
             aisuite_client=mock_client,
             settings=mock_settings,
             staff_identifiers=staff_identifiers,
@@ -817,7 +817,7 @@ class TestErrorHandling:
         mock_settings.MAX_TOKENS = 4096
         mock_client = MagicMock()
 
-        return UnifiedFAQExtractor(
+        return KnowledgeExtractor(
             aisuite_client=mock_client,
             settings=mock_settings,
             staff_identifiers=staff_identifiers,
@@ -874,7 +874,7 @@ class TestErrorHandling:
 
 
 class TestPipelineIntegration:
-    """Test integration patterns with UnifiedPipelineService."""
+    """Test integration patterns with KnowledgePipelineService."""
 
     @pytest.fixture
     def extractor(self, staff_identifiers):
@@ -885,7 +885,7 @@ class TestPipelineIntegration:
         mock_settings.MAX_TOKENS = 4096
         mock_client = MagicMock()
 
-        return UnifiedFAQExtractor(
+        return KnowledgeExtractor(
             aisuite_client=mock_client,
             settings=mock_settings,
             staff_identifiers=staff_identifiers,
@@ -980,7 +980,7 @@ class TestOriginalAnswerPreservation:
         mock_settings.LLM_TEMPERATURE = 0.1
         mock_settings.MAX_TOKENS = 4096
 
-        return UnifiedFAQExtractor(
+        return KnowledgeExtractor(
             aisuite_client=mock_client,
             settings=mock_settings,
             staff_identifiers=staff_identifiers,
@@ -1227,7 +1227,7 @@ class TestDuplicateMessageIdRejection:
         mock_settings.OPENAI_MODEL = "gpt-4o-mini"
         mock_settings.LLM_TEMPERATURE = 0.1
         mock_settings.MAX_TOKENS = 4096
-        return UnifiedFAQExtractor(
+        return KnowledgeExtractor(
             aisuite_client=MagicMock(),
             settings=mock_settings,
             staff_identifiers=staff_identifiers,
@@ -1358,7 +1358,7 @@ class TestSameAuthorRejection:
         mock_settings.OPENAI_MODEL = "gpt-4o-mini"
         mock_settings.LLM_TEMPERATURE = 0.1
         mock_settings.MAX_TOKENS = 4096
-        return UnifiedFAQExtractor(
+        return KnowledgeExtractor(
             aisuite_client=MagicMock(),
             settings=mock_settings,
             staff_identifiers=staff_identifiers,
@@ -1451,7 +1451,7 @@ class TestPreBatchFiltering:
         mock_settings.OPENAI_MODEL = "openai:gpt-4.1-nano"
         mock_settings.LLM_TEMPERATURE = 0.1
         mock_settings.MAX_TOKENS = 4096
-        return UnifiedFAQExtractor(
+        return KnowledgeExtractor(
             aisuite_client=MagicMock(),
             settings=mock_settings,
             staff_identifiers=staff_identifiers,
@@ -1531,12 +1531,12 @@ class TestBisqImmutableProvenance:
     """Bisq extraction trusts exact immutable source identifiers only."""
 
     @staticmethod
-    def _extractor(staff_profile_ids: List[str]) -> UnifiedFAQExtractor:
+    def _extractor(staff_profile_ids: List[str]) -> KnowledgeExtractor:
         settings = MagicMock()
         settings.OPENAI_MODEL = "gpt-4o-mini"
         settings.LLM_TEMPERATURE = 0.1
         settings.MAX_TOKENS = 4096
-        return UnifiedFAQExtractor(
+        return KnowledgeExtractor(
             aisuite_client=MagicMock(),
             settings=settings,
             staff_identifiers=staff_profile_ids,

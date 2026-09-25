@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 from app.core.exceptions import BaseAppException
 from app.core.security import verify_admin_access
 from app.services.faq.duplicate_guard import build_duplicate_faq_detail
-from app.services.training.unified_pipeline_service import (
+from app.services.knowledge.knowledge_pipeline_service import (
     CandidateReviewConflictError,
     DuplicateFAQError,
 )
@@ -340,12 +340,12 @@ router = APIRouter(
 
 
 # =============================================================================
-# Dependency for UnifiedPipelineService
+# Dependency for KnowledgePipelineService
 # =============================================================================
 
 
 def get_pipeline_service():
-    """Get UnifiedPipelineService from application state.
+    """Get KnowledgePipelineService from application state.
 
     Returns the unified FAQ training pipeline service that handles
     both Bisq 2 and Matrix sources.
@@ -1121,7 +1121,7 @@ async def trigger_matrix_sync(
             from app.channels.plugins.matrix.client.polling_state import (
                 PollingStateManager,
             )
-            from app.services.training.ingest.matrix_sync_service import (
+            from app.services.knowledge.ingest.matrix_sync_service import (
                 MatrixSyncService,
             )
 
@@ -1348,14 +1348,14 @@ async def resolve_flagged_faq(
 
 
 def _candidate_to_dict(candidate: Any) -> Dict[str, Any]:
-    """Convert UnifiedFAQCandidate to dictionary for JSON response.
+    """Convert KnowledgeCandidate to dictionary for JSON response.
 
-    Transforms a UnifiedFAQCandidate dataclass into a JSON-serializable dictionary
+    Transforms a KnowledgeCandidate dataclass into a JSON-serializable dictionary
     suitable for API responses. Handles special fields like JSON-encoded sources
     and optional fields that may not be present on older candidates.
 
     Args:
-        candidate: UnifiedFAQCandidate instance from the repository
+        candidate: KnowledgeCandidate instance from the repository
 
     Returns:
         Dictionary containing all candidate fields with the following structure:

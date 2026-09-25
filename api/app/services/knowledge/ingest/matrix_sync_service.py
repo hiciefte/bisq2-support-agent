@@ -1,9 +1,9 @@
-"""Matrix live polling service for unified training pipeline.
+"""Matrix history sync service for knowledge intake.
 
-Orchestrates Matrix room polling and LLM-based FAQ extraction, processing
-messages through the unified training pipeline for FAQ candidate generation.
+Orchestrates Matrix room polling and LLM-based knowledge extraction, processing
+messages through the knowledge intake pipeline for review candidates.
 
-Uses UnifiedFAQExtractor for single-pass LLM extraction instead of
+Uses KnowledgeExtractor for single-pass LLM extraction instead of
 pattern-based reply matching.
 """
 
@@ -13,12 +13,19 @@ import time as time_module
 from typing import Any, Dict, List, Optional, Set
 
 try:
-    from nio import AsyncClient, RoomMessagesResponse
+    from nio import (
+        AsyncClient,
+        MessageDirection,
+        RoomContextResponse,
+        RoomMessagesResponse,
+    )
 
     NIO_AVAILABLE = True
 except ImportError:
     NIO_AVAILABLE = False
     AsyncClient = None
+    MessageDirection = None
+    RoomContextResponse = None
     RoomMessagesResponse = None
 
 from app.channels.plugins.matrix.client.polling_state import PollingStateManager
@@ -33,20 +40,24 @@ from app.metrics.training_metrics import (
 logger = logging.getLogger(__name__)
 
 
+class IncompleteKnowledgeContextError(RuntimeError):
+    """A source boundary could not be resolved; do not consume its inputs."""
+
+
 class MatrixSyncService:
-    """Orchestrates Matrix room polling and LLM-based FAQ extraction.
+    """Orchestrates Matrix room polling and LLM-based knowledge extraction.
 
     This service:
     - Polls configured Matrix rooms for new messages
     - Uses LLM to identify Q&A pairs from the message stream
-    - Processes candidates through the unified training pipeline
+    - Processes candidates through the knowledge intake pipeline
 
-    Uses UnifiedFAQExtractor via pipeline_service.extract_faqs_batch() for
+    Uses KnowledgeExtractor via pipeline_service.extract_faqs_batch() for
     single-pass LLM extraction instead of pattern-based reply matching.
 
     Attributes:
         settings: Application settings
-        pipeline_service: UnifiedPipelineService for processing Q&A pairs
+        pipeline_service: KnowledgePipelineService for processing Q&A pairs
         polling_state: PollingStateManager for tracking sync state
         trusted_staff_ids: Set of trusted staff Matrix IDs
     """
@@ -61,7 +72,7 @@ class MatrixSyncService:
 
         Args:
             settings: Application settings with Matrix configuration
-            pipeline_service: UnifiedPipelineService for Q&A processing
+            pipeline_service: KnowledgePipelineService for Q&A processing
             polling_state: PollingStateManager for state tracking
         """
         self.settings = settings
@@ -183,6 +194,11 @@ class MatrixSyncService:
                 )
             sync_pairs_processed.labels(source="matrix").inc(total_processed)
 
+            if had_room_errors:
+                raise IncompleteKnowledgeContextError(
+                    "Matrix knowledge sync is incomplete; failed room inputs remain unprocessed"
+                )
+
             logger.info(f"Matrix sync complete: processed {total_processed} Q&A pairs")
             return total_processed
 
@@ -253,14 +269,14 @@ class MatrixSyncService:
             return self._client
 
     async def _sync_single_room(self, client: "AsyncClient", room_id: str) -> int:
-        """Sync a single Matrix room using LLM-based FAQ extraction.
+        """Sync a single Matrix room using LLM-based knowledge extraction.
 
         Args:
             client: Authenticated Matrix client
             room_id: Room ID to sync
 
         Returns:
-            Number of FAQ candidates processed from this room
+            Number of knowledge candidates processed from this room
         """
         logger.debug(f"Syncing room {room_id}")
         processed_count = 0
@@ -273,21 +289,31 @@ class MatrixSyncService:
             client.room_messages,
             room_id,
             start=since_token,
+            direction=MessageDirection.front if since_token else MessageDirection.back,
             limit=100,
             method_name="room_messages",
         )
 
         if not isinstance(response, RoomMessagesResponse):
-            logger.error(f"Failed to fetch messages from {room_id}: {response}")
-            return 0
+            raise IncompleteKnowledgeContextError(
+                "Matrix source messages are unavailable"
+            )
+
+        # First observe a recent backward snapshot, then continue forward from
+        # its head. Existing tokens are never reset: legacy backward cursors
+        # catch up forward through the existing processed-ID deduplication.
+        next_token = response.end if since_token else response.start
+        if not isinstance(next_token, str) or not next_token:
+            raise IncompleteKnowledgeContextError(
+                "Matrix page has no continuation token"
+            )
 
         raw_messages = response.chunk
         logger.debug(f"Fetched {len(raw_messages)} messages from {room_id}")
 
         if not raw_messages:
             # Update per-room since token even if no messages
-            if hasattr(response, "end") and response.end:
-                self.polling_state.update_room_token(room_id, response.end)
+            self.polling_state.update_room_token(room_id, next_token)
             return 0
 
         # Convert matrix-nio events to dict format
@@ -305,15 +331,20 @@ class MatrixSyncService:
 
         if not new_messages:
             # Update per-room since token even if no new messages
-            if hasattr(response, "end") and response.end:
-                self.polling_state.update_room_token(room_id, response.end)
+            self.polling_state.update_room_token(room_id, next_token)
             return 0
 
-        # Use LLM-based extraction via pipeline service
+        # Processed events remain eligible as context, never as new answers.
+        eligible_ids = {msg.get("event_id", "") for msg in new_messages}
+        messages = await self._with_boundary_context(
+            client, room_id, messages, eligible_ids
+        )
         results = await self.pipeline_service.extract_faqs_batch(
-            messages=new_messages,
+            messages=messages,
             source="matrix",
             staff_identifiers=self.trusted_staff_ids,
+            source_scope=room_id,
+            eligible_answer_ids=eligible_ids,
         )
 
         for msg in new_messages:
@@ -332,10 +363,98 @@ class MatrixSyncService:
                 )
 
         # Update per-room since token
-        if hasattr(response, "end") and response.end:
-            self.polling_state.update_room_token(room_id, response.end)
+        self.polling_state.update_room_token(room_id, next_token)
 
         return processed_count
+
+    async def _with_boundary_context(
+        self,
+        client: "AsyncClient",
+        room_id: str,
+        messages: List[Dict[str, Any]],
+        eligible_ids: Set[str],
+    ) -> List[Dict[str, Any]]:
+        """Resolve one bounded page boundary from Matrix, without a raw archive.
+
+        An explicit reply outside the page, or a staff-only page, needs source
+        context. Reads use the authenticated client and the exact source room.
+        Cursor advancement remains the caller's responsibility after extraction.
+        """
+        by_id = {msg.get("event_id"): msg for msg in messages if msg.get("event_id")}
+        staff_messages = [
+            msg
+            for msg in messages
+            if str(msg.get("sender", "")).lower() in self._staff_ids_lower
+            and msg.get("event_id") in eligible_ids
+        ]
+        missing_targets = set()
+        for msg in staff_messages:
+            content = msg.get("content", {})
+            relates = (
+                content.get("m.relates_to", {}) if isinstance(content, dict) else {}
+            )
+            target = relates.get("m.in_reply_to", {}).get("event_id")
+            if isinstance(target, str) and target not in by_id:
+                missing_targets.add(target)
+        has_user_context = any(
+            str(msg.get("sender", "")).lower() not in self._staff_ids_lower
+            for msg in messages
+        )
+        staff_only = bool(staff_messages) and not has_user_context
+        if not missing_targets and not staff_only:
+            return messages
+        anchor = (
+            sorted(missing_targets)[0]
+            if missing_targets
+            else min(staff_messages, key=lambda msg: msg.get("origin_server_ts", 0))[
+                "event_id"
+            ]
+        )
+        response = await self._error_handler.call_with_retry(
+            client.room_context, room_id, anchor, limit=20, method_name="room_context"
+        )
+        if (
+            not isinstance(response, RoomContextResponse)
+            or response.room_id != room_id
+            or response.event is None
+            or getattr(response.event, "event_id", None) != anchor
+        ):
+            raise IncompleteKnowledgeContextError(
+                "Matrix boundary context is unavailable"
+            )
+        context_events = [
+            *response.events_before,
+            response.event,
+            *response.events_after,
+        ]
+        if len(context_events) > 21:
+            raise IncompleteKnowledgeContextError(
+                "Matrix boundary context exceeded its bound"
+            )
+        for event in context_events:
+            msg = self._event_to_dict(event)
+            if msg.get("room_id", room_id) != room_id:
+                raise IncompleteKnowledgeContextError(
+                    "Matrix context has conflicting room provenance"
+                )
+            event_id = msg.get("event_id")
+            if not event_id or msg.get("type") != "m.room.message":
+                continue
+            # Transport metadata such as unsigned.age changes between reads.
+            immutable_fields = ("sender", "type", "content", "origin_server_ts")
+            if event_id in by_id and any(
+                by_id[event_id].get(field) != msg.get(field)
+                for field in immutable_fields
+            ):
+                raise IncompleteKnowledgeContextError(
+                    "Matrix context has conflicting event provenance"
+                )
+            by_id[event_id] = msg
+        if not missing_targets.issubset(by_id):
+            raise IncompleteKnowledgeContextError(
+                "Matrix reply context remains incomplete"
+            )
+        return sorted(by_id.values(), key=lambda msg: msg.get("origin_server_ts", 0))
 
     def _event_to_dict(self, event: Any) -> Dict[str, Any]:
         """Convert matrix-nio event to dictionary.

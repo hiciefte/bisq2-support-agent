@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from app.models.training import QAPair
-from app.services.training.substantive_filter import (
+from app.services.knowledge.substantive_filter import (
     FilterResult,
     SubstantiveAnswerFilter,
 )

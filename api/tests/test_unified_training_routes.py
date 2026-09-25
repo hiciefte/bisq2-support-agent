@@ -28,9 +28,9 @@ except ImportError:
     ROUTER_EXISTS = False
     training_router = None
 
-from app.services.training.unified_repository import (
+from app.services.knowledge.candidate_repository import (
     CalibrationStatus,
-    UnifiedFAQCandidate,
+    KnowledgeCandidate,
 )
 
 # Skip all tests if router doesn't exist yet (RED phase)
@@ -123,7 +123,7 @@ def client(app_with_router):
 @pytest.fixture
 def sample_candidate():
     """Create a sample candidate for testing."""
-    return UnifiedFAQCandidate(
+    return KnowledgeCandidate(
         id=1,
         source="matrix",
         source_event_id="$test_event:matrix.org",

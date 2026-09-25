@@ -1,16 +1,16 @@
-"""Bisq 2 live polling service for unified training pipeline.
+"""Bisq 2 history sync service for knowledge intake.
 
-Orchestrates Bisq 2 chat polling and LLM-based FAQ extraction, processing
-messages through the unified training pipeline for FAQ candidate generation.
+Orchestrates Bisq 2 chat polling and LLM-based knowledge extraction, processing
+messages through the knowledge intake pipeline for review candidates.
 
-Uses UnifiedFAQExtractor for single-pass LLM extraction instead of
+Uses KnowledgeExtractor for single-pass LLM extraction instead of
 pattern-based citation matching.
 """
 
 import asyncio
 import logging
 import time as time_module
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from app.channels.plugins.bisq2.test_scope import (
@@ -29,9 +29,9 @@ logger = logging.getLogger(__name__)
 
 
 class Bisq2SyncService:
-    """Orchestrates Bisq 2 chat polling and LLM-based FAQ extraction.
+    """Orchestrates Bisq 2 chat polling and LLM-based knowledge extraction.
 
-    Uses UnifiedFAQExtractor via pipeline_service.extract_faqs_batch() for
+    Uses KnowledgeExtractor via pipeline_service.extract_faqs_batch() for
     single-pass LLM extraction instead of pattern-based citation matching.
     """
 
@@ -46,7 +46,7 @@ class Bisq2SyncService:
 
         Args:
             settings: Application settings with Bisq 2 configuration
-            pipeline_service: UnifiedPipelineService for Q&A processing
+            pipeline_service: KnowledgePipelineService for Q&A processing
             bisq_api: Bisq2API instance for fetching conversations
             state_manager: BisqSyncStateManager for state tracking
         """
@@ -77,7 +77,7 @@ class Bisq2SyncService:
     ) -> int:
         """Sync conversations from Bisq 2 API and process through the pipeline.
 
-        Uses LLM-based extraction via UnifiedFAQExtractor to identify Q&A pairs
+        Uses LLM-based extraction via KnowledgeExtractor to identify Q&A pairs
         from the message stream, rather than relying on citation patterns.
         """
         if not self.is_configured():
@@ -136,24 +136,53 @@ class Bisq2SyncService:
 
             # Never let the extractor pair messages across exact Bisq channels.
             messages_by_channel: Dict[str, List[Dict[str, Any]]] = {}
-            for message in new_messages:
+            new_ids = {message.get("messageId", "") for message in new_messages}
+            for message in messages:
                 channel_id = self._test_scope.resolve_payload_channel(message)
                 messages_by_channel.setdefault(channel_id, []).append(message)
 
             results = []
-            for channel_messages in messages_by_channel.values():
+            for channel_id, channel_messages in messages_by_channel.items():
+                eligible_ids = {
+                    message.get("messageId", "")
+                    for message in channel_messages
+                    if message.get("messageId", "") in new_ids
+                }
+                if not eligible_ids:
+                    continue
+                # Reuse exported history as bounded transient context. Processed
+                # questions can be paired with a newly arriving staff answer.
+                context = [
+                    message
+                    for message in channel_messages
+                    if message.get("messageId", "") not in eligible_ids
+                ][-50:]
+                fresh = [
+                    message
+                    for message in channel_messages
+                    if message.get("messageId", "") in eligible_ids
+                ]
+                extraction_messages = sorted(
+                    [*context, *fresh], key=lambda message: str(message.get("date", ""))
+                )
                 channel_results = await self.pipeline_service.extract_faqs_batch(
-                    messages=channel_messages,
+                    messages=extraction_messages,
                     source="bisq2",
                     staff_identifiers=self.staff_profile_ids,
+                    source_scope=channel_id,
+                    eligible_answer_ids=eligible_ids,
                 )
                 results.extend(channel_results)
 
-            # Mark all input messages processed only after extraction completes.
-            for msg in new_messages:
-                msg_id = msg.get("messageId", "")
-                if msg_id:
-                    self.state_manager.mark_processed(msg_id)
+                # A later channel may fail or be held for reconciliation. Save
+                # this completed channel now so changing context cannot cause
+                # its already-finished extraction to be submitted again.
+                for msg in fresh:
+                    msg_id = msg.get("messageId", "")
+                    if msg_id:
+                        self.state_manager.mark_processed(msg_id)
+                self.state_manager.save_state()
+
             logger.info(f"Marked {len(new_messages)} input messages as processed")
 
             # Count successfully processed candidates
@@ -197,8 +226,11 @@ class Bisq2SyncService:
         """Fetch messages from Bisq 2 API with retry logic."""
         for attempt in range(max_retries):
             try:
+                since = self.state_manager.last_sync_timestamp
+                if isinstance(since, datetime):
+                    since -= timedelta(hours=1)
                 result = await self.bisq_api.export_chat_messages(
-                    since=self.state_manager.last_sync_timestamp,
+                    since=since,
                     max_retries=max_retries,
                     retry_delay=retry_delay,
                 )

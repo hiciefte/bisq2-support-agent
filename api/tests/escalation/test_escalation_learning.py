@@ -125,6 +125,23 @@ class TestEscalationLearningIntegration:
         metadata = call_kwargs[1].get("metadata") or call_kwargs[0][-1]
         assert metadata["channel"] == "matrix"
         assert metadata["staff_id"] == "staff_1"
+        assert metadata["review_kind"] == "answer_quality"
+        assert metadata["calibration_question_id"] == "escalation:1"
+
+    @pytest.mark.asyncio
+    async def test_staff_answer_without_ai_draft_is_not_a_quality_judgment(self):
+        learning = MagicMock()
+        repo = AsyncMock()
+        repo.get_by_id.return_value = _make_escalation(ai_draft_answer="")
+        repo.update.return_value = _make_escalation(status=EscalationStatus.RESPONDED)
+        delivery = AsyncMock()
+        delivery.deliver.return_value = True
+        service = _make_service(repo=repo, delivery=delivery, learning_engine=learning)
+
+        await service.respond_to_escalation(1, "Staff answer", "staff_1")
+
+        metadata = learning.record_review.call_args.kwargs["metadata"]
+        assert metadata["review_kind"] == "staff_response"
 
     @pytest.mark.asyncio
     async def test_learning_failure_does_not_block_respond(self):

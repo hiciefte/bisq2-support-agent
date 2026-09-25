@@ -102,6 +102,8 @@ class FeedbackOrchestrator:
             weight=weight,
             metadata={
                 "source": "user_rating",
+                "review_kind": "answer_quality",
+                "calibration_question_id": f"escalation:{signal.escalation_id}",
                 "idempotent": True,
                 "channel": signal.channel,
                 "quadrant": signal.quadrant,

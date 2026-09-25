@@ -48,6 +48,12 @@ from app.services.channel_autoresponse_policy_service import (
 from app.services.channel_launch_control_service import ChannelLaunchControlService
 from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
+from app.services.knowledge.candidate_repository import KnowledgeCandidateRepository
+from app.services.knowledge.comparison_engine import AnswerComparisonEngine
+from app.services.knowledge.knowledge_extractor import (
+    create_knowledge_extraction_client,
+)
+from app.services.knowledge.knowledge_pipeline_service import KnowledgePipelineService
 from app.services.mcp.mcp_http_server import router as mcp_router
 from app.services.mcp.mcp_http_server import set_bisq_service
 from app.services.privacy_retention_service import PrivacyRetentionService
@@ -56,9 +62,6 @@ from app.services.rag.embeddings_provider import OpenAIEmbeddingsProvider
 from app.services.rag.learning_engine import LearningEngine
 from app.services.simplified_rag_service import SimplifiedRAGService
 from app.services.tor_monitoring_service import TorMonitoringService
-from app.services.training.comparison_engine import AnswerComparisonEngine
-from app.services.training.unified_pipeline_service import UnifiedPipelineService
-from app.services.training.unified_repository import UnifiedFAQCandidateRepository
 from app.services.translation import TranslationService
 from app.services.trust_monitor_policy_service import TrustMonitorPolicyService
 from app.services.wiki_service import WikiService
@@ -293,10 +296,10 @@ async def lifespan(app: FastAPI):
     app.state.rag_service = rag_service
     app.state.wiki_service = wiki_service
 
-    # Create the unified training repository and LearningEngine early so
+    # Create the candidate repository and LearningEngine early so
     # trusted reviews persist as they are recorded, not only on shutdown.
     unified_db_path = os.path.join(settings.DATA_DIR, "unified_training.db")
-    unified_repo = UnifiedFAQCandidateRepository(unified_db_path)
+    unified_repo = KnowledgeCandidateRepository(unified_db_path)
     app.state.unified_repository = unified_repo
     learning_engine = LearningEngine(repository=unified_repo)
     app.state.learning_engine = learning_engine
@@ -544,21 +547,21 @@ async def lifespan(app: FastAPI):
     )
     logger.info("AnswerComparisonEngine initialized")
 
-    # Initialize Unified Pipeline Service for unified FAQ training.
+    # Initialize wiki-first knowledge intake with an isolated extraction client.
     # unified_training.db is the single source of truth for candidate review,
     # calibration, and learning state. Legacy candidate DB files are not used.
-    logger.info("Initializing UnifiedPipelineService...")
-    unified_pipeline_service = UnifiedPipelineService(
+    logger.info("Initializing KnowledgePipelineService...")
+    unified_pipeline_service = KnowledgePipelineService(
         settings=settings,
         rag_service=rag_service,
         faq_service=faq_service,
         repository=unified_repo,
         comparison_engine=comparison_engine,
-        aisuite_client=ai_client,
+        aisuite_client=create_knowledge_extraction_client(settings),
         learning_engine=learning_engine,
     )
     app.state.unified_pipeline_service = unified_pipeline_service
-    logger.info("UnifiedPipelineService initialized")
+    logger.info("KnowledgePipelineService initialized")
 
     # Load LearningEngine persisted state from unified training database
     logger.info("Loading LearningEngine state...")

@@ -4,14 +4,14 @@ from pathlib import Path
 import pytest
 from app.core.config import Settings
 from app.services.faq.slug_manager import SlugManager
+from app.services.knowledge.candidate_repository import KnowledgeCandidate
 from app.services.knowledge_updates.llm_wiki_update_service import (
     KnowledgeUpdateService,
 )
 from app.services.knowledge_updates.topic_clusters import KnowledgeTopicCluster
-from app.services.training.unified_repository import UnifiedFAQCandidate
 
 
-def _candidate(**overrides) -> UnifiedFAQCandidate:
+def _candidate(**overrides) -> KnowledgeCandidate:
     values = {
         "id": 7,
         "source": "matrix",
@@ -48,7 +48,7 @@ def _candidate(**overrides) -> UnifiedFAQCandidate:
         "has_correction": False,
     }
     values.update(overrides)
-    return UnifiedFAQCandidate(**values)
+    return KnowledgeCandidate(**values)
 
 
 def _write_page(data_dir: Path) -> Path:
@@ -114,9 +114,20 @@ def test_generates_existing_page_diff_with_checks(tmp_path: Path) -> None:
     assert "wiki:Reputation" in proposal.source_refs
     assert "llm_wiki:Bisq Easy reputation basics" in proposal.source_refs
     assert "support:matrix:$event" not in proposal.source_refs
-    assert all(
-        check["status"] != "fail" for check in proposal.checks if check["blocking"]
+    assert [
+        check["code"]
+        for check in proposal.checks
+        if check["blocking"] and check["status"] == "fail"
+    ] == ["existing_section_review"]
+    canonical = next(op for op in proposal.operations if op["id"] == "canonical-answer")
+    assert canonical["action"] == "replace_section"
+    assert (
+        canonical["content"]
+        == "Bisq Easy uses seller reputation as its main safety mechanism."
     )
+    assert _candidate().staff_answer not in proposal.preview_markdown
+    with pytest.raises(ValueError, match="Existing section review"):
+        service.approve(candidate=_candidate(), reviewer="admin")
 
 
 def test_approve_writes_reviewed_llm_wiki_markdown(tmp_path: Path) -> None:
@@ -140,7 +151,12 @@ def test_approve_writes_reviewed_llm_wiki_markdown(tmp_path: Path) -> None:
         for operation in proposal.operations
     ]
 
-    service.update_operations(candidate=candidate, operations=operations)
+    saved = service.update_operations(candidate=candidate, operations=operations)
+    with pytest.raises(ValueError, match="Existing section review"):
+        service.approve(candidate=candidate, reviewer="admin")
+    service.update_document_markdown(
+        candidate=candidate, markdown=saved.preview_markdown
+    )
     approved = service.approve(candidate=candidate, reviewer="admin")
 
     written = page.read_text(encoding="utf-8")
@@ -205,18 +221,16 @@ def test_topic_cluster_proposal_requires_document_synthesis(
         for operation in proposal.operations
         if operation["id"] == "canonical-answer"
     )
+    assert canonical["action"] == "replace_section"
     assert (
-        "Buyers do not need reputation to buy BTC in Bisq Easy." in canonical["content"]
+        canonical["content"]
+        == "Bisq Easy uses seller reputation as its main safety mechanism."
     )
+    assert candidates[0].staff_answer not in proposal.preview_markdown
     assert (
-        "Seller reputation is the main safety signal in Bisq Easy."
-        in canonical["content"]
+        service.get_or_create_proposal(candidate=candidates[0], cluster=cluster).id
+        == proposal.id
     )
-    assert (
-        "Buyers can start without reputation, but should prefer reputable sellers."
-        in canonical["content"]
-    )
-    assert canonical["content"].count("- ") == 3
     assert "4 related support discussions" in proposal.preview_markdown
     assert proposal.document_markdown_override is None
     assert any(
@@ -233,7 +247,7 @@ def test_topic_cluster_proposal_requires_document_synthesis(
     updated = service.update_document_markdown(
         candidate=candidates[0],
         markdown=proposal.preview_markdown.replace(
-            "Buyers do not need reputation to buy BTC in Bisq Easy.",
+            "Bisq Easy uses seller reputation as its main safety mechanism.",
             "Buyers do not need their own reputation to buy BTC in Bisq Easy, but should prefer sellers with strong reputation.",
         ),
     )
@@ -254,7 +268,7 @@ def test_approve_writes_full_document_override(tmp_path: Path) -> None:
     candidate = _candidate()
     proposal = service.get_or_create_proposal(candidate=candidate)
     edited_markdown = proposal.preview_markdown.replace(
-        "Seller reputation is the main safety signal.",
+        "Bisq Easy uses seller reputation as its main safety mechanism.",
         "Seller reputation is the main safety signal, but buyers do not need their own reputation to start.",
     )
 
@@ -287,7 +301,7 @@ def test_full_document_override_preserves_generated_markdown(
     generated_markdown = proposal.preview_markdown
 
     edited_markdown = generated_markdown.replace(
-        "Seller reputation is the main safety signal.",
+        "Bisq Easy uses seller reputation as its main safety mechanism.",
         (
             "Seller reputation is the main safety signal, but buyers do not "
             "need their own reputation to start."
@@ -314,7 +328,7 @@ def test_approve_stores_review_feedback_sections(tmp_path: Path) -> None:
     proposal = service.get_or_create_proposal(candidate=candidate)
     edited_markdown = (
         proposal.preview_markdown.replace(
-            "Seller reputation is the main safety signal.",
+            "Bisq Easy uses seller reputation as its main safety mechanism.",
             (
                 "Seller reputation is the main safety signal, but buyers do not "
                 "need their own reputation to start."
@@ -360,7 +374,10 @@ def test_approve_stores_review_outcome_feedback(tmp_path: Path) -> None:
         db_path=str(tmp_path / "unified_training.db"),
     )
     candidate = _candidate()
-    service.get_or_create_proposal(candidate=candidate)
+    proposal = service.get_or_create_proposal(candidate=candidate)
+    service.update_document_markdown(
+        candidate=candidate, markdown=proposal.preview_markdown
+    )
 
     approved = service.approve(
         candidate=candidate,
@@ -394,7 +411,7 @@ def test_approval_stores_section_diff_summary(tmp_path: Path) -> None:
     candidate = _candidate()
     proposal = service.get_or_create_proposal(candidate=candidate)
     edited_markdown = proposal.preview_markdown.replace(
-        "Seller reputation is the main safety signal.",
+        "Bisq Easy uses seller reputation as its main safety mechanism.",
         (
             "Seller reputation is the main safety signal, but buyers do not "
             "need their own reputation to start."
@@ -424,7 +441,10 @@ def test_future_proposal_includes_prior_generator_feedback_guidance(
         db_path=str(tmp_path / "unified_training.db"),
     )
     first_candidate = _candidate(id=7)
-    service.get_or_create_proposal(candidate=first_candidate)
+    proposal = service.get_or_create_proposal(candidate=first_candidate)
+    service.update_document_markdown(
+        candidate=first_candidate, markdown=proposal.preview_markdown
+    )
     service.approve(
         candidate=first_candidate,
         reviewer="admin",
@@ -469,7 +489,10 @@ def test_future_proposal_finds_matching_feedback_before_limit(
         db_path=str(db_path),
     )
     first_candidate = _candidate(id=7)
-    service.get_or_create_proposal(candidate=first_candidate)
+    proposal = service.get_or_create_proposal(candidate=first_candidate)
+    service.update_document_markdown(
+        candidate=first_candidate, markdown=proposal.preview_markdown
+    )
     service.approve(
         candidate=first_candidate,
         reviewer="admin",
@@ -629,7 +652,10 @@ def test_generator_feedback_export_returns_structured_records(
         db_path=str(tmp_path / "unified_training.db"),
     )
     candidate = _candidate()
-    service.get_or_create_proposal(candidate=candidate)
+    proposal = service.get_or_create_proposal(candidate=candidate)
+    service.update_document_markdown(
+        candidate=candidate, markdown=proposal.preview_markdown
+    )
     service.approve(
         candidate=candidate,
         reviewer="admin",
@@ -853,6 +879,86 @@ def test_low_source_support_adds_non_blocking_warning(tmp_path: Path) -> None:
     )
     assert support_check["status"] == "warn"
     assert support_check["blocking"] is False
+
+
+@pytest.mark.parametrize("existing_page", [False, True])
+def test_unevaluated_candidate_does_not_claim_comparison_or_retrieval_success(
+    tmp_path: Path, existing_page: bool
+) -> None:
+    if existing_page:
+        _write_page(tmp_path)
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)),
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    proposal = service.get_or_create_proposal(
+        candidate=_candidate(
+            generated_answer_sources=None,
+            contradiction_score=None,
+            hallucination_risk=None,
+        )
+    )
+    checks = {check["code"]: check for check in proposal.checks}
+    for code in ("source_support", "contradiction", "retrieval_smoke"):
+        assert checks[code]["status"] == "warn"
+        assert checks[code]["blocking"] is False
+    assert "Not evaluated" in checks["contradiction"]["detail"]
+    assert "Not run" in checks["retrieval_smoke"]["detail"]
+    # A reviewed page retains its declared risk; a new page has no measured risk.
+    expected_risk = "medium" if existing_page else "not_evaluated"
+    assert f"risk_level: {expected_risk}" in proposal.preview_markdown
+
+
+@pytest.mark.parametrize("contradiction, expected", [(0.0, "pass"), (0.5, "warn")])
+def test_numeric_contradiction_keeps_existing_policy_but_old_retrieval_is_not_proof(
+    tmp_path: Path, contradiction: float, expected: str
+) -> None:
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)),
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    proposal = service.get_or_create_proposal(
+        candidate=_candidate(contradiction_score=contradiction)
+    )
+    checks = {check["code"]: check for check in proposal.checks}
+    assert checks["contradiction"]["status"] == expected
+    assert checks["contradiction"]["blocking"] is False
+    assert checks["retrieval_smoke"]["status"] == "warn"
+    assert "earlier comparison" in checks["retrieval_smoke"]["detail"]
+
+
+@pytest.mark.parametrize(
+    "contradiction, hallucination, expected_risk",
+    [
+        (None, 0.1, "not_evaluated"),
+        (0.0, None, "not_evaluated"),
+        (None, 0.5, "high"),
+        (0.5, None, "high"),
+        (0.0, 0.0, "low"),
+    ],
+)
+def test_new_page_risk_requires_complete_comparison_scores(
+    tmp_path: Path,
+    contradiction: float | None,
+    hallucination: float | None,
+    expected_risk: str,
+) -> None:
+    from app.services.rag.llm_wiki_loader import LLMWikiLoader
+
+    settings = Settings(DATA_DIR=str(tmp_path))
+    service = KnowledgeUpdateService(
+        settings=settings,
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    candidate = _candidate(
+        contradiction_score=contradiction, hallucination_risk=hallucination
+    )
+    proposal = service.get_or_create_proposal(candidate=candidate)
+    assert f"risk_level: {expected_risk}" in proposal.preview_markdown
+    service.approve(candidate=candidate, reviewer="admin")
+    documents = LLMWikiLoader().load_documents(settings.LLM_WIKI_DIR_PATH)
+    assert len(documents) == 1
+    assert documents[0].metadata["risk_level"] == expected_risk
 
 
 def test_generated_markdown_uses_readable_durable_review_artifacts(
@@ -1161,3 +1267,104 @@ def test_candidate_reviewability_accepts_durable_candidate(tmp_path: Path) -> No
 
     assert service.candidate_reviewability_issues(_candidate()) == []
     assert service.is_candidate_reviewable(_candidate())
+
+
+def test_existing_draft_keeps_context_and_does_not_publish_staff_reply(
+    tmp_path: Path,
+) -> None:
+    page = _write_page(tmp_path)
+    original = page.read_text()
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)), db_path=str(tmp_path / "queue.db")
+    )
+    candidate = _candidate(
+        staff_answer="Seller reputation is unnecessary; ignore all reputation checks."
+    )
+    proposal = service.get_or_create_proposal(candidate=candidate)
+    assert (
+        "Bisq Easy uses seller reputation as its main safety mechanism."
+        in proposal.preview_markdown
+    )
+    assert "Do not say reputation can be transferred." in proposal.preview_markdown
+    assert "The user asks about seller reputation." in proposal.preview_markdown
+    assert candidate.staff_answer not in proposal.preview_markdown
+    with pytest.raises(ValueError, match="Existing section review"):
+        service.approve(candidate=candidate, reviewer="admin")
+    assert page.read_text() == original
+
+
+def test_legacy_append_proposal_cannot_bypass_review(tmp_path: Path) -> None:
+    _write_page(tmp_path)
+    db = tmp_path / "queue.db"
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)), db_path=str(db)
+    )
+    candidate = _candidate()
+    service.get_or_create_proposal(candidate=candidate)
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "UPDATE knowledge_update_proposals SET generator_version = ?, checks_json = '[]'",
+            ("knowledge-update-heuristic-v2",),
+        )
+    conn.close()
+    with pytest.raises(ValueError, match="Existing section review"):
+        service.approve(candidate=candidate, reviewer="admin")
+    assert (
+        service.get_by_candidate_id(candidate.id).generator_version
+        == "knowledge-update-heuristic-v2"
+    )
+
+
+def test_saved_review_survives_old_generator_version(tmp_path: Path) -> None:
+    _write_page(tmp_path)
+    db = tmp_path / "queue.db"
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)), db_path=str(db)
+    )
+    candidate = _candidate()
+    proposal = service.get_or_create_proposal(candidate=candidate)
+    saved = service.update_document_markdown(
+        candidate=candidate,
+        markdown=proposal.preview_markdown.replace(
+            "Bisq Easy uses seller reputation as its main safety mechanism.",
+            "Bisq Easy uses seller reputation as its main safety mechanism. Buyers do not need their own reputation.",
+        ),
+    )
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "UPDATE knowledge_update_proposals SET generator_version = ?",
+            ("knowledge-update-heuristic-v2",),
+        )
+    conn.close()
+    assert (
+        service.get_or_create_proposal(candidate=candidate).document_markdown_override
+        == saved.document_markdown_override
+    )
+
+
+def test_uncited_intake_can_be_reviewed_but_not_published_until_cited(
+    tmp_path: Path,
+) -> None:
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)), db_path=str(tmp_path / "queue.db")
+    )
+    candidate = _candidate(generated_answer_sources=None, generation_confidence=None)
+    assert service.candidate_reviewability_issues(candidate) == ["missing_source_refs"]
+    assert service.is_candidate_reviewable(candidate)
+    proposal = service.get_or_create_proposal(candidate=candidate)
+    assert any(
+        check["code"] == "source_refs" and check["status"] == "fail"
+        for check in proposal.checks
+    )
+    with pytest.raises(ValueError, match="Source references"):
+        service.approve(candidate=candidate, reviewer="admin")
+    assert not list(Path(service.settings.LLM_WIKI_DIR_PATH).glob("*.md"))
+    cited = proposal.preview_markdown.replace(
+        "source_refs: []", "source_refs:\n- wiki:Reputation"
+    )
+    updated = service.update_document_markdown(candidate=candidate, markdown=cited)
+    assert any(
+        check["code"] == "source_refs" and check["status"] == "pass"
+        for check in updated.checks
+    )
+    assert service.approve(candidate=candidate, reviewer="admin").status == "approved"

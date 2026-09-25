@@ -2,7 +2,7 @@
 """
 Extract FAQs from support chat messages using single-pass LLM extraction.
 
-This script uses the UnifiedFAQExtractor for efficient FAQ extraction from
+This script uses the KnowledgeExtractor for efficient FAQ extraction from
 both Bisq 2 and Matrix chat exports. It provides:
 - 98% reduction in API calls vs multi-pass approach
 - 85% token reduction
@@ -32,9 +32,9 @@ import aisuite as ai  # type: ignore[import-untyped]
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.core.config import Settings  # noqa: E402
-from app.services.training.unified_faq_extractor import (  # noqa: E402
-    FAQExtractionResult,
-    UnifiedFAQExtractor,
+from app.services.knowledge.knowledge_extractor import (  # noqa: E402
+    KnowledgeExtractionResult,
+    KnowledgeExtractor,
 )
 
 # Configure logging
@@ -68,7 +68,9 @@ def load_messages(filepath: Path, source: str) -> list[dict]:
     return data if isinstance(data, list) else data.get("messages", [])
 
 
-def save_results(result: FAQExtractionResult, output_path: Path, source: str) -> None:
+def save_results(
+    result: KnowledgeExtractionResult, output_path: Path, source: str
+) -> None:
     """Save extraction results to JSON file.
 
     Args:
@@ -106,7 +108,7 @@ def save_results(result: FAQExtractionResult, output_path: Path, source: str) ->
     logger.info(f"Saved {len(result.faqs)} FAQs to {output_path}")
 
 
-def print_summary(result: FAQExtractionResult, source: str) -> None:
+def print_summary(result: KnowledgeExtractionResult, source: str) -> None:
     """Print extraction summary to console."""
     print(f"\n{'='*60}")
     print("FAQ EXTRACTION SUMMARY")
@@ -144,7 +146,7 @@ async def main(
     input_file: str,
     source: str,
     output_file: str | None = None,
-) -> FAQExtractionResult | None:
+) -> KnowledgeExtractionResult | None:
     """Run FAQ extraction pipeline.
 
     Args:
@@ -153,7 +155,7 @@ async def main(
         output_file: Optional output path (defaults to data/extracted_faqs_{source}.json)
 
     Returns:
-        FAQExtractionResult if successful
+        KnowledgeExtractionResult if successful
     """
     print(f"\n{'='*60}")
     print("UNIFIED FAQ EXTRACTOR")
@@ -162,7 +164,7 @@ async def main(
     # Initialize
     settings = Settings()
     aisuite_client = ai.Client()
-    extractor = UnifiedFAQExtractor(
+    extractor = KnowledgeExtractor(
         aisuite_client=aisuite_client,
         settings=settings,
     )

@@ -6,7 +6,7 @@ specificity filters that gate the extraction pipeline.
 
 from __future__ import annotations
 
-from app.services.training.validation import (
+from app.services.knowledge.validation import (
     check_answer_specificity,
     filter_short_messages,
 )

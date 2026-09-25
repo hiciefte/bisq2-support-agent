@@ -44,9 +44,7 @@ class AutoSendRouter:
         """
         if self._learning_engine is not None:
             try:
-                history = self._learning_engine._review_history
-                min_samples = self._learning_engine.min_samples_for_update
-                if len(history) >= min_samples:
+                if self._learning_engine.has_sufficient_calibration_samples():
                     t = self._learning_engine.get_current_thresholds()
                     return t["auto_send_threshold"], t["queue_high_threshold"]
             except Exception as e:

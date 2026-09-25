@@ -19,17 +19,17 @@ from app.routes.admin.knowledge_updates import (
     reconcile_reviewed_knowledge_coverage,
     update_knowledge_update_document,
 )
+from app.services.knowledge.candidate_repository import (
+    KnowledgeCandidate,
+    KnowledgeCandidateRepository,
+)
 from app.services.knowledge_updates.llm_wiki_update_service import (
     KnowledgeUpdateService,
-)
-from app.services.training.unified_repository import (
-    UnifiedFAQCandidate,
-    UnifiedFAQCandidateRepository,
 )
 from fastapi import BackgroundTasks, HTTPException
 
 
-def _candidate(**overrides) -> UnifiedFAQCandidate:
+def _candidate(**overrides) -> KnowledgeCandidate:
     values = {
         "id": 1,
         "source": "matrix",
@@ -69,7 +69,7 @@ def _candidate(**overrides) -> UnifiedFAQCandidate:
         "has_correction": False,
     }
     values.update(overrides)
-    return UnifiedFAQCandidate(**values)
+    return KnowledgeCandidate(**values)
 
 
 def _write_reviewed_llm_wiki_page(data_dir: Path) -> None:
@@ -1386,7 +1386,7 @@ async def test_generator_feedback_records_endpoint_returns_export(
 async def test_promote_code_evidence_endpoint_creates_reviewable_proposal(
     tmp_path: Path,
 ) -> None:
-    repository = UnifiedFAQCandidateRepository(str(tmp_path / "unified_training.db"))
+    repository = KnowledgeCandidateRepository(str(tmp_path / "unified_training.db"))
     pipeline = type("Pipeline", (), {"repository": repository})()
     service = KnowledgeUpdateService(
         settings=Settings(DATA_DIR=str(tmp_path)),
@@ -1437,7 +1437,7 @@ async def test_promote_code_evidence_endpoint_creates_reviewable_proposal(
 async def test_promote_code_evidence_endpoint_accepts_symbol_less_evidence(
     tmp_path: Path,
 ) -> None:
-    repository = UnifiedFAQCandidateRepository(str(tmp_path / "unified_training.db"))
+    repository = KnowledgeCandidateRepository(str(tmp_path / "unified_training.db"))
     pipeline = type("Pipeline", (), {"repository": repository})()
     service = KnowledgeUpdateService(
         settings=Settings(DATA_DIR=str(tmp_path)),
@@ -1487,7 +1487,7 @@ async def test_promote_code_evidence_value_error_hides_internal_detail(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     private_detail = "PRIVATE_CODE_EVIDENCE_DETAIL"
-    repository = UnifiedFAQCandidateRepository(str(tmp_path / "unified_training.db"))
+    repository = KnowledgeCandidateRepository(str(tmp_path / "unified_training.db"))
     pipeline = type("Pipeline", (), {"repository": repository})()
     service = KnowledgeUpdateService(
         settings=Settings(DATA_DIR=str(tmp_path)),
@@ -1515,3 +1515,35 @@ async def test_promote_code_evidence_value_error_hides_internal_detail(
     assert exc_info.value.detail == "Invalid code evidence proposal"
     assert private_detail not in exc_info.value.detail
     assert private_detail in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_uncited_unevaluated_candidate_enters_review_with_source_blocker(
+    tmp_path: Path,
+) -> None:
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)), db_path=str(tmp_path / "queue.db")
+    )
+    candidate = _candidate(
+        generated_answer_sources=None,
+        generated_answer=None,
+        final_score=None,
+        generation_confidence=None,
+    )
+    response = await get_current_knowledge_update(
+        queue="FULL_REVIEW",
+        pipeline_service=_PipelineService([candidate]),
+        service=service,
+    )
+    assert response is not None
+    assert response["candidate"]["id"] == candidate.id
+    assert response["candidate"]["generated_answer"] is None
+    assert response["candidate"]["final_score"] is None
+    assert any(
+        check["code"] == "source_refs"
+        and check["status"] == "fail"
+        and check["blocking"]
+        for check in response["proposal"]["checks"]
+    )
+    with pytest.raises(ValueError, match="Source references"):
+        service.approve(candidate=candidate, reviewer="admin")

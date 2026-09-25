@@ -9,7 +9,7 @@ Fixtures:
 - sample_matrix_answer: Sample Matrix staff answer for testing
 - sample_matrix_thread: Multi-turn Matrix conversation thread
 - mock_comparison_result: Mock comparison result with various score levels
-- unified_repository: UnifiedFAQCandidateRepository instance
+- unified_repository: KnowledgeCandidateRepository instance
 - mock_rag_service: Mocked RAG service for testing
 """
 
@@ -266,19 +266,19 @@ def unified_temp_dir():
 
 @pytest.fixture
 def unified_repository(unified_temp_dir):
-    """Create a UnifiedFAQCandidateRepository instance.
+    """Create a KnowledgeCandidateRepository instance.
 
     Note: This fixture will fail until the repository is implemented.
     The tests are written TDD-style before implementation.
     """
     try:
-        from app.services.training.unified_repository import (
-            UnifiedFAQCandidateRepository,
+        from app.services.knowledge.candidate_repository import (
+            KnowledgeCandidateRepository,
         )
 
-        return UnifiedFAQCandidateRepository(unified_temp_dir)
+        return KnowledgeCandidateRepository(unified_temp_dir)
     except ImportError:
-        pytest.skip("UnifiedFAQCandidateRepository not yet implemented")
+        pytest.skip("KnowledgeCandidateRepository not yet implemented")
 
 
 # === Service Mocks ===
@@ -376,23 +376,23 @@ async def unified_pipeline_service(
     mock_rag_service,
     mock_faq_service,
 ):
-    """Create a UnifiedPipelineService instance for testing.
+    """Create a KnowledgePipelineService instance for testing.
 
     Note: This fixture will fail until the service is implemented.
     """
     try:
-        from app.services.training.unified_pipeline_service import (
-            UnifiedPipelineService,
+        from app.services.knowledge.knowledge_pipeline_service import (
+            KnowledgePipelineService,
         )
 
-        service = UnifiedPipelineService(
+        service = KnowledgePipelineService(
             settings=test_settings,
             rag_service=mock_rag_service,
             faq_service=mock_faq_service,
         )
         return service
     except ImportError:
-        pytest.skip("UnifiedPipelineService not yet implemented")
+        pytest.skip("KnowledgePipelineService not yet implemented")
 
 
 # === Sample Unified Candidates ===

@@ -21,6 +21,7 @@ from urllib.parse import quote
 import yaml
 from app.core.config import Settings
 from app.services.faq.slug_manager import SlugManager
+from app.services.knowledge.candidate_repository import KnowledgeCandidate
 from app.services.knowledge_updates.topic_clusters import (
     KnowledgeTopicCluster,
     topic_cluster_key,
@@ -36,7 +37,6 @@ from app.services.rag.source_refs import (
     code_source_refs,
     imprecise_code_source_refs,
 )
-from app.services.training.unified_repository import UnifiedFAQCandidate
 from app.utils.wiki_url_generator import generate_wiki_url
 
 SECTION_ORDER = [
@@ -75,7 +75,7 @@ SITUATIONAL_QUESTION_TERMS = (
     "screenshot",
 )
 SOURCE_SUPPORT_WARN_THRESHOLD = 0.20
-GENERATOR_VERSION = "knowledge-update-heuristic-v2"
+GENERATOR_VERSION = "knowledge-update-section-review-v3"
 PROMPT_VERSION: Optional[str] = None
 MAX_GENERATOR_FEEDBACK_EXAMPLES = 5
 GENERATOR_FEEDBACK_EXPORT_LIMIT = 100
@@ -324,7 +324,7 @@ class KnowledgeUpdateService:
     def get_or_create_proposal(
         self,
         *,
-        candidate: UnifiedFAQCandidate,
+        candidate: KnowledgeCandidate,
         cluster: Optional[KnowledgeTopicCluster] = None,
         force: bool = False,
     ) -> KnowledgeUpdateProposal:
@@ -399,7 +399,7 @@ class KnowledgeUpdateService:
         return self._row_to_proposal(row) if row else None
 
     def candidate_reviewability_issues(
-        self, candidate: UnifiedFAQCandidate
+        self, candidate: KnowledgeCandidate
     ) -> List[str]:
         """Return fundamental reasons a candidate should not enter LLM Wiki review."""
         issues: List[str] = []
@@ -415,10 +415,15 @@ class KnowledgeUpdateService:
             issues.append("low_reusability")
         return issues
 
-    def is_candidate_reviewable(self, candidate: UnifiedFAQCandidate) -> bool:
-        return not self.candidate_reviewability_issues(candidate)
+    def is_candidate_reviewable(self, candidate: KnowledgeCandidate) -> bool:
+        # Missing citations can be repaired during review; approval still requires
+        # durable source references. Do not hide unevaluated intake from the queue.
+        return not (
+            set(self.candidate_reviewability_issues(candidate))
+            - {"missing_source_refs"}
+        )
 
-    def review_cluster_key(self, candidate: UnifiedFAQCandidate) -> str:
+    def review_cluster_key(self, candidate: KnowledgeCandidate) -> str:
         """Return the conservative key used to collapse admin review items.
 
         Broad support topics are not enough: one approval marks every cluster
@@ -434,7 +439,7 @@ class KnowledgeUpdateService:
     def update_operations(
         self,
         *,
-        candidate: UnifiedFAQCandidate,
+        candidate: KnowledgeCandidate,
         operations: List[Dict[str, Any]],
     ) -> KnowledgeUpdateProposal:
         proposal = self.get_or_create_proposal(candidate=candidate)
@@ -489,7 +494,7 @@ class KnowledgeUpdateService:
     def update_document_markdown(
         self,
         *,
-        candidate: UnifiedFAQCandidate,
+        candidate: KnowledgeCandidate,
         markdown: str,
     ) -> KnowledgeUpdateProposal:
         proposal = self.get_or_create_proposal(candidate=candidate)
@@ -546,7 +551,7 @@ class KnowledgeUpdateService:
     def approve(
         self,
         *,
-        candidate: UnifiedFAQCandidate,
+        candidate: KnowledgeCandidate,
         reviewer: str,
         cluster: Optional[KnowledgeTopicCluster] = None,
         feedback_tags: Optional[Iterable[str]] = None,
@@ -561,6 +566,15 @@ class KnowledgeUpdateService:
         if blocking_failures:
             labels = ", ".join(str(check.get("label")) for check in blocking_failures)
             raise ValueError(f"Cannot approve knowledge update: {labels}")
+
+        # Enforce review even for proposals persisted by the older append workflow.
+        if (
+            proposal.proposal_kind == "update_existing"
+            and not proposal.document_markdown_override
+        ):
+            raise ValueError(
+                "Cannot approve knowledge update: Existing section review. Save the reviewed full document first."
+            )
 
         page_id = proposal.target_page_id or self._new_page_id(candidate)
         target = self._load_page_by_id(page_id)
@@ -661,7 +675,7 @@ class KnowledgeUpdateService:
     def to_response(
         self,
         proposal: KnowledgeUpdateProposal,
-        candidate: UnifiedFAQCandidate,
+        candidate: KnowledgeCandidate,
     ) -> Dict[str, Any]:
         target = self._load_page_by_id(proposal.target_page_id)
         preview_markdown = self._proposal_markdown(
@@ -1145,7 +1159,7 @@ class KnowledgeUpdateService:
     def _build_generator_feedback_context(
         self,
         *,
-        candidate: UnifiedFAQCandidate,
+        candidate: KnowledgeCandidate,
         target: Optional[LLMWikiPageRecord],
     ) -> Dict[str, Any]:
         target_page_id = target.page_id if target else self._new_page_id(candidate)
@@ -1227,7 +1241,7 @@ class KnowledgeUpdateService:
 
     def _match_target_page(
         self,
-        candidate: UnifiedFAQCandidate,
+        candidate: KnowledgeCandidate,
         pages: List[LLMWikiPageRecord],
     ) -> Optional[LLMWikiPageRecord]:
         if not pages:
@@ -1282,7 +1296,7 @@ class KnowledgeUpdateService:
 
     def _build_source_refs(
         self,
-        candidate: UnifiedFAQCandidate,
+        candidate: KnowledgeCandidate,
         *,
         cluster: Optional[KnowledgeTopicCluster] = None,
     ) -> List[str]:
@@ -1311,7 +1325,7 @@ class KnowledgeUpdateService:
 
     def _build_operations(
         self,
-        candidate: UnifiedFAQCandidate,
+        candidate: KnowledgeCandidate,
         target: Optional[LLMWikiPageRecord],
         source_refs: List[str],
         *,
@@ -1328,17 +1342,24 @@ class KnowledgeUpdateService:
             answer = _cluster_canonical_answer(cluster)
             applies_when = _cluster_applies_when(cluster)
             last_change_summary = _cluster_last_change_summary(cluster)
+        if target is not None:
+            # Staff replies are evidence for the editor, not an automatic replacement
+            # or an ever-growing list of answers in the canonical knowledge page.
+            answer = _sections_from_markdown(target.body).get(
+                "Canonical Support Answer", ""
+            )
+            applies_when = _sections_from_markdown(target.body).get("Applies When", "")
         operations: List[Dict[str, Any]] = [
             {
                 "id": "canonical-answer",
                 "section": "Canonical Support Answer",
-                "action": "append_paragraph",
+                "action": "replace_section",
                 "content": answer,
             },
             {
                 "id": "applies-when",
                 "section": "Applies When",
-                "action": "append_bullet",
+                "action": "replace_section" if target else "append_bullet",
                 "content": applies_when,
             },
             {
@@ -1390,12 +1411,16 @@ class KnowledgeUpdateService:
                     "content": "\n".join(f"`{ref}`" for ref in source_refs),
                 }
             )
-        return operations
+        return [
+            operation
+            for operation in operations
+            if str(operation.get("content") or "").strip()
+        ]
 
     def _render_preview(
         self,
         *,
-        candidate: UnifiedFAQCandidate,
+        candidate: KnowledgeCandidate,
         target: Optional[LLMWikiPageRecord],
         operations: List[Dict[str, Any]],
         source_refs: List[str],
@@ -1430,7 +1455,7 @@ class KnowledgeUpdateService:
     def _proposal_markdown(
         self,
         *,
-        candidate: UnifiedFAQCandidate,
+        candidate: KnowledgeCandidate,
         proposal: KnowledgeUpdateProposal,
         target: Optional[LLMWikiPageRecord],
     ) -> str:
@@ -1454,7 +1479,7 @@ class KnowledgeUpdateService:
         self,
         *,
         markdown: str,
-        candidate: UnifiedFAQCandidate,
+        candidate: KnowledgeCandidate,
         source_refs: List[str],
         page_id: str,
     ) -> str:
@@ -1485,7 +1510,7 @@ class KnowledgeUpdateService:
     def _build_checks(
         self,
         *,
-        candidate: UnifiedFAQCandidate,
+        candidate: KnowledgeCandidate,
         target: Optional[LLMWikiPageRecord],
         operations: List[Dict[str, Any]],
         source_refs: List[str],
@@ -1606,8 +1631,8 @@ class KnowledgeUpdateService:
                 label="Source support",
                 status=(
                     "warn"
-                    if source_support is not None
-                    and source_support < SOURCE_SUPPORT_WARN_THRESHOLD
+                    if source_support is None
+                    or source_support < SOURCE_SUPPORT_WARN_THRESHOLD
                     else "pass"
                 ),
                 detail=(
@@ -1618,7 +1643,7 @@ class KnowledgeUpdateService:
                     else (
                         f"Candidate answer is supported by retrieved source snippets ({source_support:.2f})."
                         if source_support is not None
-                        else "No source-snippet content was available for lexical support scoring."
+                        else "Not evaluated: no source-snippet content is available for support scoring. Review the cited evidence directly."
                     )
                 ),
                 blocking=False,
@@ -1665,6 +1690,19 @@ class KnowledgeUpdateService:
         if proposal_kind == "update_existing":
             checks.append(
                 _check(
+                    code="existing_section_review",
+                    label="Existing section review",
+                    status="pass" if document_override_present else "fail",
+                    detail=(
+                        "The complete document was saved for review. Preserve useful existing guidance and resolve conflicting evidence before approval."
+                        if document_override_present
+                        else "Edit the existing canonical passage using the support evidence, preserve applicable context, then save the reviewed document. Do not append each staff answer or copy a conflicting reply without verification."
+                    ),
+                    blocking=True,
+                )
+            )
+            checks.append(
+                _check(
                     code="target_page",
                     label="Target page",
                     status="pass" if target else "fail",
@@ -1693,16 +1731,22 @@ class KnowledgeUpdateService:
                 )
             )
 
-        contradiction = candidate.contradiction_score or 0.0
+        contradiction = candidate.contradiction_score
         checks.append(
             _check(
                 code="contradiction",
                 label="Contradiction risk",
-                status="warn" if contradiction >= 0.35 else "pass",
+                status=(
+                    "warn" if contradiction is None or contradiction >= 0.35 else "pass"
+                ),
                 detail=(
-                    f"Candidate contradiction score is {contradiction:.2f}; review wording carefully."
-                    if contradiction >= 0.35
-                    else "No high contradiction signal from comparison scoring."
+                    "Not evaluated: no comparison contradiction score is available. Review conflicting claims against the sources."
+                    if contradiction is None
+                    else (
+                        f"Candidate contradiction score is {contradiction:.2f}; review wording carefully."
+                        if contradiction >= 0.35
+                        else "No high contradiction signal from comparison scoring."
+                    )
                 ),
                 blocking=False,
             )
@@ -1715,15 +1759,11 @@ class KnowledgeUpdateService:
             _check(
                 code="retrieval_smoke",
                 label="Retrieval smoke",
-                status=(
-                    "pass"
-                    if retrieved_llm_wiki or proposal_kind == "create_new"
-                    else "warn"
-                ),
+                status="warn",
                 detail=(
-                    "The originating answer already used an LLM Wiki source."
+                    "Not run for this proposed revision. The earlier comparison used an LLM Wiki source; that does not verify retrieval of this update."
                     if retrieved_llm_wiki
-                    else "This change will only affect retrieval after the next vector-store rebuild."
+                    else "Not run: retrieval of this proposed revision has not been tested. Save and index the update before checking retrieval."
                 ),
                 blocking=False,
             )
@@ -1754,7 +1794,7 @@ class KnowledgeUpdateService:
         return checks
 
     def _generated_source_titles(
-        self, candidate: UnifiedFAQCandidate, *, source_type: str
+        self, candidate: KnowledgeCandidate, *, source_type: str
     ) -> set[str]:
         titles: set[str] = set()
         for source in _parse_sources(candidate.generated_answer_sources):
@@ -1766,14 +1806,14 @@ class KnowledgeUpdateService:
                 titles.add(title)
         return titles
 
-    def _new_page_id(self, candidate: UnifiedFAQCandidate) -> str:
+    def _new_page_id(self, candidate: KnowledgeCandidate) -> str:
         protocol = candidate.protocol or "all"
         base = candidate.category or candidate.question_text
         return (
             _slugify(f"{protocol}-{base}")[:80].strip("-") or f"{protocol}-support-note"
         )
 
-    def _new_page_title(self, candidate: UnifiedFAQCandidate) -> str:
+    def _new_page_title(self, candidate: KnowledgeCandidate) -> str:
         category = (candidate.category or "Support note").strip()
         protocol = candidate.protocol or "all"
         protocol_label = {
@@ -1786,7 +1826,7 @@ class KnowledgeUpdateService:
 
     def _new_page_frontmatter(
         self,
-        candidate: UnifiedFAQCandidate,
+        candidate: KnowledgeCandidate,
         source_refs: List[str],
     ) -> Dict[str, Any]:
         return {
@@ -2093,9 +2133,17 @@ def _proposal_has_cluster_context(
         return True
     if proposal.document_markdown_override:
         return True
-    return _operations_require_cluster_synthesis(
-        proposal.operations
-    ) and _operations_include_cluster_answer_units(proposal.operations, cluster)
+    return _operations_require_cluster_synthesis(proposal.operations) and (
+        (
+            proposal.proposal_kind == "update_existing"
+            and any(
+                operation.get("id") == "cluster-synthesis"
+                and operation.get("content") == _cluster_synthesis_note(cluster)
+                for operation in proposal.operations
+            )
+        )
+        or _operations_include_cluster_answer_units(proposal.operations, cluster)
+    )
 
 
 def _operations_require_cluster_synthesis(operations: List[Dict[str, Any]]) -> bool:
@@ -2493,7 +2541,7 @@ def _feedback_record_notes(record: Dict[str, Any]) -> List[str]:
 def _feedback_record_matches_candidate(
     record: Dict[str, Any],
     *,
-    candidate: UnifiedFAQCandidate,
+    candidate: KnowledgeCandidate,
     target_page_id: str,
 ) -> bool:
     if record.get("target_page_id") == target_page_id:
@@ -2545,17 +2593,23 @@ def _clean_block(value: str) -> str:
     return "\n".join(line.rstrip() for line in str(value or "").strip().splitlines())
 
 
-def _risk_level(candidate: UnifiedFAQCandidate) -> str:
-    if (candidate.hallucination_risk or 0.0) >= 0.45 or (
-        candidate.contradiction_score or 0.0
-    ) >= 0.35:
+def _risk_level(candidate: KnowledgeCandidate) -> str:
+    if (
+        candidate.hallucination_risk is not None
+        and candidate.hallucination_risk >= 0.45
+    ) or (
+        candidate.contradiction_score is not None
+        and candidate.contradiction_score >= 0.35
+    ):
         return "high"
+    if candidate.hallucination_risk is None or candidate.contradiction_score is None:
+        return "not_evaluated"
     if candidate.protocol == "multisig_v1":
         return "medium"
     return "low"
 
 
-def _candidate_reusability_issues(candidate: UnifiedFAQCandidate) -> List[str]:
+def _candidate_reusability_issues(candidate: KnowledgeCandidate) -> List[str]:
     question = _clean_inline(candidate.edited_question_text or candidate.question_text)
     answer = _clean_block(candidate.edited_staff_answer or candidate.staff_answer)
     question_lower = question.lower()
@@ -2583,7 +2637,7 @@ def _candidate_reusability_issues(candidate: UnifiedFAQCandidate) -> List[str]:
 
 
 def _candidate_protocol_conflict(
-    candidate: UnifiedFAQCandidate,
+    candidate: KnowledgeCandidate,
 ) -> Optional[tuple[str, float]]:
     protocol = candidate.protocol
     if not protocol or protocol == "all" or protocol not in VALID_PROTOCOLS:
@@ -2612,7 +2666,7 @@ def _candidate_protocol_conflict(
 
 
 def _candidate_source_support_score(
-    candidate: UnifiedFAQCandidate,
+    candidate: KnowledgeCandidate,
 ) -> Optional[float]:
     sources = _parse_sources(candidate.generated_answer_sources)
     source_text = " ".join(

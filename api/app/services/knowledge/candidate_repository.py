@@ -1,25 +1,22 @@
-"""
-Unified FAQ Candidate Repository.
+"""Knowledge candidate storage, review state and extraction attempt receipts.
 
-This module provides the repository layer for storing and managing
-FAQ candidates from both Bisq 2 support chat and Matrix staff answers.
-
-The repository handles:
-- Candidate storage with source tracking (bisq2/matrix)
-- Calibration state management
-- Review queue operations (approve/reject/skip)
-- Source-based filtering for the admin UI
-"""
+The existing database and table names remain stable for stored-data compatibility."""
 
 import json
 import logging
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Sequence
 
 logger = logging.getLogger(__name__)
+
+
+class KnowledgeExtractionHeldError(RuntimeError):
+    """A prior extraction may have reached the provider; do not retry it."""
+
 
 _UNIFIED_CANDIDATES_TABLE_SQL = """
             CREATE TABLE IF NOT EXISTS unified_faq_candidates (
@@ -93,7 +90,7 @@ def _table_columns(cursor: sqlite3.Cursor, table_name: str) -> list[str]:
 
 
 @dataclass
-class UnifiedFAQCandidate:
+class KnowledgeCandidate:
     """A candidate FAQ entry pending review.
 
     Attributes:
@@ -196,7 +193,7 @@ class ConversationThread:
     States:
         - pending_question: Initial state when thread created for a new question
         - has_staff_answer: Staff has replied to the question
-        - candidate_created: FAQ candidate generated from the Q&A pair
+        - candidate_created: knowledge candidate generated from the Q&A pair
         - has_correction: Staff has submitted a correction to the answer
         - closed: FAQ was approved and created from this thread
         - closed_updated: Post-approval correction was reviewed and resolved
@@ -232,7 +229,7 @@ class ConversationThread:
         state: Thread state machine value (see states above)
         created_at: When the thread was created
         updated_at: Last update timestamp
-        candidate_id: Link to FAQ candidate when created (optional)
+        candidate_id: Link to knowledge candidate when created (optional)
         faq_id: Link to FAQ after approval (optional)
         correction_reason: Reason for post-approval correction (optional)
     """
@@ -275,10 +272,10 @@ class ThreadMessage:
     is_processed: bool = False
 
 
-class UnifiedFAQCandidateRepository:
-    """Repository for managing unified FAQ candidates.
+class KnowledgeCandidateRepository:
+    """Repository for managing knowledge candidates.
 
-    This repository provides CRUD operations for FAQ candidates from
+    This repository provides CRUD operations for knowledge candidates from
     both Bisq 2 support chat and Matrix staff answers, along with
     calibration state management.
     """
@@ -305,6 +302,24 @@ class UnifiedFAQCandidateRepository:
         # Create unified_faq_candidates table
         cursor.execute(_UNIFIED_CANDIDATES_TABLE_SQL)
         _ensure_code_evidence_source_allowed(cursor)
+
+        # Receipts deliberately contain no conversation text or raw event IDs.
+        # An unfinished receipt holds its source scope until explicitly reviewed.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS knowledge_extraction_attempts (
+                input_digest TEXT PRIMARY KEY,
+                scope_digest TEXT NOT NULL,
+                source TEXT NOT NULL,
+                state TEXT NOT NULL CHECK (state IN ('started', 'completed', 'uncertain')),
+                candidate_ids TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """)
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_knowledge_extraction_scope "
+            "ON knowledge_extraction_attempts(scope_digest, state)"
+        )
 
         # Create indexes for performance
         cursor.execute(
@@ -506,6 +521,60 @@ class UnifiedFAQCandidateRepository:
         conn.commit()
         conn.close()
 
+    def begin_knowledge_extraction(
+        self, *, source: str, scope_digest: str, input_digest: str
+    ) -> Optional[List[int]]:
+        """Reserve a provider attempt, or return a known completed result.
+
+        ``None`` means a new reservation. An empty list means a successful
+        extraction with no candidates, not a failure. The existing privacy
+        retention job expires completed receipts at its configured interval;
+        unresolved receipts remain as metadata-only retry guards.
+        """
+        now = datetime.now(timezone.utc)
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT state, candidate_ids FROM knowledge_extraction_attempts "
+                "WHERE input_digest = ?",
+                (input_digest,),
+            ).fetchone()
+            if row and row[0] == "completed":
+                return json.loads(row[1])
+            held = conn.execute(
+                "SELECT 1 FROM knowledge_extraction_attempts "
+                "WHERE scope_digest = ? AND state IN ('started', 'uncertain') LIMIT 1",
+                (scope_digest,),
+            ).fetchone()
+            if held:
+                raise KnowledgeExtractionHeldError(
+                    "Knowledge extraction is held for reconciliation of a prior attempt"
+                )
+            conn.execute(
+                "INSERT INTO knowledge_extraction_attempts "
+                "(input_digest, scope_digest, source, state, created_at, updated_at) "
+                "VALUES (?, ?, ?, 'started', ?, ?)",
+                (input_digest, scope_digest, source, now.isoformat(), now.isoformat()),
+            )
+        return None
+
+    def finish_knowledge_extraction(
+        self, input_digest: str, *, candidate_ids: List[int], succeeded: bool
+    ) -> None:
+        """Record the result without authorizing a retry of uncertain work."""
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
+            conn.execute(
+                "UPDATE knowledge_extraction_attempts "
+                "SET state = ?, candidate_ids = ?, updated_at = ? "
+                "WHERE input_digest = ? AND state = 'started'",
+                (
+                    "completed" if succeeded else "uncertain",
+                    json.dumps(candidate_ids),
+                    datetime.now(timezone.utc).isoformat(),
+                    input_digest,
+                ),
+            )
+
     def create(
         self,
         source: Literal["bisq2", "matrix", "code_evidence"],
@@ -530,8 +599,8 @@ class UnifiedFAQCandidateRepository:
         original_user_question: Optional[str] = None,
         original_staff_answer: Optional[str] = None,
         generation_confidence: Optional[float] = None,
-    ) -> UnifiedFAQCandidate:
-        """Create a new FAQ candidate.
+    ) -> KnowledgeCandidate:
+        """Create a new knowledge candidate.
 
         Args:
             source: Origin source ("bisq2", "matrix", or "code_evidence")
@@ -557,7 +626,7 @@ class UnifiedFAQCandidateRepository:
             original_staff_answer: Original conversational staff answer before transformation
 
         Returns:
-            The created UnifiedFAQCandidate with assigned ID
+            The created KnowledgeCandidate with assigned ID
 
         Raises:
             sqlite3.IntegrityError: If source_event_id already exists
@@ -608,7 +677,7 @@ class UnifiedFAQCandidateRepository:
         conn.commit()
         conn.close()
 
-        return UnifiedFAQCandidate(
+        return KnowledgeCandidate(
             id=candidate_id,
             source=source,
             source_event_id=source_event_id,
@@ -636,7 +705,7 @@ class UnifiedFAQCandidateRepository:
             generation_confidence=generation_confidence,
         )
 
-    def get_by_id(self, candidate_id: int) -> Optional[UnifiedFAQCandidate]:
+    def get_by_id(self, candidate_id: int) -> Optional[KnowledgeCandidate]:
         """Get a candidate by ID.
 
         Args:
@@ -681,7 +750,7 @@ class UnifiedFAQCandidateRepository:
 
         return result is not None
 
-    def get_by_event_id(self, source_event_id: str) -> Optional[UnifiedFAQCandidate]:
+    def get_by_event_id(self, source_event_id: str) -> Optional[KnowledgeCandidate]:
         """Get a candidate by the original source event ID."""
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
@@ -704,7 +773,7 @@ class UnifiedFAQCandidateRepository:
         routing: Optional[str] = None,
         limit: int = 50,
         offset: int = 0,
-    ) -> List[UnifiedFAQCandidate]:
+    ) -> List[KnowledgeCandidate]:
         """Get pending candidates, optionally filtered by source and routing.
 
         Args:
@@ -745,7 +814,7 @@ class UnifiedFAQCandidateRepository:
         self,
         routing: str,
         source: Optional[Literal["bisq2", "matrix"]] = None,
-    ) -> Optional[UnifiedFAQCandidate]:
+    ) -> Optional[KnowledgeCandidate]:
         """Get the next item to review from a queue.
 
         Args:
@@ -1109,7 +1178,7 @@ class UnifiedFAQCandidateRepository:
         has_correction: Optional[bool] = None,
         generation_confidence: Optional[float] = None,
         require_pending: bool = False,
-    ) -> Optional[UnifiedFAQCandidate]:
+    ) -> Optional[KnowledgeCandidate]:
         """Update a candidate with new values.
 
         Only non-None values will be updated. This allows partial updates
@@ -1257,7 +1326,7 @@ class UnifiedFAQCandidateRepository:
         self,
         candidate_id: int,
         **updates,
-    ) -> Optional[UnifiedFAQCandidate]:
+    ) -> Optional[KnowledgeCandidate]:
         """Update a candidate only if it is still pending."""
         return self.update_candidate(
             candidate_id=candidate_id,
@@ -1358,14 +1427,14 @@ class UnifiedFAQCandidateRepository:
             spot_check_threshold=row[4],
         )
 
-    def _row_to_candidate(self, row: sqlite3.Row) -> UnifiedFAQCandidate:
-        """Convert a database row to a UnifiedFAQCandidate.
+    def _row_to_candidate(self, row: sqlite3.Row) -> KnowledgeCandidate:
+        """Convert a database row to a KnowledgeCandidate.
 
         Args:
             row: SQLite row object
 
         Returns:
-            UnifiedFAQCandidate instance
+            KnowledgeCandidate instance
         """
         # Handle columns that may not exist in older databases
         protocol = row["protocol"] if "protocol" in row.keys() else None
@@ -1402,7 +1471,7 @@ class UnifiedFAQCandidateRepository:
             bool(row["has_correction"]) if "has_correction" in row.keys() else False
         )
 
-        return UnifiedFAQCandidate(
+        return KnowledgeCandidate(
             id=row["id"],
             source=row["source"],
             source_event_id=row["source_event_id"],
@@ -1491,10 +1560,11 @@ class UnifiedFAQCandidateRepository:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        # Limit review history to last 1000 records to prevent unbounded growth
-        limited_review_history = (
-            review_history[-1000:] if len(review_history) > 1000 else review_history
-        )
+        # Separate caps prevent knowledge audit churn from evicting quality data.
+        # Import lazily: LearningEngine does not import this repository.
+        from app.services.rag.learning_engine import LearningEngine
+
+        limited_review_history = LearningEngine.bounded_review_history(review_history)
 
         cursor.execute(
             """
@@ -2073,3 +2143,8 @@ class UnifiedFAQCandidateRepository:
             trigger=trigger,
             metadata={"correction_reason": correction_reason},
         )
+
+
+# Compatibility for existing operational imports; implementations live above.
+UnifiedFAQCandidate = KnowledgeCandidate
+UnifiedFAQCandidateRepository = KnowledgeCandidateRepository

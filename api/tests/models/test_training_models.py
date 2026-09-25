@@ -23,7 +23,7 @@ class TestQAPairSharedModel:
 
     def test_qapair_still_importable_from_training_init(self):
         """Backwards compat: training __init__ re-exports QAPair."""
-        from app.services.training import QAPair
+        from app.services.knowledge import QAPair
 
         assert QAPair is not None
 

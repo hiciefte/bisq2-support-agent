@@ -8,16 +8,16 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from app.services.training.unified_faq_extractor import UnifiedFAQExtractor
+from app.services.knowledge.knowledge_extractor import KnowledgeExtractor
 
 
-def _make_extractor() -> UnifiedFAQExtractor:
+def _make_extractor() -> KnowledgeExtractor:
     settings = SimpleNamespace(
         LLM_EXTRACTION_MODEL="test",
         LLM_EXTRACTION_TEMPERATURE=0.0,
         LLM_EXTRACTION_MAX_TOKENS=4000,
     )
-    return UnifiedFAQExtractor(
+    return KnowledgeExtractor(
         aisuite_client=None,
         settings=settings,  # type: ignore[arg-type]
         staff_identifiers=["staff1", "@staff1:matrix.org"],

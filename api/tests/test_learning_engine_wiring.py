@@ -62,6 +62,7 @@ class TestLearningEngineWiring:
                 confidence=0.85,
                 admin_action="approved",
                 routing_action="auto_send",
+                metadata={"review_kind": "answer_quality"},
             )
         for i in range(10):
             engine.record_review(
@@ -69,6 +70,7 @@ class TestLearningEngineWiring:
                 confidence=0.40,
                 admin_action="rejected",
                 routing_action="queue_low",
+                metadata={"review_kind": "answer_quality"},
             )
 
         # After 60 reviews (>50 min_samples), thresholds should have updated
@@ -93,6 +95,7 @@ class TestLearningEngineWiring:
                 confidence=0.85,
                 admin_action="approved",
                 routing_action="auto_send",
+                metadata={"review_kind": "answer_quality"},
             )
         for i in range(10):
             engine.record_review(
@@ -100,6 +103,7 @@ class TestLearningEngineWiring:
                 confidence=0.40,
                 admin_action="rejected",
                 routing_action="queue_low",
+                metadata={"review_kind": "answer_quality"},
             )
 
         router = AutoSendRouter(learning_engine=engine)

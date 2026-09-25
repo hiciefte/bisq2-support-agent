@@ -48,6 +48,8 @@ def test_trusted_helpful_edited_maps_to_admin_action_edited() -> None:
     assert kwargs["admin_action"] == "edited"
     assert kwargs["metadata"]["idempotent"] is True
     assert kwargs["question_id"] == "user_rating_msg-1_user-1"
+    assert kwargs["metadata"]["review_kind"] == "answer_quality"
+    assert kwargs["metadata"]["calibration_question_id"] == "escalation:1"
 
 
 def test_trusted_unhelpful_maps_to_admin_action_rejected() -> None:

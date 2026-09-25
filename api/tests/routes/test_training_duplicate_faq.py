@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from app.core.security import verify_admin_access
 from app.routes.admin.training import router
-from app.services.training.unified_pipeline_service import DuplicateFAQError
+from app.services.knowledge.knowledge_pipeline_service import DuplicateFAQError
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 

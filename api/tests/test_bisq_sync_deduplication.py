@@ -353,15 +353,11 @@ class TestBisq2SyncDeduplication:
             "messages", call_args[0][0] if call_args[0] else []
         )
 
-        assert (
-            len(messages_sent) == 2
-        ), f"Expected 2 new messages to be sent, got {len(messages_sent)}"
-
-        sent_ids = {m["messageId"] for m in messages_sent}
-        assert sent_ids == {
-            "msg-003",
-            "msg-004",
-        }, f"Expected new messages msg-003 and msg-004, got {sent_ids}"
+        assert len(messages_sent) == 4  # Prior messages are context only.
+        assert call_args.kwargs["eligible_answer_ids"] == {"msg-003", "msg-004"}
+        assert call_args.kwargs["source_scope"] == _TEST_CHANNEL_ID
+        for message in second_messages:
+            assert state_manager.is_processed(message["messageId"])
 
     @pytest.mark.asyncio
     async def test_messages_marked_even_when_no_faqs_extracted(

@@ -4,7 +4,7 @@ import { memo } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { AlertCircle, Eye, BarChart3 } from "lucide-react";
-import type { QueueCounts, RoutingCategory } from "./types";
+import type { QueueCounts, RoutingCategory } from "../knowledge-updates/types";
 
 interface QueueStatusProps {
   counts: QueueCounts;

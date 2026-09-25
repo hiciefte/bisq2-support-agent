@@ -3,7 +3,7 @@
 
 This script:
 1. Loads sample Matrix messages
-2. Runs the UnifiedFAQExtractor
+2. Runs the KnowledgeExtractor
 3. Compares returned answer_msg_id with expected message IDs
 4. Reports accuracy and any mismatches
 """
@@ -18,8 +18,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import aisuite  # noqa: E402
 from app.core.config import get_settings  # noqa: E402
-from app.services.training.unified_faq_extractor import (  # noqa: E402
-    UnifiedFAQExtractor,
+from app.services.knowledge.knowledge_extractor import (  # noqa: E402
+    KnowledgeExtractor,
 )
 
 
@@ -69,7 +69,7 @@ async def verify_answer_msg_ids():
         "@luis3672:matrix.org",
     ]
 
-    extractor = UnifiedFAQExtractor(
+    extractor = KnowledgeExtractor(
         aisuite_client=client,
         settings=settings,
         staff_identifiers=staff_identifiers,

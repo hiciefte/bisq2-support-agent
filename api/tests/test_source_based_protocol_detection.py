@@ -256,12 +256,12 @@ class TestPipelineDetectProtocolWithFallback:
     @pytest.fixture
     def mock_repository(self, tmp_path):
         """Create a mock repository."""
-        from app.services.training.unified_repository import (
-            UnifiedFAQCandidateRepository,
+        from app.services.knowledge.candidate_repository import (
+            KnowledgeCandidateRepository,
         )
 
         db_path = str(tmp_path / "test.db")
-        return UnifiedFAQCandidateRepository(db_path)
+        return KnowledgeCandidateRepository(db_path)
 
     @pytest.fixture
     def mock_settings(self):
@@ -273,11 +273,11 @@ class TestPipelineDetectProtocolWithFallback:
     @pytest.fixture
     def pipeline_service(self, mock_repository, mock_settings):
         """Create pipeline service for testing."""
-        from app.services.training.unified_pipeline_service import (
-            UnifiedPipelineService,
+        from app.services.knowledge.knowledge_pipeline_service import (
+            KnowledgePipelineService,
         )
 
-        return UnifiedPipelineService(
+        return KnowledgePipelineService(
             settings=mock_settings,
             rag_service=MagicMock(),
             faq_service=MagicMock(),

@@ -1,6 +1,8 @@
-"""Learning Engine for adaptive threshold tuning based on admin feedback."""
+"""Review audit history and threshold calibration from actual answer judgments."""
 
 import logging
+import math
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -24,7 +26,11 @@ logger = logging.getLogger(__name__)
 
 class LearningEngine:
     """
-    Learning engine that adjusts confidence thresholds based on admin review patterns.
+    Adjust confidence thresholds using distinct, explicitly judged answers.
+
+    Knowledge decisions remain audit history, but cannot calibrate delivery.
+    Loading historical thresholds does not prove they were calibrated this way;
+    existing values and history are preserved for separately reviewed migration.
 
     Uses historical admin decisions to optimize:
     - Auto-send threshold (default 95%)
@@ -100,7 +106,7 @@ class LearningEngine:
                 auto_send_threshold=self.auto_send_threshold,
                 queue_high_threshold=self.queue_high_threshold,
                 reject_threshold=self.reject_threshold,
-                review_history=self._review_history,
+                review_history=self.bounded_review_history(self._review_history),
                 threshold_history=self._threshold_history,
             )
             logger.debug("LearningEngine state auto-persisted to repository")
@@ -117,23 +123,26 @@ class LearningEngine:
         weight: float = 1.0,
     ) -> None:
         """
-        Record an admin review for learning.
+        Record a review; only answer-quality judgments calibrate thresholds.
 
         Args:
             question_id: Unique question identifier
             confidence: Model confidence score (0-1)
             admin_action: 'approved', 'edited', or 'rejected'
             routing_action: 'auto_send', 'queue_high', or 'queue_low'
-            metadata: Optional additional metadata
+            metadata: Use review_kind='answer_quality' only for an actual answer
+                judgment; calibration_question_id identifies the question across
+                raters. Knowledge decisions and unknown legacy rows are audit only.
             weight: Relative review weight used for threshold percentiles
         """
-        metadata_dict: Dict[str, Any] = metadata or {}
+        metadata_dict: Dict[str, Any] = dict(metadata or {})
+        previous_samples = self._calibration_reviews()
         normalized_action = self._normalize_admin_action(admin_action)
         try:
             review_weight = float(weight)
         except (TypeError, ValueError):
             review_weight = 1.0
-        if review_weight <= 0:
+        if not math.isfinite(review_weight) or review_weight <= 0:
             review_weight = 1.0
 
         review_record = {
@@ -148,9 +157,13 @@ class LearningEngine:
 
         replaced = False
         if metadata_dict.get("idempotent"):
-            for i, existing in enumerate(self._review_history):
-                if existing.get("question_id") == question_id:
-                    self._review_history[i] = review_record
+            for i in range(len(self._review_history) - 1, -1, -1):
+                existing = self._review_history[i]
+                if existing.get("question_id") == question_id and self._review_kind(
+                    existing
+                ) == self._review_kind(review_record):
+                    self._review_history.pop(i)
+                    self._review_history.append(review_record)
                     replaced = True
                     break
         if not replaced:
@@ -169,31 +182,198 @@ class LearningEngine:
 
         self._auto_persist()
 
-        # Check if we should update thresholds
-        if len(self._review_history) >= self.min_samples_for_update:
-            # Update every 10 new samples, or immediately on idempotent replacement
-            if replaced or len(self._review_history) % 10 == 0:
+        # Audit events and duplicate identical judgments must not trigger updates.
+        samples = self._calibration_reviews()
+        if (
+            self._sample_signature(samples) != self._sample_signature(previous_samples)
+            and len(samples) >= self.min_samples_for_update
+        ):
+            # Every ten distinct answers, or a changed judgment of an existing one.
+            if len(samples) == len(previous_samples) or len(samples) % 10 == 0:
                 self._update_thresholds()
 
+    @staticmethod
+    def _review_kind(review: Dict[str, Any]) -> str:
+        metadata = review.get("metadata") or {}
+        if metadata.get("review_kind") is not None:
+            return str(metadata["review_kind"])
+        # These are the two pre-marker callers that judged real responses.
+        # Never infer answer quality from an approval/rejection alone.
+        question_id = str(review.get("question_id") or "")
+        if (
+            re.fullmatch(r"escalation_\d+", question_id)
+            and metadata.get("staff_id")
+            and metadata.get("channel")
+            and isinstance(metadata.get("edit_distance"), (int, float))
+            and 0 <= metadata["edit_distance"] <= 1
+        ):
+            return "answer_quality"
+        if (
+            metadata.get("source") == "user_rating"
+            and question_id.startswith("user_rating_")
+            and metadata.get("idempotent") is True
+            and type(metadata.get("user_rating")) is int
+            and metadata["user_rating"] in (0, 1)
+            and metadata.get("channel")
+            and "original_confidence" in metadata
+            and "edit_distance" in metadata
+        ):
+            return "answer_quality"
+        return "unclassified"
+
+    @classmethod
+    def bounded_review_history(
+        cls, reviews: List[Dict[str, Any]], per_kind_limit: int = 1000
+    ) -> List[Dict[str, Any]]:
+        """Preserve separate bounded quality/audit cohorts in their original order.
+
+        Knowledge audit churn must not evict answer-quality history at persistence.
+        This retains rows without relabeling them or changing stored thresholds.
+        """
+        counts = {True: 0, False: 0}
+        retained = []
+        for review in reversed(reviews):
+            quality = cls._review_kind(review) == "answer_quality"
+            if counts[quality] < per_kind_limit:
+                retained.append(review)
+                counts[quality] += 1
+        return list(reversed(retained))
+
+    @classmethod
+    def _calibration_key(cls, review: Dict[str, Any]) -> Optional[str]:
+        if cls._review_kind(review) != "answer_quality":
+            return None
+        metadata = review.get("metadata") or {}
+        subject = metadata.get("calibration_question_id")
+        if isinstance(subject, str) and subject.strip():
+            return subject
+        question_id = str(review.get("question_id") or "")
+        escalation = re.fullmatch(r"escalation_(\d+)", question_id)
+        if escalation:
+            return "escalation:" + escalation[1]
+        answer_rating = re.fullmatch(r"answer_rating:(\d+):.+", question_id)
+        if answer_rating:
+            return "candidate:" + answer_rating[1]
+        if metadata.get("source") == "user_rating":
+            # Legacy message+rater concatenation cannot reliably identify the
+            # underlying question. Retain the audit row without inflating n.
+            return None
+        return "question:" + question_id if question_id else None
+
+    def _calibration_reviews(self) -> List[Dict[str, Any]]:
+        """Latest judgment per question, without changing persisted audit rows."""
+        latest: Dict[str, Dict[str, Any]] = {}
+        timestamps: Dict[str, Optional[datetime]] = {}
+        for review in self._review_history:
+            key = self._calibration_key(review)
+            if key is not None:
+                try:
+                    timestamp = datetime.fromisoformat(
+                        review["timestamp"].replace("Z", "+00:00")
+                    )
+                    timestamp = (
+                        timestamp.replace(tzinfo=timezone.utc)
+                        if timestamp.tzinfo is None
+                        else timestamp
+                    )
+                except (KeyError, TypeError, ValueError, AttributeError):
+                    timestamp = None
+                previous = timestamps.get(key)
+                if (
+                    timestamp is not None
+                    and previous is not None
+                    and timestamp < previous
+                ):
+                    continue
+                latest[key] = review
+                timestamps[key] = timestamp
+        samples = []
+        for key, review in latest.items():
+            try:
+                confidence = float(review["confidence"])
+                weight = float(review.get("weight", 1.0))
+            except (KeyError, TypeError, ValueError):
+                continue
+            if (
+                not math.isfinite(confidence)
+                or not 0 <= confidence <= 1
+                or not math.isfinite(weight)
+                or weight <= 0
+                or review.get("admin_action")
+                not in {
+                    "approved",
+                    "edited",
+                    "rejected",
+                    "answer_approved",
+                    "answer_rejected",
+                }
+            ):
+                continue
+            samples.append(
+                {
+                    **review,
+                    "calibration_question_id": key,
+                    "confidence": confidence,
+                    "weight": weight,
+                    "admin_action": self._normalize_admin_action(
+                        review["admin_action"]
+                    ),
+                }
+            )
+        return samples
+
+    @staticmethod
+    def _sample_signature(samples: List[Dict[str, Any]]) -> List[tuple]:
+        return sorted(
+            (
+                r["calibration_question_id"],
+                r["confidence"],
+                r["admin_action"],
+                r["weight"],
+            )
+            for r in samples
+        )
+
+    def has_sufficient_calibration_samples(self) -> bool:
+        return len(self._calibration_reviews()) >= self.min_samples_for_update
+
+    def get_calibration_metrics(self) -> Dict[str, Any]:
+        """Metrics for the distinct answer cohort used by routing and readiness."""
+        samples = self._calibration_reviews()
+        total = len(samples)
+        return {
+            "total_reviews": total,
+            **{
+                name: (
+                    sum(r["admin_action"] == action for r in samples) / total
+                    if total
+                    else 0.0
+                )
+                for name, action in (
+                    ("approval_rate", "approved"),
+                    ("edit_rate", "edited"),
+                    ("rejection_rate", "rejected"),
+                )
+            },
+            "avg_confidence": (
+                sum(r["confidence"] for r in samples) / total if total else 0.0
+            ),
+        }
+
     def _update_thresholds(self) -> None:
-        """Update thresholds based on review history."""
-        if len(self._review_history) < self.min_samples_for_update:
+        """Update only from the eligible, deduplicated answer-quality cohort."""
+        samples = self._calibration_reviews()
+        if len(samples) < self.min_samples_for_update:
             logger.info(
-                f"Insufficient samples ({len(self._review_history)}) "
+                f"Insufficient answer-quality samples ({len(samples)}) "
                 f"for threshold update, need {self.min_samples_for_update}"
             )
             return
 
         # Analyze patterns
-        approved_reviews = [
-            r for r in self._review_history if r["admin_action"] == "approved"
-        ]
-        edited_reviews = [
-            r for r in self._review_history if r["admin_action"] == "edited"
-        ]
-        rejected_reviews = [
-            r for r in self._review_history if r["admin_action"] == "rejected"
-        ]
+        approved_reviews = [r for r in samples if r["admin_action"] == "approved"]
+        edited_reviews = [r for r in samples if r["admin_action"] == "edited"]
+        rejected_reviews = [r for r in samples if r["admin_action"] == "rejected"]
         approved_confidences = [r["confidence"] for r in approved_reviews]
         edited_confidences = [r["confidence"] for r in edited_reviews]
         rejected_confidences = [r["confidence"] for r in rejected_reviews]
@@ -413,14 +593,10 @@ class LearningEngine:
             }
 
         faq_reviews = [
-            r
-            for r in self._review_history
-            if r.get("metadata", {}).get("review_kind") != "answer_quality"
+            r for r in self._review_history if self._review_kind(r) != "answer_quality"
         ]
         answer_quality_reviews = [
-            r
-            for r in self._review_history
-            if r.get("metadata", {}).get("review_kind") == "answer_quality"
+            r for r in self._review_history if self._review_kind(r) == "answer_quality"
         ]
 
         total = len(faq_reviews)
@@ -570,7 +746,7 @@ class LearningEngine:
         """Save learning engine state to database via repository.
 
         Args:
-            repository: UnifiedFAQCandidateRepository with save_learning_state method
+            repository: KnowledgeCandidateRepository with save_learning_state method
 
         Returns:
             True if save succeeded, False otherwise (P5: error handling)
@@ -580,7 +756,7 @@ class LearningEngine:
                 auto_send_threshold=self.auto_send_threshold,
                 queue_high_threshold=self.queue_high_threshold,
                 reject_threshold=self.reject_threshold,
-                review_history=self._review_history,
+                review_history=self.bounded_review_history(self._review_history),
                 threshold_history=self._threshold_history,
             )
             logger.info(
@@ -596,14 +772,16 @@ class LearningEngine:
         """Load learning engine state from database via repository.
 
         Args:
-            repository: UnifiedFAQCandidateRepository with get_learning_state method
+            repository: KnowledgeCandidateRepository with get_learning_state method
         """
         state = repository.get_learning_state()
         if state is None:
             logger.info("No saved learning state found, using defaults")
             return
 
-        # Load thresholds
+        # Preserve saved values, including those produced before cohort separation.
+        # Excluding ambiguous history does not undo historical threshold changes.
+        # Any reset/recalibration is a separate operator decision, never a load side effect.
         self.auto_send_threshold = state.get(
             "auto_send_threshold", self.auto_send_threshold
         )
@@ -648,7 +826,7 @@ class LaunchReadinessChecker:
         Returns:
             Dictionary with readiness status, score, and detailed criteria results
         """
-        metrics = self.learning_engine.get_learning_metrics()
+        metrics = self.learning_engine.get_calibration_metrics()
         thresholds = self.learning_engine.get_current_thresholds()
         history = self.learning_engine.get_threshold_history()
 
@@ -661,7 +839,7 @@ class LaunchReadinessChecker:
                 "passed": metrics["total_reviews"] >= self.min_total_reviews,
                 "value": metrics["total_reviews"],
                 "threshold": self.min_total_reviews,
-                "description": "Minimum reviews collected",
+                "description": "Minimum distinct answer-quality reviews collected",
             },
             "high_approval_rate": {
                 "passed": metrics["approval_rate"] >= self.min_approval_rate,

@@ -20,9 +20,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from app.services.training.unified_pipeline_service import (
+from app.services.knowledge.knowledge_pipeline_service import (
     CandidateReviewConflictError,
-    UnifiedPipelineService,
+    KnowledgePipelineService,
 )
 
 QUESTION = "How do I start trading on Bisq Easy?"
@@ -61,7 +61,7 @@ def mock_faq_service() -> MagicMock:
 
 @pytest.fixture
 def service(db_path, mock_settings, mock_rag_service, mock_faq_service):
-    return UnifiedPipelineService(
+    return KnowledgePipelineService(
         settings=mock_settings,
         rag_service=mock_rag_service,
         faq_service=mock_faq_service,

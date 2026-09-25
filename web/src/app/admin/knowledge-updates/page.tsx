@@ -43,7 +43,7 @@ import { makeAuthenticatedRequest } from "@/lib/auth";
 import { stripGeneratedAnswerFooter } from "@/lib/answer-format";
 import { cn } from "@/lib/utils";
 import type { Source } from "@/components/chat/types/chat.types";
-import type { QueueCounts, RoutingCategory, UnifiedCandidate } from "@/components/admin/training/types";
+import type { QueueCounts, RoutingCategory, KnowledgeCandidate } from "@/components/admin/knowledge-updates/types";
 import {
   changedMarkdownSections,
   deriveReviewFeedbackPanelState,
@@ -52,7 +52,16 @@ import {
   supportKnowledgeSections,
   type AnswerRating,
 } from "./review-feedback";
+import { candidateEvaluationLabel } from "./evaluation-state";
 import { linkifySourceRefsInMarkdown } from "./source-ref-links";
+
+interface PublicationStatus {
+  saved: boolean;
+  page_id: string | null;
+  index_status: "not_saved" | "pending" | "indexed" | "unknown";
+  answer_check: "not_run";
+  detail: string;
+}
 
 type CheckStatus = "pass" | "warn" | "fail";
 type DocumentReviewMode = "diff" | "preview";
@@ -143,7 +152,7 @@ interface KnowledgeCluster {
 }
 
 interface KnowledgeUpdateResponse {
-  candidate: UnifiedCandidate;
+  candidate: KnowledgeCandidate;
   proposal: KnowledgeProposal;
   cluster: KnowledgeCluster | null;
 }
@@ -191,7 +200,7 @@ interface KnowledgeReworkActionResponse {
   remaining_blocked_count: number;
   remaining_issues_by_candidate: Record<string, string[]>;
   message: string;
-  candidate?: UnifiedCandidate;
+  candidate?: KnowledgeCandidate;
   proposal?: KnowledgeProposal;
   cluster?: KnowledgeCluster | null;
 }
@@ -206,7 +215,7 @@ const QUEUE_TABS = [
   {
     key: "FULL_REVIEW" as const,
     label: QUEUE_LABELS.FULL_REVIEW,
-    description: "Start here: highest review risk",
+    description: "Start here: new evidence to review",
     countLabel: "review items",
     icon: BookOpenCheck,
   },
@@ -229,12 +238,12 @@ const QUEUE_TABS = [
 const QUEUE_GUIDANCE: Record<RoutingCategory, { title: string; body: string; nextAction: string }> = {
   FULL_REVIEW: {
     title: "Start with full review",
-    body: "These candidates need the most human judgment. Read the proposed LLM Wiki page, edit weak wording, and check sources when a claim looks risky or unsupported.",
+    body: "New evidence starts here without a generated answer or score. Compare the existing page with support evidence, preserve useful context and verify changes against sources.",
     nextAction: "Approve only when the final page is reusable support knowledge.",
   },
   SPOT_CHECK: {
     title: "Spot-check lower-risk edits",
-    body: "These candidates look closer to existing knowledge. Read the changed page first, then open sources only for claims that feel surprising, broad, or user-facing.",
+    body: "These candidates look closer to existing knowledge. Compare the changed passage with its sources and confirm that the protocol and applicability still match.",
     nextAction: "Use this lane after the full-review queue is under control.",
   },
   AUTO_APPROVE: {
@@ -553,7 +562,7 @@ function parseConversation(value: string | null): Array<{ sender?: string; conte
   }
 }
 
-function protocolLabel(protocol: UnifiedCandidate["protocol"]): string {
+function protocolLabel(protocol: KnowledgeCandidate["protocol"]): string {
   if (protocol === "multisig_v1") return "Multisig";
   if (protocol === "bisq_easy") return "Bisq Easy";
   if (protocol === "musig") return "MuSig";
@@ -774,7 +783,7 @@ function KnowledgeReworkTriageTools({
                   <div className="mt-3 flex flex-wrap gap-1.5">
                     {group.inferred_protocol && (
                       <Badge variant="secondary">
-                        {protocolLabel(group.inferred_protocol as UnifiedCandidate["protocol"])}
+                        {protocolLabel(group.inferred_protocol as KnowledgeCandidate["protocol"])}
                       </Badge>
                     )}
                     <Badge variant="outline">{topicLabel(group.topic)}</Badge>
@@ -835,7 +844,7 @@ function CompactKnowledgeSources({
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/70 bg-muted/10 px-3 py-2">
       <p className="text-xs leading-5 text-muted-foreground">
-        Spot-check sources only if the reviewed document raises questions.
+        Verify the cited evidence before changing existing guidance.
       </p>
       <SourceBadges sources={generatedSources} />
     </div>
@@ -1077,6 +1086,8 @@ export default function KnowledgeUpdatesPage() {
   const [reviewBaselineMarkdown, setReviewBaselineMarkdown] = useState("");
   const [documentMode, setDocumentMode] = useState<DocumentReviewMode>("diff");
   const [editingDocumentLine, setEditingDocumentLine] = useState<number | null>(null);
+  const [lastPublication, setLastPublication] = useState<{ candidateId: number; status: PublicationStatus } | null>(null);
+  const [checkingIndex, setCheckingIndex] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -1126,8 +1137,11 @@ export default function KnowledgeUpdatesPage() {
   const isDirty = isOperationDirty || isDocumentDirty;
 
   const hasBlockingFailure = useMemo(
-    () => data?.proposal.checks.some((check) => check.blocking && check.status === "fail") ?? false,
-    [data?.proposal.checks],
+    () => Boolean(data && (
+      data.proposal.checks.some((check) => check.blocking && check.status === "fail") ||
+      (data.proposal.proposal_kind === "update_existing" && !data.proposal.document_markdown_override)
+    )),
+    [data],
   );
 
   const conversation = useMemo(
@@ -1394,7 +1408,7 @@ export default function KnowledgeUpdatesPage() {
   };
 
   const persistDocumentMarkdown = async (): Promise<KnowledgeProposal | null> => {
-    if (!data || !isDocumentDirty) return data?.proposal ?? null;
+    if (!data) return null;
     setIsSaving(true);
     try {
       const response = await makeAuthenticatedRequest(
@@ -1464,7 +1478,9 @@ export default function KnowledgeUpdatesPage() {
         const detail = await response.json().catch(() => null);
         throw new Error(detail?.detail || "Failed to approve knowledge update");
       }
-      toast.success("LLM Wiki change approved. Rebuild the vector store to make it retrievable.");
+      const approved = await response.json();
+      setLastPublication({ candidateId: data.candidate.id, status: approved.publication_status });
+      toast.success("Wiki update saved. Indexing and answer quality are checked separately.");
       await loadData({ silent: true });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to approve knowledge update";
@@ -1510,6 +1526,40 @@ export default function KnowledgeUpdatesPage() {
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to skip knowledge update";
       toast.error(message);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleCheckIndex = async () => {
+    if (!lastPublication) return;
+    setCheckingIndex(true);
+    try {
+      const response = await makeAuthenticatedRequest(`/admin/knowledge-updates/${lastPublication.candidateId}/publication-status`);
+      if (!response.ok) throw new Error("Could not check index status");
+      const status = await response.json() as PublicationStatus;
+      setLastPublication({ ...lastPublication, status });
+    } catch {
+      toast.error("Could not check index status");
+    } finally {
+      setCheckingIndex(false);
+    }
+  };
+
+  const handleGenerateComparison = async () => {
+    if (!data?.candidate.protocol || isDirty) return;
+    setActionLoading("comparison");
+    try {
+      const response = await makeAuthenticatedRequest(`/admin/training/candidates/${data.candidate.id}/regenerate`, {
+        method: "POST",
+        body: JSON.stringify({ protocol: data.candidate.protocol }),
+      });
+      if (!response.ok) throw new Error("Could not generate comparison answer");
+      const candidate = await response.json() as KnowledgeCandidate;
+      setData((current) => current && current.candidate.id === candidate.id ? { ...current, candidate } : current);
+      toast.success("Comparison answer generated. Review its evidence before rating; add verified citations to the wiki document.");
+    } catch {
+      toast.error("Could not generate comparison answer");
     } finally {
       setActionLoading(null);
     }
@@ -1638,7 +1688,7 @@ export default function KnowledgeUpdatesPage() {
               ) : (
                 <RefreshCw className="h-4 w-4" />
               )}
-              Regenerate
+              Reset wiki draft
             </Button>
             <KnowledgeReworkTriageTools
               triage={reworkTriage}
@@ -1667,6 +1717,18 @@ export default function KnowledgeUpdatesPage() {
         <Card className="border-destructive/30 bg-destructive/5">
           <CardContent className="p-4 text-sm text-destructive">{error}</CardContent>
         </Card>
+      )}
+
+      {lastPublication && (
+        <div className="space-y-2 rounded-xl border border-border/70 bg-muted/15 p-4 text-sm" role="status">
+          <p className="font-medium">Last approved wiki update: {lastPublication.status.page_id}</p>
+          <p>Saved: {lastPublication.status.saved ? "Yes" : "No"}. Index: {lastPublication.status.index_status}. Answer quality check: not run.</p>
+          <p className="text-muted-foreground">{lastPublication.status.detail} Index visibility does not demonstrate improved answers.</p>
+          {lastPublication.status.index_status === "pending" && <p className="text-muted-foreground">Use the existing vector-store status banner to refresh the index, then check again.</p>}
+          <Button variant="outline" size="sm" disabled={checkingIndex} onClick={() => void handleCheckIndex()}>
+            {checkingIndex ? "Checking index…" : "Check index"}
+          </Button>
+        </div>
       )}
 
       {isLoading ? (
@@ -1704,8 +1766,8 @@ export default function KnowledgeUpdatesPage() {
                         : "Creating a new internal LLM Wiki page"}
                   </p>
                   <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-                    This is the main object you approve. Read the complete page draft first, then edit
-                    unclear wording directly in the diff. Open sources only when a claim needs proof.
+                    Replace the relevant canonical passage with concise, reusable guidance. Preserve useful
+                    existing context and verify protocol and source evidence before resolving a conflict.
                   </p>
                 </div>
                 {isDirty && (
@@ -1727,7 +1789,7 @@ export default function KnowledgeUpdatesPage() {
                   <div className="flex items-center gap-2 text-sm font-medium">
                     <ArrowRight className="hidden h-4 w-4 text-muted-foreground sm:block" aria-hidden="true" />
                     <BookOpen className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-                    Check sources if needed
+                    Verify sources and scope
                   </div>
                   <div className="flex items-center gap-2 text-sm font-medium">
                     <ArrowRight className="hidden h-4 w-4 text-muted-foreground sm:block" aria-hidden="true" />
@@ -1737,10 +1799,13 @@ export default function KnowledgeUpdatesPage() {
                 </div>
                 <p className="mt-2 text-xs leading-5 text-muted-foreground">
                   Approval updates the internal LLM Wiki. It does not publish a public FAQ and it does not
-                  immediately change autoresponse confidence thresholds.
+                  change autoresponse confidence thresholds.
                 </p>
               </div>
 
+              {data.proposal.proposal_kind === "update_existing" && !data.proposal.document_markdown_override && (
+                <p className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm">Review the canonical passage and save the reviewed document before approval. Preserve useful existing guidance; replace conflicting text only after verifying the evidence.</p>
+              )}
               <GeneratorFeedbackCard feedback={data.proposal.generator_feedback ?? EMPTY_GENERATOR_FEEDBACK} />
 
               <section className="space-y-3">
@@ -1749,8 +1814,8 @@ export default function KnowledgeUpdatesPage() {
                     <div>
                       <p className="text-sm font-medium">Review final LLM Wiki file</p>
                       <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                        Diff & edit is the normal workflow. For clustered topics, the draft already folds
-                        related staff answers into the page; save it after you have reviewed the final wording.
+                        Existing guidance is preserved in the draft. Compare it with the support evidence,
+                        reconcile contradictions, and save the reviewed document. Do not accumulate individual Q&A entries.
                       </p>
                     </div>
                     <div className="flex flex-wrap gap-2 lg:shrink-0">
@@ -1768,17 +1833,17 @@ export default function KnowledgeUpdatesPage() {
                         variant="outline"
                         size="sm"
                         onClick={() => {
-                          if (isDocumentDirty) {
-                            void persistDocumentMarkdown();
-                          } else {
+                          if (isOperationDirty && !isDocumentDirty) {
                             void persistOperations();
+                          } else {
+                            void persistDocumentMarkdown();
                           }
                         }}
-                        disabled={!isDirty || isSaving}
+                        disabled={isSaving}
                         className="gap-2"
                       >
                         {isSaving && <Loader2 className="h-4 w-4 animate-spin" />}
-                        {data.cluster ? "Save reviewed draft" : "Save document"}
+                        {isOperationDirty && !isDocumentDirty ? "Save structured suggestions" : "Save reviewed document"}
                       </Button>
                     </div>
                   </div>
@@ -1863,11 +1928,14 @@ export default function KnowledgeUpdatesPage() {
               </div>
               <CardTitle className="pt-2 text-base">Evidence from support chat</CardTitle>
               <p className="text-sm text-muted-foreground">
-                Use this after reading the wiki page. Verify the original question, the human staff answer,
-                and whether the bot draft would have been good enough.
+                Staff replies are evidence, not automatic authority. Check the original question,
+                protocol and durable sources; resolve conflicting claims before changing existing guidance.
               </p>
             </CardHeader>
             <CardContent className="space-y-4">
+              {data.proposal.checks.some((check) => check.code === "source_refs" && check.status === "fail") && (
+                <p className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm">Sources required before approval. Add verified durable citations in the document, or use the optional comparison to find relevant evidence.</p>
+              )}
               {data.cluster && <ClusterContextCard cluster={data.cluster} />}
               <section className="space-y-2">
                 <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">User question</p>
@@ -1881,12 +1949,23 @@ export default function KnowledgeUpdatesPage() {
                   {data.candidate.edited_staff_answer || data.candidate.staff_answer}
                 </div>
               </section>
+              <section className="space-y-2 rounded-lg border border-border/70 p-3">
+                <p className="text-sm font-medium">{candidateEvaluationLabel(data.candidate)}</p>
+                {!cleanedGeneratedAnswer && (
+                  <p className="text-xs text-muted-foreground">No comparison answer or score has been generated. This is not a low quality score. You can review the wiki evidence without running a model.</p>
+                )}
+                <Button variant="outline" size="sm" onClick={() => void handleGenerateComparison()} disabled={!data.candidate.protocol || isDirty || actionLoading !== null}>
+                  {actionLoading === "comparison" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  {cleanedGeneratedAnswer ? "Regenerate comparison answer" : "Generate comparison answer"}
+                </Button>
+                <p className="text-xs text-muted-foreground">Optional model request using the selected protocol. Save edits first; rating remains a separate action.</p>
+              </section>
               {cleanedGeneratedAnswer && (
                 <section className="space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="inline-flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                       <Bot className="h-3.5 w-3.5" aria-hidden="true" />
-                      Bot draft at ingest
+                      Optional comparison answer
                     </p>
                     {generationConfidenceLabel && (
                       <Badge variant="outline" className="h-6 text-[11px]">
@@ -1907,7 +1986,7 @@ export default function KnowledgeUpdatesPage() {
                       <div>
                         <p className="text-sm font-medium leading-5">Could the bot have sent this answer?</p>
                         <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                          Records an answer-quality signal only. It does not approve the LLM Wiki change or change channel thresholds.
+                          Records an answer-quality signal for calibration. It does not approve the LLM Wiki change.
                         </p>
                       </div>
                       <div className="grid grid-cols-2 gap-2">

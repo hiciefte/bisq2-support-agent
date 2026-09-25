@@ -14,7 +14,7 @@ import json
 import logging
 from pathlib import Path
 
-from app.services.training.conversation_handler import ConversationHandler
+from app.services.knowledge.conversation_handler import ConversationHandler
 
 # Configure logging
 logging.basicConfig(

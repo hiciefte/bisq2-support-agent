@@ -8,10 +8,10 @@ import os
 from typing import Any, Optional
 
 from app.core.config import Settings, get_settings
+from app.services.knowledge.candidate_repository import KnowledgeCandidateRepository
 from app.services.knowledge_updates.llm_wiki_coverage_reconciliation import (
     LLMWikiCoverageReconciliationService,
 )
-from app.services.training.unified_repository import UnifiedFAQCandidateRepository
 
 DEFAULT_REVIEWER = "scheduled-coverage-reconciliation"
 
@@ -23,7 +23,7 @@ def run_reconciliation(
     apply: bool = True,
     reviewer: str = DEFAULT_REVIEWER,
 ) -> dict[str, Any]:
-    repository = UnifiedFAQCandidateRepository(
+    repository = KnowledgeCandidateRepository(
         db_path or os.path.join(settings.DATA_DIR, "unified_training.db")
     )
     report = LLMWikiCoverageReconciliationService(

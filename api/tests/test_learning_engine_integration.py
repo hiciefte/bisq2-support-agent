@@ -89,11 +89,11 @@ class TestLearningEnginePersistence:
     def test_save_and_load_state_preserves_thresholds(self, temp_db_path):
         """Thresholds persist across engine instances."""
         # Import repository here to avoid circular import
-        from app.services.training.unified_repository import (
-            UnifiedFAQCandidateRepository,
+        from app.services.knowledge.candidate_repository import (
+            KnowledgeCandidateRepository,
         )
 
-        repo = UnifiedFAQCandidateRepository(str(temp_db_path))
+        repo = KnowledgeCandidateRepository(str(temp_db_path))
 
         # Create engine and modify thresholds
         engine1 = LearningEngine()
@@ -110,11 +110,11 @@ class TestLearningEnginePersistence:
 
     def test_save_state_creates_learning_state_record(self, temp_db_path):
         """save_state creates a record in learning_state table."""
-        from app.services.training.unified_repository import (
-            UnifiedFAQCandidateRepository,
+        from app.services.knowledge.candidate_repository import (
+            KnowledgeCandidateRepository,
         )
 
-        repo = UnifiedFAQCandidateRepository(str(temp_db_path))
+        repo = KnowledgeCandidateRepository(str(temp_db_path))
 
         engine = LearningEngine()
         engine.save_state(repo)
@@ -126,11 +126,11 @@ class TestLearningEnginePersistence:
 
     def test_load_state_with_no_saved_state_uses_defaults(self, temp_db_path):
         """load_state with no saved state keeps default values."""
-        from app.services.training.unified_repository import (
-            UnifiedFAQCandidateRepository,
+        from app.services.knowledge.candidate_repository import (
+            KnowledgeCandidateRepository,
         )
 
-        repo = UnifiedFAQCandidateRepository(str(temp_db_path))
+        repo = KnowledgeCandidateRepository(str(temp_db_path))
 
         engine = LearningEngine()
         # Default values
@@ -146,11 +146,11 @@ class TestLearningEnginePersistence:
 
     def test_review_history_is_persisted(self, temp_db_path):
         """Review history is saved and loaded correctly."""
-        from app.services.training.unified_repository import (
-            UnifiedFAQCandidateRepository,
+        from app.services.knowledge.candidate_repository import (
+            KnowledgeCandidateRepository,
         )
 
-        repo = UnifiedFAQCandidateRepository(str(temp_db_path))
+        repo = KnowledgeCandidateRepository(str(temp_db_path))
 
         engine1 = LearningEngine()
         # Record some reviews
@@ -444,29 +444,29 @@ class TestPipelineUsesLearnedThresholds:
     """Test that the pipeline can use learned thresholds from LearningEngine."""
 
     def test_pipeline_accepts_learning_engine_parameter(self):
-        """UnifiedPipelineService should accept optional learning_engine parameter."""
+        """KnowledgePipelineService should accept optional learning_engine parameter."""
         import inspect
 
-        from app.services.training.unified_pipeline_service import (
-            UnifiedPipelineService,
+        from app.services.knowledge.knowledge_pipeline_service import (
+            KnowledgePipelineService,
         )
 
         # Check __init__ signature accepts learning_engine
-        sig = inspect.signature(UnifiedPipelineService.__init__)
+        sig = inspect.signature(KnowledgePipelineService.__init__)
         params = list(sig.parameters.keys())
         assert (
             "learning_engine" in params
-        ), "UnifiedPipelineService.__init__ should accept learning_engine parameter"
+        ), "KnowledgePipelineService.__init__ should accept learning_engine parameter"
 
     def test_determine_routing_uses_learning_engine_when_available(self):
         """_determine_routing should use LearningEngine thresholds post-calibration."""
         import inspect
 
-        from app.services.training.unified_pipeline_service import (
-            UnifiedPipelineService,
+        from app.services.knowledge.knowledge_pipeline_service import (
+            KnowledgePipelineService,
         )
 
-        source = inspect.getsource(UnifiedPipelineService._determine_routing)
+        source = inspect.getsource(KnowledgePipelineService._determine_routing)
         # Check that the function references learning_engine
         assert (
             "learning_engine" in source

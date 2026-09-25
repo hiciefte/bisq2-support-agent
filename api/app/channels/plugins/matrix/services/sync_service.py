@@ -1,10 +1,10 @@
-"""Compatibility wrapper for the training ingest Matrix sync service.
+"""Compatibility wrapper for the knowledge ingest Matrix sync service.
 
-The implementation was extracted to the training ingest domain:
-``app.services.training.ingest.matrix_sync_service``.
+The implementation was extracted to the knowledge ingest domain:
+``app.services.knowledge.ingest.matrix_sync_service``.
 """
 
-from app.services.training.ingest.matrix_sync_service import (
+from app.services.knowledge.ingest.matrix_sync_service import (
     NIO_AVAILABLE,
     AsyncClient,
     MatrixSyncService,
