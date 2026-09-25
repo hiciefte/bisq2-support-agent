@@ -583,6 +583,7 @@ class EscalationService:
                     channel=escalation.channel,
                     trusted=True,
                     sources=escalation.sources,
+                    has_ai_draft=bool(str(escalation.ai_draft_answer or "").strip()),
                 )
                 self.feedback_orchestrator.record_user_rating(signal)
             except Exception:

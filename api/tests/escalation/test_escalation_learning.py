@@ -10,6 +10,8 @@ from app.models.escalation import (
     EscalationStatus,
 )
 from app.services.escalation.escalation_service import EscalationService
+from app.services.escalation.feedback_orchestrator import FeedbackOrchestrator
+from app.services.rag.learning_engine import LearningEngine
 
 
 def _make_service(
@@ -60,6 +62,39 @@ def _make_escalation(**overrides):
 
 class TestEscalationLearningIntegration:
     """Test LearningEngine recording on resolution."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("draft,eligible", [("", 0), (" \n", 0), ("AI draft", 1)])
+    async def test_staff_rating_calibration_requires_actual_ai_draft(
+        self, tmp_path, draft, eligible
+    ):
+        from app.services.knowledge.candidate_repository import (
+            KnowledgeCandidateRepository,
+        )
+
+        repository = KnowledgeCandidateRepository(str(tmp_path / "learning.db"))
+        learning = LearningEngine(repository)
+        repo = AsyncMock()
+        repo.update_rating.return_value = True
+        service = _make_service(repo=repo, learning_engine=learning)
+        service.feedback_orchestrator = FeedbackOrchestrator(learning)
+        escalation = _make_escalation(
+            ai_draft_answer=draft,
+            status=EscalationStatus.RESPONDED,
+            staff_answer="Staff reply",
+            edit_distance=1.0,
+        )
+
+        assert await service.record_staff_answer_rating(escalation, 1, "rater", True)
+
+        assert learning.get_calibration_metrics()["total_reviews"] == eligible
+        assert len(learning._review_history) == 1
+        assert learning._review_history[0]["metadata"]["review_kind"] == (
+            "answer_quality" if eligible else "staff_response"
+        )
+        loaded = LearningEngine(repository)
+        assert loaded.get_calibration_metrics()["total_reviews"] == eligible
+        assert loaded._review_history == learning._review_history
 
     @pytest.mark.asyncio
     async def test_record_review_called_on_respond(self):

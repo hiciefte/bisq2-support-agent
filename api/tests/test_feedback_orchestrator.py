@@ -21,6 +21,7 @@ def _make_signal(**overrides: Any) -> StaffRatingSignal:
         "channel": "web",
         "trusted": True,
         "sources": [{"type": "faq"}],
+        "has_ai_draft": True,
     }
     data.update(overrides)
     return StaffRatingSignal(**data)
@@ -74,3 +75,15 @@ def test_quadrant_weight_passed_as_single_review_weight() -> None:
     kwargs = learning_engine.record_review.call_args.kwargs
     assert kwargs["metadata"]["quadrant"] == "D"
     assert kwargs["weight"] == FeedbackOrchestrator.QUADRANT_WEIGHTS["D"]
+
+
+def test_missing_ai_draft_provenance_is_audit_only() -> None:
+    learning_engine = MagicMock()
+    signal = _make_signal()
+    data = vars(signal).copy()
+    del data["has_ai_draft"]
+
+    FeedbackOrchestrator(learning_engine).record_user_rating(StaffRatingSignal(**data))
+
+    metadata = learning_engine.record_review.call_args.kwargs["metadata"]
+    assert metadata["review_kind"] == "staff_response"

@@ -53,9 +53,17 @@ question to measure quality; indexing alone must never count as a passing answer
 ## Reliable sync and bounded context
 
 New events may use earlier messages as context, but an already-processed answer
-cannot become a new candidate. Bisq uses at most one hour and 50 preceding messages as same-channel
-context. Matrix uses bounded native room context when a batch lacks preceding
-question/reply context. This is not unlimited historical conversation recovery.
+cannot become a new candidate. Bisq normally includes one hour of history and up
+to 50 preceding same-channel messages. If a new staff reply lacks its question or
+an explicit citation root, one recovery export may look back up to 30 days, capped
+by configured retention and 1,000 returned events. Only bounded same-channel
+context and at most 10 citation roots reach extraction.
+
+Matrix resolves at most 10 missing reply or boundary anchors with bounded native
+room-context reads. Reactions, membership events and empty messages are not
+question context. If required context cannot be recovered within these bounds,
+the input is deferred without a model call or consumption of its cursor/IDs.
+This is not unlimited historical conversation recovery.
 
 Matrix bootstraps from recent history and then advances its saved cursor forward.
 Existing tokens and identities are retained. Successfully completed Bisq channels
@@ -84,7 +92,9 @@ that the model's earlier answer was good enough to send.
 Only explicit answer-quality judgments with a reliable question binding count
 for calibration, response routing eligibility and readiness. Multiple ratings of
 one answer do not increase the distinct-question denominator; the latest judgment
-wins. Knowledge decisions and ambiguous historical records remain audit history.
+wins. Staff-answer ratings count only when a nonblank AI draft existed.
+Knowledge decisions and unmarked historical records remain audit history;
+legacy escalation metadata alone cannot establish AI-answer provenance.
 Separate bounded persistence cohorts prevent knowledge reviews from evicting
 quality evidence.
 

@@ -177,6 +177,7 @@ def matrix_format_messages() -> List[Dict[str, Any]]:
     """Matrix format messages with m.relates_to for reply tracking."""
     return [
         {
+            "type": "m.room.message",
             "event_id": "$evt_q1:matrix.org",
             "sender": "@user123:matrix.org",
             "origin_server_ts": 1705312800000,
@@ -186,6 +187,7 @@ def matrix_format_messages() -> List[Dict[str, Any]]:
             },
         },
         {
+            "type": "m.room.message",
             "event_id": "$evt_a1:matrix.org",
             "sender": "@suddenwhipvapor:matrix.org",
             "origin_server_ts": 1705312860000,
@@ -194,6 +196,7 @@ def matrix_format_messages() -> List[Dict[str, Any]]:
                 "msgtype": "m.text",
                 "m.relates_to": {
                     "m.in_reply_to": {
+                        "type": "m.room.message",
                         "event_id": "$evt_q1:matrix.org",
                     }
                 },

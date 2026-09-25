@@ -202,11 +202,41 @@ def test_legacy_load_preserves_every_row_and_threshold_without_recalibration():
         k: state[k]
         for k in ("auto_send_threshold", "queue_high_threshold", "reject_threshold")
     }
-    assert engine.get_calibration_metrics()["total_reviews"] == 2
-    assert engine.get_learning_metrics()["answer_quality_reviews_total"] == 3
+    assert engine.get_calibration_metrics()["total_reviews"] == 1
+    assert engine.get_learning_metrics()["answer_quality_reviews_total"] == 1
     repository.save_learning_state.assert_not_called()
     engine.save_state(repository)
     assert repository.save_learning_state.call_args.kwargs["review_history"] == rows
+
+
+def test_ambiguous_legacy_staff_responses_do_not_unlock_after_persistence(tmp_path):
+    from app.services.knowledge.candidate_repository import KnowledgeCandidateRepository
+
+    rows = [
+        {
+            "question_id": f"escalation_{i}",
+            "confidence": 0.85,
+            "admin_action": "edited",
+            "metadata": {
+                "staff_id": "staff",
+                "channel": "web",
+                "edit_distance": 1.0,
+            },
+        }
+        for i in range(60)
+    ]
+    repository = KnowledgeCandidateRepository(str(tmp_path / "legacy-learning.db"))
+    repository.save_learning_state(0.84, 0.68, 0.44, rows, [])
+    engine = LearningEngine(repository)
+
+    assert engine._review_history == rows
+    assert engine.get_calibration_metrics()["total_reviews"] == 0
+    assert not engine.has_sufficient_calibration_samples()
+    assert AutoSendRouter(engine)._get_thresholds() == (0.95, 0.70)
+    assert engine.auto_send_threshold == 0.84
+    engine.save_state(repository)
+    assert repository.get_learning_state()["review_history"] == rows
+    assert repository.get_learning_state()["auto_send_threshold"] == 0.84
 
 
 def test_legacy_duplicate_question_uses_latest_timestamp_not_list_position():

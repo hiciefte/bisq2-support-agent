@@ -176,14 +176,20 @@ class TestBisq2SyncDeduplication:
         }
         mock_pipeline_service.extract_faqs_batch.return_value = []
 
-        await service.sync_conversations()
+        from app.services.knowledge.ingest.bisq2_sync_service import (
+            IncompleteBisqKnowledgeContextError,
+        )
 
-        assert mock_pipeline_service.extract_faqs_batch.await_count == 2
+        with pytest.raises(IncompleteBisqKnowledgeContextError):
+            await service.sync_conversations()
+
+        assert mock_pipeline_service.extract_faqs_batch.await_count == 1
         batches = [
             call.kwargs["messages"]
             for call in mock_pipeline_service.extract_faqs_batch.await_args_list
         ]
-        assert batches == [[question], [answer]]
+        assert batches == [[question]]
+        assert not state_manager.is_processed("answer-two")
         assert all(
             call.kwargs["staff_identifiers"] == ["staff1", "staff2"]
             for call in mock_pipeline_service.extract_faqs_batch.await_args_list

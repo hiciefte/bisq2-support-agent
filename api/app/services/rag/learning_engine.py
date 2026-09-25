@@ -197,28 +197,10 @@ class LearningEngine:
         metadata = review.get("metadata") or {}
         if metadata.get("review_kind") is not None:
             return str(metadata["review_kind"])
-        # These are the two pre-marker callers that judged real responses.
-        # Never infer answer quality from an approval/rejection alone.
-        question_id = str(review.get("question_id") or "")
-        if (
-            re.fullmatch(r"escalation_\d+", question_id)
-            and metadata.get("staff_id")
-            and metadata.get("channel")
-            and isinstance(metadata.get("edit_distance"), (int, float))
-            and 0 <= metadata["edit_distance"] <= 1
-        ):
-            return "answer_quality"
-        if (
-            metadata.get("source") == "user_rating"
-            and question_id.startswith("user_rating_")
-            and metadata.get("idempotent") is True
-            and type(metadata.get("user_rating")) is int
-            and metadata["user_rating"] in (0, 1)
-            and metadata.get("channel")
-            and "original_confidence" in metadata
-            and "edit_distance" in metadata
-        ):
-            return "answer_quality"
+        # Legacy escalation and rating callers also recorded staff-only replies.
+        # Their metadata cannot establish that an AI answer existed. Keep those
+        # rows as audit evidence unless an independent review explicitly marks
+        # answer quality; never infer eligibility from their shape or action.
         return "unclassified"
 
     @classmethod

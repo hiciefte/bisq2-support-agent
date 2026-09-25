@@ -33,6 +33,18 @@ except ModuleNotFoundError:  # pragma: no cover - exercised in minimal test envs
 logger = logging.getLogger(__name__)
 
 
+def is_matrix_text_message(message: Mapping[str, Any]) -> bool:
+    """Only readable conversational events can supply question/answer context."""
+    content = message.get("content")
+    return bool(
+        message.get("type") == "m.room.message"
+        and isinstance(content, Mapping)
+        and content.get("msgtype") in {"m.text", "m.notice", "m.emote"}
+        and isinstance(content.get("body"), str)
+        and content["body"].strip()
+    )
+
+
 def create_knowledge_extraction_client(settings: Settings) -> ai.Client:
     """Keep OpenAI extraction attempts separate from shared answer clients.
 
@@ -352,12 +364,8 @@ def _resolve_exact_alias(
     return next(iter(values))
 
 
-def _resolve_valid_bisq_citation(
-    raw_message: Mapping[str, Any],
-    normalized_message: Mapping[str, Any],
-    messages_by_id: Mapping[str, Mapping[str, Any]],
-) -> str:
-    """Resolve a citation only through immutable same-batch provenance."""
+def bisq_citation_message_id(raw_message: Mapping[str, Any]) -> str:
+    """Find an exact referenced ID; author/channel provenance is checked later."""
     citation = raw_message.get("citation")
     nested = citation if isinstance(citation, Mapping) else {}
 
@@ -381,7 +389,20 @@ def _resolve_valid_bisq_citation(
     }
     if len(citation_message_ids) != 1:
         return ""
-    citation_message_id = next(iter(citation_message_ids))
+    return next(iter(citation_message_ids))
+
+
+def _resolve_valid_bisq_citation(
+    raw_message: Mapping[str, Any],
+    normalized_message: Mapping[str, Any],
+    messages_by_id: Mapping[str, Mapping[str, Any]],
+) -> str:
+    """Resolve a citation only through immutable same-batch provenance."""
+    citation_message_id = bisq_citation_message_id(raw_message)
+    if not citation_message_id:
+        return ""
+    citation = raw_message.get("citation")
+    nested = citation if isinstance(citation, Mapping) else {}
 
     nested_author_profile_id = _resolve_exact_alias(
         nested,
@@ -883,6 +904,8 @@ class KnowledgeExtractor:
                 normalized.append(normalized_message)
                 bisq_inputs.append((msg, normalized_message))
             elif source == "matrix":
+                if not is_matrix_text_message(msg):
+                    continue
                 content = msg.get("content", {})
                 body = content.get("body", "") if isinstance(content, dict) else ""
 

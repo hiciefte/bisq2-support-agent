@@ -7,7 +7,7 @@ import re
 from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Iterable, Optional, Protocol, Sequence
+from typing import Any, Iterable, Literal, Optional, Protocol, Sequence
 
 from app.core.config import Settings
 from app.services.knowledge.candidate_repository import KnowledgeCandidate
@@ -60,7 +60,7 @@ class CandidateApprovalRepository(Protocol):
 
     def get_pending(
         self,
-        source: Optional[str] = None,
+        source: Optional[Literal["bisq2", "matrix", "code_evidence"]] = None,
         routing: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,

@@ -504,7 +504,7 @@ async def test_bisq_completed_channel_survives_later_channel_failure(
 ):
     settings = pipeline.settings
     settings.BISQ2_ALLOWED_CHANNEL_IDS = ["channel-a", "channel-b"]
-    settings.BISQ2_ALLOWED_SENDER_PROFILE_IDS = ["staff"]
+    settings.BISQ2_ALLOWED_SENDER_PROFILE_IDS = ["user", "staff"]
     settings.BISQ2_CHATOPS_CHANNEL_IDS = []
     settings.BISQ2_CHATOPS_ENABLED = False
     settings.BISQ2_STAFF_PROFILE_IDS = ["staff"]
@@ -512,13 +512,14 @@ async def test_bisq_completed_channel_survives_later_channel_failure(
     state = BisqSyncStateManager(str(tmp_path / "partial-sync.json"))
     messages = [
         {
-            "messageId": f"answer-{channel}",
-            "message": ANSWER,
-            "author": "staff",
-            "senderUserProfileId": "staff",
+            "messageId": f"{role}-{channel}",
+            "message": QUESTION if role == "question" else ANSWER,
+            "author": "user" if role == "question" else "staff",
+            "senderUserProfileId": "user" if role == "question" else "staff",
             "channelId": channel,
         }
         for channel in ["channel-a", "channel-b"]
+        for role in ["question", "answer"]
     ]
     api = SimpleNamespace(
         export_chat_messages=AsyncMock(return_value={"messages": messages})
@@ -598,3 +599,328 @@ async def test_unverified_provider_fails_only_intake_before_reservation(pipeline
             ).fetchone()[0]
             == 0
         )
+
+
+@pytest.mark.asyncio
+async def test_matrix_resolves_multiple_distinct_old_reply_targets(
+    pipeline, matrix_sync
+):
+    questions = [
+        event(f"$old-{i}:test", f"@user-{i}:test", QUESTION, i + 1) for i in range(2)
+    ]
+    answers = [
+        event(f"$answer-{i}:test", STAFF, ANSWER, 100 + i, question["event_id"])
+        for i, question in enumerate(questions)
+    ]
+    contexts = [
+        RoomContextResponse(ROOM, None, None, nio_event(question), [], [], [])
+        for question in questions
+    ]
+    matrix_sync._error_handler.call_with_retry.side_effect = [
+        Page(answers, "next"),
+        *contexts,
+    ]
+    pairs = [
+        extraction_result(answer["event_id"], question["event_id"])["faq_pairs"][0]
+        for question, answer in zip(questions, answers)
+    ]
+    with patch.object(
+        KnowledgeExtractor, "_call_llm", AsyncMock(return_value={"faq_pairs": pairs})
+    ) as extract:
+        assert (
+            await matrix_sync._sync_single_room(
+                SimpleNamespace(room_messages=AsyncMock(), room_context=AsyncMock()),
+                ROOM,
+            )
+            == 2
+        )
+    assert extract.await_count == 1
+    assert [
+        call.args[2]
+        for call in matrix_sync._error_handler.call_with_retry.call_args_list
+        if call.kwargs["method_name"] == "room_context"
+    ] == [question["event_id"] for question in questions]
+    assert all(
+        matrix_sync.polling_state.is_processed(answer["event_id"]) for answer in answers
+    )
+
+
+@pytest.mark.asyncio
+async def test_matrix_too_many_reply_targets_defers_before_context_or_extraction(
+    pipeline, matrix_sync
+):
+    answers = [
+        event(f"$answer-{i}:test", STAFF, ANSWER, 100 + i, f"$old-{i}:test")
+        for i in range(11)
+    ]
+    matrix_sync._error_handler.call_with_retry.return_value = Page(answers, "next")
+    with patch.object(KnowledgeExtractor, "_call_llm", AsyncMock()) as extract:
+        with pytest.raises(
+            IncompleteKnowledgeContextError, match="bounded context reads"
+        ):
+            await matrix_sync._sync_single_room(
+                SimpleNamespace(room_messages=AsyncMock(), room_context=AsyncMock()),
+                ROOM,
+            )
+    assert matrix_sync._error_handler.call_with_retry.await_count == 1
+    extract.assert_not_awaited()
+    assert matrix_sync.polling_state.get_room_token(ROOM) is None
+    assert not any(
+        matrix_sync.polling_state.is_processed(answer["event_id"]) for answer in answers
+    )
+
+
+def non_question_event(kind):
+    if kind == "later_user":
+        return event(
+            "$later-user:test", "@other:test", "An unrelated later question?", 101
+        )
+    return {
+        "event_id": "$reaction:test",
+        "sender": "@other:test",
+        "type": "m.reaction",
+        "origin_server_ts": 101,
+        "content": {
+            "m.relates_to": {
+                "rel_type": "m.annotation",
+                "event_id": "$question:test",
+                "key": "+1",
+            }
+        },
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("extra", ["reaction", "later_user"])
+@pytest.mark.parametrize("recoverable", [True, False])
+async def test_matrix_requires_real_prior_question_context(
+    pipeline, matrix_sync, extra, recoverable
+):
+    question = event("$question:test", "@user:test", QUESTION, 1)
+    answer = event("$answer:test", STAFF, ANSWER, 100)
+    context = RoomContextResponse(
+        ROOM,
+        None,
+        None,
+        nio_event(answer),
+        [nio_event(question)] if recoverable else [],
+        [],
+        [],
+    )
+    matrix_sync._error_handler.call_with_retry.side_effect = [
+        Page([answer, non_question_event(extra)], "next"),
+        context,
+    ]
+    with patch.object(
+        KnowledgeExtractor, "_call_llm", AsyncMock(return_value=extraction_result())
+    ) as extract:
+        if recoverable:
+            assert (
+                await matrix_sync._sync_single_room(
+                    SimpleNamespace(
+                        room_messages=AsyncMock(), room_context=AsyncMock()
+                    ),
+                    ROOM,
+                )
+                == 1
+            )
+            assert QUESTION in extract.call_args.kwargs["messages_text"]
+            assert matrix_sync.polling_state.is_processed(answer["event_id"])
+        else:
+            with pytest.raises(IncompleteKnowledgeContextError, match="prior question"):
+                await matrix_sync._sync_single_room(
+                    SimpleNamespace(
+                        room_messages=AsyncMock(), room_context=AsyncMock()
+                    ),
+                    ROOM,
+                )
+            extract.assert_not_awaited()
+            assert matrix_sync.polling_state.get_room_token(ROOM) is None
+            assert not matrix_sync.polling_state.is_processed(answer["event_id"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["reaction", "member", "image", "empty", "whitespace"])
+async def test_matrix_noncontent_events_cannot_enable_paid_extraction(pipeline, kind):
+    user = event("$noncontent:test", "@user:test", QUESTION)
+    if kind == "reaction":
+        user = non_question_event("reaction")
+    elif kind == "member":
+        user.update(type="m.room.member", content={"membership": "join"})
+    elif kind == "image":
+        user["content"]["msgtype"] = "m.image"
+    else:
+        user["content"]["body"] = "" if kind == "empty" else "   "
+    with patch.object(KnowledgeExtractor, "_call_llm", AsyncMock()) as extract:
+        assert (
+            await pipeline.extract_faqs_batch(
+                [user, event("$answer:test", STAFF, ANSWER, 100)],
+                "matrix",
+                [STAFF],
+                source_scope=ROOM,
+            )
+            == []
+        )
+    extract.assert_not_awaited()
+
+
+def late_bisq_sync(pipeline, tmp_path, *, cited=True):
+    from datetime import datetime, timezone
+
+    settings = pipeline.settings
+    settings.BISQ2_ALLOWED_CHANNEL_IDS = ["channel-a"]
+    settings.BISQ2_ALLOWED_SENDER_PROFILE_IDS = ["user", "staff"]
+    settings.BISQ2_CHATOPS_CHANNEL_IDS = []
+    settings.BISQ2_CHATOPS_ENABLED = False
+    settings.BISQ2_STAFF_PROFILE_IDS = ["staff"]
+    settings.BISQ2_STAFF_NOTIFICATION_TARGET = ""
+    now = datetime.now(timezone.utc)
+    question = {
+        "messageId": "question-old",
+        "message": QUESTION,
+        "author": "user",
+        "senderUserProfileId": "user",
+        "channelId": "channel-a",
+        "date": (now - timedelta(hours=2)).isoformat(),
+    }
+    answer = {
+        "messageId": "answer-late",
+        "message": ANSWER,
+        "author": "staff",
+        "senderUserProfileId": "staff",
+        "channelId": "channel-a",
+        "date": now.isoformat(),
+    }
+    if cited:
+        answer.update(
+            citationMessageId=question["messageId"], citationAuthorUserProfileId="user"
+        )
+    state = BisqSyncStateManager(str(tmp_path / "bisq-late.json"))
+    state.mark_processed(question["messageId"])
+    state.update_last_sync(now - timedelta(minutes=10))
+    state.save_state()
+    api = SimpleNamespace(export_chat_messages=AsyncMock())
+    return Bisq2SyncService(settings, pipeline, api, state), question, answer
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cited", [True, False])
+async def test_bisq_late_answer_recovers_question_older_than_hour(
+    pipeline, tmp_path, cited
+):
+    sync, question, answer = late_bisq_sync(pipeline, tmp_path, cited=cited)
+    sync.bisq_api.export_chat_messages.side_effect = [
+        {"messages": [answer]},
+        {"messages": [question, answer]},
+    ]
+    with patch.object(
+        KnowledgeExtractor,
+        "_call_llm",
+        AsyncMock(return_value=extraction_result("answer-late", "question-old")),
+    ) as extract:
+        assert await sync.sync_conversations() == 1
+    assert sync.bisq_api.export_chat_messages.await_count == 2
+    assert QUESTION in extract.call_args.kwargs["messages_text"]
+    assert extract.await_count == 1
+    assert sync.state_manager.is_processed("answer-late")
+    assert pipeline.repository.get_pending()[0].original_user_question == QUESTION
+    assert sync.bisq_api.export_chat_messages.call_args.kwargs["max_retries"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["missing", "oversize", "wrong_channel"])
+async def test_bisq_unrecoverable_boundary_preserves_source_and_has_no_paid_attempt(
+    pipeline, tmp_path, failure
+):
+    from app.services.knowledge.ingest.bisq2_sync_service import (
+        IncompleteBisqKnowledgeContextError,
+    )
+
+    sync, question, answer = late_bisq_sync(pipeline, tmp_path)
+    before = sync.state_manager.last_sync_timestamp
+    history = {
+        "missing": [answer],
+        "oversize": [question] * 1001,
+        "wrong_channel": [{**question, "channelId": "other"}, answer],
+    }[failure]
+    sync.bisq_api.export_chat_messages.side_effect = [
+        {"messages": [answer]},
+        {"messages": history},
+    ]
+    with patch.object(KnowledgeExtractor, "_call_llm", AsyncMock()) as extract:
+        with pytest.raises(IncompleteBisqKnowledgeContextError):
+            await sync.sync_conversations()
+    extract.assert_not_awaited()
+    restored = BisqSyncStateManager(str(sync.state_manager.state_file))
+    assert not restored.is_processed("answer-late")
+    assert restored.last_sync_timestamp == before
+    with closing(sqlite3.connect(pipeline.repository.db_path)) as conn:
+        assert (
+            conn.execute(
+                "SELECT count(*) FROM knowledge_extraction_attempts"
+            ).fetchone()[0]
+            == 0
+        )
+
+
+@pytest.mark.asyncio
+async def test_bisq_explicit_root_survives_recent_context_limit(pipeline, tmp_path):
+    from datetime import datetime
+
+    sync, question, answer = late_bisq_sync(pipeline, tmp_path)
+    answered_at = datetime.fromisoformat(answer["date"])
+    newer_context = [
+        {
+            **question,
+            "messageId": f"context-{i}",
+            "message": "Other support discussion",
+            "date": (answered_at - timedelta(minutes=60 - i)).isoformat(),
+        }
+        for i in range(51)
+    ]
+    sync.bisq_api.export_chat_messages.side_effect = [
+        {"messages": [answer]},
+        {"messages": [question, *newer_context, answer]},
+    ]
+    with patch.object(
+        KnowledgeExtractor,
+        "_call_llm",
+        AsyncMock(return_value=extraction_result("answer-late", "question-old")),
+    ) as extract:
+        assert await sync.sync_conversations() == 1
+    transcript = extract.call_args.kwargs["messages_text"]
+    assert QUESTION in transcript
+    assert transcript.count("[Msg #") == 53  # 52 events plus the citation marker.
+    assert pipeline.repository.count_pending() == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("duplicate", [False, True])
+async def test_matrix_context_provenance_changes_defer_before_paid_work(
+    pipeline, matrix_sync, duplicate
+):
+    question = event("$question:test", "@user:test", QUESTION, 1)
+    answer = event("$answer:test", STAFF, ANSWER, 100)
+    if duplicate:
+        matrix_sync._error_handler.call_with_retry.return_value = Page(
+            [question, answer, answer], "next"
+        )
+    else:
+        # Readback can reveal a redaction after the source snapshot. Do not keep
+        # the earlier readable body merely because the newer event has no text.
+        redacted = {**answer, "content": {}}
+        context = RoomContextResponse(
+            ROOM, None, None, nio_event(redacted), [nio_event(question)], [], []
+        )
+        matrix_sync._error_handler.call_with_retry.side_effect = [
+            Page([answer], "next"),
+            context,
+        ]
+    with patch.object(KnowledgeExtractor, "_call_llm", AsyncMock()) as extract:
+        with pytest.raises(IncompleteKnowledgeContextError, match="provenance"):
+            await matrix_sync._sync_single_room(
+                SimpleNamespace(room_messages=AsyncMock(), room_context=AsyncMock()),
+                ROOM,
+            )
+    extract.assert_not_awaited()
+    assert matrix_sync.polling_state.get_room_token(ROOM) is None

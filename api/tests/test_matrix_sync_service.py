@@ -535,7 +535,7 @@ class TestLLMBasedExtraction:
         mock_settings,
         mock_polling_state,
         mock_error_handler,
-        sample_staff_to_staff_messages,
+        sample_room_messages,
     ):
         """Should handle when LLM returns no FAQ pairs."""
         from app.services.knowledge.ingest.matrix_sync_service import MatrixSyncService
@@ -552,8 +552,8 @@ class TestLLMBasedExtraction:
 
         mock_client = AsyncMock()
         mock_response = MockRoomMessagesResponse(
-            chunk=sample_staff_to_staff_messages["chunk"],
-            end=sample_staff_to_staff_messages["end"],
+            chunk=sample_room_messages["chunk"],
+            end=sample_room_messages["end"],
         )
         from nio import RoomContextResponse
 

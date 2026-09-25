@@ -36,8 +36,10 @@ from app.metrics.training_metrics import (
     sync_pairs_processed,
     training_errors,
 )
+from app.services.knowledge.knowledge_extractor import is_matrix_text_message
 
 logger = logging.getLogger(__name__)
+MAX_BOUNDARY_CONTEXT_READS = 10
 
 
 class IncompleteKnowledgeContextError(RuntimeError):
@@ -374,16 +376,25 @@ class MatrixSyncService:
         messages: List[Dict[str, Any]],
         eligible_ids: Set[str],
     ) -> List[Dict[str, Any]]:
-        """Resolve one bounded page boundary from Matrix, without a raw archive.
+        """Resolve bounded page boundaries from Matrix, without a raw archive.
 
         An explicit reply outside the page, or a staff-only page, needs source
         context. Reads use the authenticated client and the exact source room.
         Cursor advancement remains the caller's responsibility after extraction.
         """
-        by_id = {msg.get("event_id"): msg for msg in messages if msg.get("event_id")}
-        staff_messages = [
+        readable = [
             msg
             for msg in messages
+            if msg.get("event_id") and is_matrix_text_message(msg)
+        ]
+        by_id = {msg["event_id"]: msg for msg in readable}
+        if len(by_id) != len(readable):
+            raise IncompleteKnowledgeContextError(
+                "Matrix source has duplicate event provenance"
+            )
+        staff_messages = [
+            msg
+            for msg in by_id.values()
             if str(msg.get("sender", "")).lower() in self._staff_ids_lower
             and msg.get("event_id") in eligible_ids
         ]
@@ -396,63 +407,91 @@ class MatrixSyncService:
             target = relates.get("m.in_reply_to", {}).get("event_id")
             if isinstance(target, str) and target not in by_id:
                 missing_targets.add(target)
-        has_user_context = any(
-            str(msg.get("sender", "")).lower() not in self._staff_ids_lower
-            for msg in messages
+
+        def has_prior_user() -> bool:
+            return any(
+                str(msg.get("sender", "")).lower() not in self._staff_ids_lower
+                and msg.get("origin_server_ts", 0) <= first_staff_timestamp
+                for msg in by_id.values()
+            )
+
+        first_staff_timestamp = min(
+            (msg.get("origin_server_ts", 0) for msg in staff_messages), default=0
         )
-        staff_only = bool(staff_messages) and not has_user_context
-        if not missing_targets and not staff_only:
-            return messages
-        anchor = (
-            sorted(missing_targets)[0]
+        needs_prior = bool(staff_messages) and not has_prior_user()
+        if not missing_targets and not needs_prior:
+            return sorted(
+                by_id.values(), key=lambda msg: msg.get("origin_server_ts", 0)
+            )
+        anchors = (
+            sorted(missing_targets)
             if missing_targets
-            else min(staff_messages, key=lambda msg: msg.get("origin_server_ts", 0))[
-                "event_id"
+            else [
+                min(staff_messages, key=lambda msg: msg.get("origin_server_ts", 0))[
+                    "event_id"
+                ]
             ]
         )
-        response = await self._error_handler.call_with_retry(
-            client.room_context, room_id, anchor, limit=20, method_name="room_context"
-        )
-        if (
-            not isinstance(response, RoomContextResponse)
-            or response.room_id != room_id
-            or response.event is None
-            or getattr(response.event, "event_id", None) != anchor
-        ):
+        if len(anchors) > MAX_BOUNDARY_CONTEXT_READS:
             raise IncompleteKnowledgeContextError(
-                "Matrix boundary context is unavailable"
+                "Matrix reply targets exceed the bounded context reads; inputs deferred"
             )
-        context_events = [
-            *response.events_before,
-            response.event,
-            *response.events_after,
-        ]
-        if len(context_events) > 21:
-            raise IncompleteKnowledgeContextError(
-                "Matrix boundary context exceeded its bound"
-            )
-        for event in context_events:
-            msg = self._event_to_dict(event)
-            if msg.get("room_id", room_id) != room_id:
-                raise IncompleteKnowledgeContextError(
-                    "Matrix context has conflicting room provenance"
-                )
-            event_id = msg.get("event_id")
-            if not event_id or msg.get("type") != "m.room.message":
+        for anchor in anchors:
+            # An earlier response may already contain another required target.
+            if anchor in by_id and anchor in missing_targets:
                 continue
-            # Transport metadata such as unsigned.age changes between reads.
-            immutable_fields = ("sender", "type", "content", "origin_server_ts")
-            if event_id in by_id and any(
-                by_id[event_id].get(field) != msg.get(field)
-                for field in immutable_fields
+            response = await self._error_handler.call_with_retry(
+                client.room_context,
+                room_id,
+                anchor,
+                limit=20,
+                method_name="room_context",
+            )
+            if (
+                not isinstance(response, RoomContextResponse)
+                or response.room_id != room_id
+                or response.event is None
+                or getattr(response.event, "event_id", None) != anchor
             ):
                 raise IncompleteKnowledgeContextError(
-                    "Matrix context has conflicting event provenance"
+                    "Matrix boundary context is unavailable"
                 )
-            by_id[event_id] = msg
+            context_events = [
+                *response.events_before,
+                response.event,
+                *response.events_after,
+            ]
+            if len(context_events) > 21:
+                raise IncompleteKnowledgeContextError(
+                    "Matrix boundary context exceeded its bound"
+                )
+            for event in context_events:
+                msg = self._event_to_dict(event)
+                if msg.get("room_id", room_id) != room_id:
+                    raise IncompleteKnowledgeContextError(
+                        "Matrix context has conflicting room provenance"
+                    )
+                event_id = msg.get("event_id")
+                if not event_id:
+                    continue
+                # Transport metadata such as unsigned.age changes between reads.
+                immutable_fields = ("sender", "type", "content", "origin_server_ts")
+                if event_id in by_id and any(
+                    by_id[event_id].get(field) != msg.get(field)
+                    for field in immutable_fields
+                ):
+                    raise IncompleteKnowledgeContextError(
+                        "Matrix context has conflicting event provenance"
+                    )
+                if is_matrix_text_message(msg):
+                    by_id[event_id] = msg
         if not missing_targets.issubset(by_id):
             raise IncompleteKnowledgeContextError(
                 "Matrix reply context remains incomplete"
+            )
+        if staff_messages and not has_prior_user():
+            raise IncompleteKnowledgeContextError(
+                "Matrix prior question context remains incomplete; inputs deferred"
             )
         return sorted(by_id.values(), key=lambda msg: msg.get("origin_server_ts", 0))
 

@@ -24,8 +24,16 @@ from app.metrics.training_metrics import (
     sync_pairs_processed,
     training_errors,
 )
+from app.services.knowledge.knowledge_extractor import bisq_citation_message_id
 
 logger = logging.getLogger(__name__)
+MAX_BOUNDARY_HISTORY_MESSAGES = 1000
+MAX_BOUNDARY_CITATIONS = 10
+MAX_PRIOR_CONTEXT_MESSAGES = 50
+
+
+class IncompleteBisqKnowledgeContextError(RuntimeError):
+    """Source context needs review; do not consume inputs or call extraction."""
 
 
 class Bisq2SyncService:
@@ -142,6 +150,7 @@ class Bisq2SyncService:
                 messages_by_channel.setdefault(channel_id, []).append(message)
 
             results = []
+            boundary_history: Optional[List[Dict[str, Any]]] = None
             for channel_id, channel_messages in messages_by_channel.items():
                 eligible_ids = {
                     message.get("messageId", "")
@@ -156,7 +165,7 @@ class Bisq2SyncService:
                     message
                     for message in channel_messages
                     if message.get("messageId", "") not in eligible_ids
-                ][-50:]
+                ][-MAX_PRIOR_CONTEXT_MESSAGES:]
                 fresh = [
                     message
                     for message in channel_messages
@@ -165,6 +174,15 @@ class Bisq2SyncService:
                 extraction_messages = sorted(
                     [*context, *fresh], key=lambda message: str(message.get("date", ""))
                 )
+                missing_targets, needs_prior = self._missing_context(
+                    extraction_messages, eligible_ids
+                )
+                if missing_targets or needs_prior:
+                    if boundary_history is None:
+                        boundary_history = await self._fetch_boundary_history()
+                    extraction_messages = self._recover_boundary_context(
+                        channel_id, extraction_messages, eligible_ids, boundary_history
+                    )
                 channel_results = await self.pipeline_service.extract_faqs_batch(
                     messages=extraction_messages,
                     source="bisq2",
@@ -219,6 +237,131 @@ class Bisq2SyncService:
             sync_duration_seconds.labels(source="bisq2").observe(
                 time_module.time() - sync_start_time
             )
+
+    def _is_staff_message(self, message: Dict[str, Any]) -> bool:
+        return (
+            self._test_scope.resolve_payload_sender_profile(message)
+            in self.staff_profile_ids
+        )
+
+    @staticmethod
+    def _has_text(message: Dict[str, Any]) -> bool:
+        return isinstance(message.get("message"), str) and bool(
+            message["message"].strip()
+        )
+
+    def _missing_context(
+        self, messages: List[Dict[str, Any]], eligible_ids: set[str]
+    ) -> tuple[set[str], bool]:
+        """Require referenced roots and prior readable user context for new staff."""
+        readable = [message for message in messages if self._has_text(message)]
+        known_ids = {message.get("messageId") for message in readable}
+        missing_targets: set[str] = set()
+        needs_prior = False
+        user_seen = False
+        for message in readable:
+            if not self._is_staff_message(message):
+                user_seen = True
+            elif message.get("messageId") in eligible_ids:
+                target = bisq_citation_message_id(message)
+                if target and target not in known_ids:
+                    missing_targets.add(target)
+                if not user_seen:
+                    needs_prior = True
+        return missing_targets, needs_prior
+
+    async def _fetch_boundary_history(self) -> List[Dict[str, Any]]:
+        """One bounded read-only recovery export per sync; never a paid retry."""
+        configured_days = getattr(self.settings, "DATA_RETENTION_DAYS", 30)
+        days = (
+            min(30, max(1, configured_days)) if isinstance(configured_days, int) else 30
+        )
+        result = await self.bisq_api.export_chat_messages(
+            since=datetime.now(timezone.utc) - timedelta(days=days),
+            max_retries=1,
+            retry_delay=0,
+        )
+        history = result.get("messages") if isinstance(result, dict) else None
+        if (
+            not isinstance(history, list)
+            or len(history) > MAX_BOUNDARY_HISTORY_MESSAGES
+        ):
+            raise IncompleteBisqKnowledgeContextError(
+                "Bisq boundary history is unavailable or exceeds its bound; inputs deferred"
+            )
+        return [
+            message
+            for message in history
+            if isinstance(message, dict) and self._test_scope.allows_payload(message)
+        ]
+
+    def _recover_boundary_context(
+        self,
+        channel_id: str,
+        messages: List[Dict[str, Any]],
+        eligible_ids: set[str],
+        history: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        by_id = {
+            message["messageId"]: message
+            for message in messages
+            if message.get("messageId")
+        }
+        if len(by_id) != len(
+            [message for message in messages if message.get("messageId")]
+        ):
+            raise IncompleteBisqKnowledgeContextError(
+                "Bisq source has duplicate event provenance; inputs deferred"
+            )
+        targets = {
+            target
+            for message in messages
+            if message.get("messageId") in eligible_ids
+            and self._is_staff_message(message)
+            if (target := bisq_citation_message_id(message))
+        }
+        if len(targets) > MAX_BOUNDARY_CITATIONS:
+            raise IncompleteBisqKnowledgeContextError(
+                "Bisq reply targets exceed the bounded context; inputs deferred"
+            )
+        for message in history:
+            if self._test_scope.resolve_payload_channel(message) != channel_id:
+                continue
+            message_id = message.get("messageId")
+            if not message_id or not self._has_text(message):
+                continue
+            if message_id in by_id and by_id[message_id] != message:
+                raise IncompleteBisqKnowledgeContextError(
+                    "Bisq boundary history has conflicting event provenance; inputs deferred"
+                )
+            by_id[message_id] = message
+        # Older explicit citation roots must survive the recent-context limit.
+        required = [
+            message for key, message in by_id.items() if key in targets - eligible_ids
+        ]
+        fresh = [
+            message for message in messages if message.get("messageId") in eligible_ids
+        ]
+        first_fresh_date = min(str(message.get("date", "")) for message in fresh)
+        prior = sorted(
+            (
+                message
+                for key, message in by_id.items()
+                if key not in eligible_ids | targets
+                and str(message.get("date", "")) <= first_fresh_date
+            ),
+            key=lambda message: str(message.get("date", "")),
+        )[-MAX_PRIOR_CONTEXT_MESSAGES:]
+        recovered = sorted(
+            [*required, *prior, *fresh],
+            key=lambda message: str(message.get("date", "")),
+        )
+        missing_targets, needs_prior = self._missing_context(recovered, eligible_ids)
+        if missing_targets or needs_prior:
+            raise IncompleteBisqKnowledgeContextError(
+                "Bisq prior question context remains incomplete; inputs deferred"
+            )
+        return recovered
 
     async def _fetch_messages_with_retry(
         self, max_retries: int, retry_delay: int

@@ -22,6 +22,8 @@ class StaffRatingSignal:
     channel: str
     trusted: bool
     sources: Optional[List[Dict[str, Any]]] = None
+    # Omitted provenance must not promote a staff-only reply into AI calibration.
+    has_ai_draft: bool = False
 
     @property
     def quadrant(self) -> str:
@@ -102,7 +104,9 @@ class FeedbackOrchestrator:
             weight=weight,
             metadata={
                 "source": "user_rating",
-                "review_kind": "answer_quality",
+                "review_kind": (
+                    "answer_quality" if signal.has_ai_draft else "staff_response"
+                ),
                 "calibration_question_id": f"escalation:{signal.escalation_id}",
                 "idempotent": True,
                 "channel": signal.channel,
