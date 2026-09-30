@@ -16,9 +16,12 @@ from app.channels.staff_assist.public_context import (
 )
 from app.services.bisq_network_status_service import SCOPES
 from app.services.faq.slug_manager import SlugManager
+from app.services.rag.canonical_fixes import CANONICAL_FIXES
 from pydantic import ValidationError
 
 pytestmark = pytest.mark.unit
+
+PAYMENT_QUESTION = "The Payment started button asks me to send the confirmation again."
 
 
 def document(kind="wiki", **metadata):
@@ -515,3 +518,208 @@ async def test_code_product_guard_rechecks_even_mocked_grounding():
     )
     assert result.evidence == []
     assert grounding.build.call_args.kwargs["product"] == "bisq1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "question,expected_product,expected_version",
+    [
+        (PAYMENT_QUESTION, None, None),
+        ("Bisq 1 version 1.9.19: " + PAYMENT_QUESTION, "bisq1", "1.9.19"),
+    ],
+)
+async def test_published_link_only_faq_supplies_separate_scoped_guide_after_grounding(
+    question, expected_product, expected_version
+):
+    fix = CANONICAL_FIXES["payment-started-confirmation-loop"]
+    row = NS(
+        id="42",
+        verified=True,
+        question="How is this notification documented?",
+        answer=f"See [the guide]({fix.url}).",
+        protocol="all",
+    )
+    grounding = NS(build=Mock(return_value=None))
+    result = await StaffEvidenceResolver(
+        faq_service=NS(get_faq_by_id=lambda _: row),
+        public_faq_service=publication(row),
+        grounding_service=grounding,
+    ).resolve(question=question, documents=[document("faq", id="42")])
+
+    guide = next(source for source in result.evidence if source.kind == "wiki")
+    faq = next(source for source in result.evidence if source.kind == "faq")
+    assert guide.url == fix.url
+    assert "P2P" in guide.content
+    assert "offline" in guide.content
+    assert "trade period is ending" in guide.content
+    assert "Bisq 1" in guide.content
+    assert faq.content == f"Question: {row.question}\nAnswer: {row.answer}"
+    assert faq.provenance == {"faq_id": "42", "verified": True, "protocol": "all"}
+    assert guide.provenance["linked_from_faq_id"] == "42"
+    assert guide.provenance["linked_reference_url"] == fix.url
+    assert guide.provenance["user_product"] == expected_product
+    assert guide.provenance["user_version"] == expected_version
+    args = grounding.build.call_args.kwargs
+    assert args["product"] == expected_product
+    assert args["user_version"] == expected_version
+    assert [source["kind"] for source in args["knowledge_sources"]] == ["faq"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reference_index", [0, 1, 2])
+@pytest.mark.parametrize("link_format", ["markdown", "autolink", "plain"])
+async def test_linked_guide_uses_exact_current_and_legacy_faq_targets(
+    reference_index, link_format
+):
+    fix = CANONICAL_FIXES["payment-started-confirmation-loop"]
+    reference = (fix.url, *fix.linked_reference_urls)[reference_index]
+    answer_text = {
+        "markdown": f"See [guide]({reference}).",
+        "autolink": f"See <{reference}>.",
+        "plain": f"See {reference}",
+    }[link_format]
+    row = NS(id="42", verified=True, question="Support?", answer=answer_text)
+    result = await StaffEvidenceResolver(
+        faq_service=NS(get_faq_by_id=lambda _: row),
+        public_faq_service=publication(row),
+    ).resolve(question=PAYMENT_QUESTION, documents=[document("faq", id="42")])
+    guide = next(source for source in result.evidence if source.kind == "wiki")
+    assert guide.url == fix.url
+    assert guide.provenance["linked_reference_url"] == reference
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "removed",
+        "unverified",
+        "private",
+        "unpublished",
+        "stale_public",
+        "wrong_public_id",
+        "missing_route",
+        "stale_retrieval_link",
+        "question_only_link",
+    ],
+)
+async def test_linked_guide_requires_current_published_answer_authority(failure):
+    fix = CANONICAL_FIXES["payment-started-confirmation-loop"]
+    row = NS(id="42", verified=True, question="Support?", answer=fix.url)
+    public = publication(row)
+    authority_row = row
+    retrieved = document("faq", id="42")
+    retrieved.page_content = fix.url
+    retrieved.metadata["url"] = fix.url
+    question = PAYMENT_QUESTION
+    if failure == "removed":
+        authority_row = None
+    elif failure == "unverified":
+        row.verified = False
+    elif failure == "private":
+        retrieved.metadata["private"] = True
+    elif failure == "unpublished":
+        public.get_faq_by_id = lambda _: None
+    elif failure == "stale_public":
+        public.get_faq_by_id("42")["answer"] = "Old published answer"
+    elif failure == "wrong_public_id":
+        public.get_faq_by_id("42")["id"] = "different"
+    elif failure == "missing_route":
+        public.get_faq_by_slug = lambda _: None
+    elif failure in {"stale_retrieval_link", "question_only_link"}:
+        row.answer = "See the documentation."
+        if failure == "question_only_link":
+            row.question = f"Support? {fix.url}"
+            question += f" {fix.url}"
+        public = publication(row)
+    result = await StaffEvidenceResolver(
+        faq_service=NS(get_faq_by_id=lambda _: authority_row),
+        public_faq_service=public,
+    ).resolve(question=question, documents=[retrieved])
+    assert not any(source.kind == "wiki" for source in result.evidence)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "target",
+    [
+        "https://bisq.wiki",
+        "https://bisq.wiki/Frequently_asked_questions",
+        "https://bisq.wiki/Frequently_asked_questions#another-section",
+        "{url}unreviewed",
+        "{url}?suffix",
+        "https://bisq.wiki.attacker.example/{url}",
+        "https://attacker.example/?guide={url}",
+        "https://user@bisq.wiki/Frequently_asked_questions",
+    ],
+)
+async def test_linked_guide_does_not_expand_unreviewed_or_prefix_reference(target):
+    fix = CANONICAL_FIXES["payment-started-confirmation-loop"]
+    row = NS(
+        id="42",
+        verified=True,
+        question="Support?",
+        answer=f"[Guide]({target.format(url=fix.url)})",
+    )
+    result = await StaffEvidenceResolver(
+        faq_service=NS(get_faq_by_id=lambda _: row),
+        public_faq_service=publication(row),
+    ).resolve(question=PAYMENT_QUESTION, documents=[document("faq", id="42")])
+    assert [source.kind for source in result.evidence] == ["faq"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "answer_template",
+    [
+        "[{url}](https://attacker.example/guide)",
+        "![{url}](https://attacker.example/image)",
+        '<a href="{url}">Guide</a>',
+        'See <a href="https://attacker.example/"> {url} </a>',
+        "`{url}`",
+        "```\n{url}\n```",
+    ],
+)
+async def test_link_labels_and_code_literals_do_not_authorize_linked_guide(
+    answer_template,
+):
+    fix = CANONICAL_FIXES["payment-started-confirmation-loop"]
+    row = NS(
+        id="42",
+        verified=True,
+        question="Support?",
+        answer=answer_template.format(url=fix.url),
+    )
+    result = await StaffEvidenceResolver(
+        faq_service=NS(get_faq_by_id=lambda _: row),
+        public_faq_service=publication(row),
+    ).resolve(question=PAYMENT_QUESTION, documents=[document("faq", id="42")])
+    assert [source.kind for source in result.evidence] == ["faq"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("through_compiled", [False, True])
+async def test_linked_guide_survives_evidence_cap_without_duplicate_faq_or_guide(
+    through_compiled,
+):
+    fix = CANONICAL_FIXES["payment-started-confirmation-loop"]
+    row = NS(id="42", verified=True, question="Support?", answer=fix.url)
+    page = compiled(source_refs=["faq:42"])
+    resolver = compiled_resolver(
+        page,
+        faq_service=NS(get_faq_by_id=lambda _: row),
+        public_faq_service=publication(row),
+    )
+    trigger = page if through_compiled else document("faq", id="42")
+    documents = [
+        document(url=f"https://bisq.wiki/Other_{index}") for index in range(25)
+    ]
+    documents += [fix.to_document(), trigger, trigger]
+    result = await resolver.resolve(question=PAYMENT_QUESTION, documents=documents)
+    again = await resolver.resolve(question=PAYMENT_QUESTION, documents=documents)
+    assert len(result.evidence) == 8
+    assert result.evidence[0].url == fix.url
+    assert sum(source.url == fix.url for source in result.evidence) == 1
+    assert sum(source.kind == "faq" for source in result.evidence) == 1
+    assert len({source.id for source in result.evidence}) == 8
+    assert result.evidence == again.evidence

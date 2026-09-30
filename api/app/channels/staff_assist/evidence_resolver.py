@@ -23,6 +23,7 @@ from app.channels.staff_assist.public_context import (
     StaffEvidence,
 )
 from app.services.faq.slug_manager import SlugManager
+from app.services.rag.canonical_fixes import find_linked_canonical_fix
 from app.services.rag.code_evidence import (
     canonical_code_repo,
     code_repo_for_context,
@@ -30,6 +31,7 @@ from app.services.rag.code_evidence import (
     explicit_user_version,
 )
 from app.services.rag.source_refs import is_precise_code_source_ref
+from markdown_it import MarkdownIt
 
 
 @dataclass
@@ -121,6 +123,7 @@ class StaffEvidenceResolver:
         user_version = user_version or explicit_user_version(question)
         bundle = EvidenceBundle()
         candidates: list[ContextEvidence] = []
+        published_faqs: list[tuple[PublicEvidence, str]] = []
         current_compiled: dict[str, Any] = {}
         if self.llm_wiki_loader is not None and self.llm_wiki_dir is not None:
             try:
@@ -143,9 +146,12 @@ class StaffEvidenceResolver:
                 if kind == "wiki":
                     source = self._wiki(document, metadata)
                 elif kind == "faq":
-                    source = await asyncio.to_thread(
+                    faq = await asyncio.to_thread(
                         self._faq, str(metadata.get("id") or "")
                     )
+                    if faq is not None:
+                        source = faq[0]
+                        published_faqs.append(faq)
                 elif kind == "llm_wiki":
                     current = current_compiled.get(str(metadata.get("id")))
                     if current is not None and not _private(current.metadata):
@@ -168,7 +174,8 @@ class StaffEvidenceResolver:
                             if ref.startswith("faq:"):
                                 faq = await asyncio.to_thread(self._faq, ref[4:])
                                 if faq is not None:
-                                    candidates.append(faq)
+                                    candidates.append(faq[0])
+                                    published_faqs.append(faq)
                 else:
                     bundle.diagnostics.append(f"{kind or 'unknown'}_not_eligible")
             except (ValueError, TypeError, AttributeError):
@@ -237,6 +244,20 @@ class StaffEvidenceResolver:
                     )
             except Exception:
                 bundle.diagnostics.append("code_grounding_unavailable")
+        # Resolve published FAQ links after grounding so scoped documentation
+        # cannot change the inferred product used for code/release selection.
+        linked = self._linked_guide(
+            question, published_faqs, product=product, user_version=user_version
+        )
+        if linked is not None:
+            # The bounded reviewed guide must survive the evidence cap. Prefer
+            # its current registry body over duplicate retrieved section content.
+            candidates = [
+                source
+                for source in candidates
+                if not (source.kind == "wiki" and source.url == linked.url)
+            ]
+            candidates.insert(0, linked)
         # Retain source diversity before filling remaining slots in retrieval order.
         selected: list[ContextEvidence] = []
         seen: set[str] = set()
@@ -255,6 +276,61 @@ class StaffEvidenceResolver:
             for index, source in enumerate(selected[:8])
         ]
         return bundle
+
+    def _linked_guide(
+        self,
+        question: str,
+        published_faqs: list[tuple[PublicEvidence, str]],
+        *,
+        product: str | None,
+        user_version: str | None,
+    ) -> PublicEvidence | None:
+        markdown = MarkdownIt("commonmark")
+        # Compare exact source targets with reviewed aliases; do not repair,
+        # decode or trim punctuation from a URL to obtain an eligible match.
+        markdown.normalizeLink = lambda url: url  # type: ignore[method-assign]
+        for faq, answer in published_faqs:
+            refs: set[str] = set()
+            for block in markdown.parse(answer):
+                # HTML labels can look like standalone URLs while pointing
+                # elsewhere. This narrow Markdown/plain-text path fails closed.
+                if any(token.type == "html_inline" for token in block.children or []):
+                    continue
+                in_link = False
+                for token in block.children or []:
+                    if token.type == "link_open":
+                        in_link = True
+                        href = token.attrGet("href")
+                        if isinstance(href, str):
+                            refs.add(href)
+                    elif token.type == "link_close":
+                        in_link = False
+                    elif token.type == "text" and not in_link:
+                        refs.update(
+                            word
+                            for word in token.content.split()
+                            if word.startswith("https://")
+                        )
+            matched = find_linked_canonical_fix(question, refs, product)
+            if matched is None:
+                continue
+            fix, reference = matched
+            document = fix.to_document()
+            guide = self._wiki(document, document.metadata)
+            if guide is not None:
+                guide.provenance.update(
+                    {
+                        "canonical_fix_id": fix.key,
+                        "content_authority": "reviewed_canonical_registry",
+                        "linked_from_faq_id": faq.provenance["faq_id"],
+                        "linked_reference_url": reference,
+                        "user_product": product,
+                        "user_version": user_version,
+                        "applicability": "documented_scope_not_confirmed_user_state",
+                    }
+                )
+                return guide
+        return None
 
     async def _public_compiled(
         self, source: ContextEvidence, bundle: EvidenceBundle
@@ -322,7 +398,7 @@ class StaffEvidenceResolver:
             },
         )
 
-    def _faq(self, faq_id: str) -> PublicEvidence | None:
+    def _faq(self, faq_id: str) -> tuple[PublicEvidence, str] | None:
         from app.channels.plugins.support_markdown import BISQ2_FAQ_ONION_BASE_URL
 
         if not faq_id or self.faq_service is None or self.public_faq_service is None:
@@ -356,7 +432,7 @@ class StaffEvidenceResolver:
             or visible.get("answer") != answer
         ):
             return None
-        return PublicEvidence(
+        evidence = PublicEvidence(
             id=_identifier("faq", faq_id),
             kind="faq",
             title=question[:160],
@@ -369,6 +445,7 @@ class StaffEvidenceResolver:
                 "protocol": _value(row, "protocol"),
             },
         )
+        return evidence, answer
 
     @staticmethod
     def _compiled(content: str, metadata: dict[str, Any]) -> StaffEvidence | None:

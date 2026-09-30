@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
+from app.services.rag.code_evidence import explicit_product
 from langchain_core.documents import Document
 
 
@@ -27,6 +28,8 @@ class CanonicalFix:
     remedy: str
     protocol: str
     signatures: tuple[str, ...]
+    # Explicit opt-in for published FAQ links, including reviewed legacy URLs.
+    linked_reference_urls: tuple[str, ...] = ()
 
     def to_document(self) -> Document:
         """Render the fix as a small trusted retrieval document."""
@@ -48,24 +51,39 @@ class CanonicalFix:
 
 
 CANONICAL_FIXES: dict[str, CanonicalFix] = {
+    # Section URL and conditions reviewed against the public FAQ on 2026-09-30.
     "payment-started-confirmation-loop": CanonicalFix(
         key="payment-started-confirmation-loop",
         title="Frequently asked questions",
-        section='"Payment started" button will not stick',
+        section='"Payment started" button won\'t stick / asks to send confirmation again.',
         url=(
             "https://bisq.wiki/Frequently_asked_questions#"
-            ".22Payment_started.22_button_will_not_stick.2C_always_says_"
-            ".22Please_send_confirmation_again.22"
+            "%22Payment_started%22_button_won%27t_stick_%2F_"
+            "asks_to_send_confirmation_again."
         ),
         remedy=(
-            "For the Bisq 1 payment-confirmation loop, message the peer, retry the "
-            "button, restart, then use the documented Tor refresh or mediation path."
+            "Bisq 1 documentation relates this payment-confirmation loop to P2P "
+            "network conditions, often an offline peer; this does not establish "
+            "the cause in this case. Documented options include trader chat, "
+            "retrying the notification, restarting Bisq, the built-in outdated "
+            "Tor-file refresh, and waiting while staying online. If the trade "
+            "period is ending, the guide describes mediation. These are scoped "
+            "documentation facts, not confirmation of the user's product, release "
+            "or transaction state."
         ),
         protocol="multisig_v1",
         signatures=(
             r"payment started.{0,80}(?:will not|won't|doesn't|does not).{0,30}(?:stick|work)",
-            r"payment started.{0,100}(?:please )?send confirmation again",
-            r"(?:please )?send confirmation again.{0,100}payment started",
+            r"payment started.{0,100}(?:please )?send (?:the )?confirmation again",
+            r"(?:please )?send (?:the )?confirmation again.{0,100}payment started",
+        ),
+        linked_reference_urls=(
+            "https://bisq.wiki/Frequently_asked_questions#"
+            ".22Payment_started.22_button_will_not_stick.2C_always_says_"
+            ".22Please_send_confirmation_again.22",
+            "https://bisq.wiki/Frequently_asked_questions#"
+            ".22Payment_started.22_button_will_not_stick.2C_always_says_"
+            ".22Please_send_confirmation_again.22.",
         ),
     ),
     "incomplete-spv-resync": CanonicalFix(
@@ -169,17 +187,67 @@ def find_canonical_fix(
     for priority, fix in enumerate(CANONICAL_FIXES.values()):
         if fix.protocol != question_protocol:
             continue
-        score = sum(
-            1
-            for signature in fix.signatures
-            if re.search(signature, normalized_question, flags=re.IGNORECASE)
-        )
+        score = _signature_score(fix, normalized_question)
         if score:
             matches.append((score, -priority, fix))
 
     if not matches:
         return None
     return max(matches, key=lambda item: (item[0], item[1]))[2]
+
+
+def _signature_score(fix: CanonicalFix, normalized_question: str) -> int:
+    return sum(
+        1
+        for signature in fix.signatures
+        if re.search(signature, normalized_question, flags=re.IGNORECASE)
+    )
+
+
+def _linked_protocol(value: str) -> str | None:
+    # Mixed product cues make explicit_product ambiguous; a MuSig mention must
+    # still exclude this Bisq 1 guide rather than disappear in legacy routing.
+    if re.search(r"\bmusig\b", value, re.IGNORECASE):
+        return "musig"
+    return _normalized_protocol(
+        value.replace("_", " ").replace("-", " "), explicit_product(value)
+    )
+
+
+def find_linked_canonical_fix(
+    question: str, reference_urls: set[str], product: str | None = None
+) -> tuple[CanonicalFix, str] | None:
+    """Resolve one reviewed FAQ association without inferring the user's product.
+
+    Only explicitly opted-in entries may supply scoped documentation when the
+    product is unknown. Question wording must also match the issue; the link or
+    FAQ title alone cannot establish relevance.
+    """
+    normalized_question = " ".join(str(question or "").casefold().split())
+    question_protocol = _linked_protocol(normalized_question)
+    product_protocol = _linked_protocol(product or "")
+    matches: list[tuple[int, int, CanonicalFix, str]] = []
+    for priority, fix in enumerate(CANONICAL_FIXES.values()):
+        if not fix.linked_reference_urls or any(
+            protocol is not None and protocol != fix.protocol
+            for protocol in (question_protocol, product_protocol)
+        ):
+            continue
+        reference = next(
+            (
+                url
+                for url in (fix.url, *fix.linked_reference_urls)
+                if url in reference_urls
+            ),
+            None,
+        )
+        score = _signature_score(fix, normalized_question)
+        if reference is not None and score:
+            matches.append((score, -priority, fix, reference))
+    if not matches:
+        return None
+    _, _, fix, reference = max(matches, key=lambda item: (item[0], item[1]))
+    return fix, reference
 
 
 def canonical_url_for_metadata(metadata: Mapping[str, Any]) -> str | None:
@@ -216,6 +284,10 @@ def validate_canonical_fixes() -> None:
             raise ValueError(f"canonical fix key mismatch: {key!r} != {fix.key!r}")
         if not _is_strict_canonical_url(fix.url):
             raise ValueError(f"canonical fix URL is not allowlisted: {fix.url!r}")
+        if any(not _is_strict_canonical_url(url) for url in fix.linked_reference_urls):
+            raise ValueError(
+                f"canonical fix linked reference is not allowlisted: {key}"
+            )
         if not fix.remedy.strip() or "\n" in fix.remedy:
             raise ValueError(f"canonical fix remedy must be one non-empty line: {key}")
 
