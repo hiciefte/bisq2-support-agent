@@ -1,6 +1,7 @@
 """Offline incident admission, accumulation and durable no-retry boundaries."""
 
 import asyncio
+import json
 import sqlite3
 from contextlib import closing
 from datetime import datetime, timezone
@@ -27,6 +28,17 @@ pytestmark = pytest.mark.unit
 
 ROOT = "My trade deposit is locked. SignMediatedPayoutTx: sellerPayoutAddressString must not be null."
 FOLLOWUP = "i already updated bisq multiple times in the meantime, and also resynced spv 5 times"
+ACKNOWLEDGEMENTS = [
+    "OK, thanks speedy reply 🤙",
+    "Yeah I did that too",
+    "Yes, I already did that, thanks.",
+    "Okay, thank you for the quick response! 👍🏽",
+    "Thanks for the prompt reply 🙏🏾",
+    "I did that as well",
+    "Yeah, thanks",
+    "Okay! Thank you. 👌",
+    "Thanks 🤙🏿!",
+]
 
 
 @pytest.fixture
@@ -242,6 +254,155 @@ async def test_detached_fragments_and_edits_have_no_admission(runtime_case):
     _, count = await bundle.repository.list_escalations(EscalationFilters())
     assert count == 0
     bundle.llm.invoke.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ACKNOWLEDGEMENTS)
+@pytest.mark.parametrize("relations", [{}, {"reply_to_event_id": "$unknown"}])
+async def test_detached_acknowledgements_have_no_work(runtime_case, text, relations):
+    bundle = runtime_case
+    enable_trial(bundle)
+    message = incoming(bundle, "$ack", text, **relations)
+    server_events(bundle, [message])
+    await bundle.engine.process(message, bundle.channel)
+    await bundle.engine.drain()
+    _, count = await bundle.repository.list_escalations(EscalationFilters())
+    assert count == 0
+    with closing(sqlite3.connect(bundle.repository.db_path)) as db:
+        for table in ("matrix_context_attempts", "matrix_context_trial_cases"):
+            exists = db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+            ).fetchone()
+            assert (
+                not exists
+                or db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+            )
+    bundle.client.room_context.assert_not_awaited()
+    bundle.retrieve.assert_not_called()
+    bundle.llm.invoke.assert_not_called()
+    bundle.sender.assert_not_awaited()
+    bundle.channel.handle_incoming.assert_not_awaited()
+    bundle.channel.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ACKNOWLEDGEMENTS[:3])
+@pytest.mark.parametrize(
+    "relations",
+    [{}, {"reply_to_event_id": "$root"}, {"thread_root_event_id": "$root"}],
+)
+async def test_linked_acknowledgements_are_stored_without_generation_or_late_change(
+    runtime_case, text, relations
+):
+    bundle = runtime_case
+    enable_trial(bundle)
+    release = hold_worker(bundle)
+    root = incoming(bundle, "$root", ROOT)
+    acknowledgement = incoming(bundle, "$ack", text, **relations)
+    server_events(bundle, [root, acknowledgement])
+    await bundle.engine.process(root, bundle.channel)
+    await bundle.engine.process(acknowledgement, bundle.channel)
+    release.set()
+    await bundle.engine.drain()
+    case = await saved_case(bundle)
+    assert case.channel_metadata["context_status"] == "delivered"
+    assert [m["text"] for m in case.channel_metadata["incident_messages"]] == [
+        ROOT,
+        text,
+    ]
+    assert text in case.question
+    assert case.channel_metadata["incident_generation_question"] == ROOT
+    bundle.retrieve.assert_called_once_with(ROOT)
+    prompt = json.loads(bundle.llm.invoke.call_args.args[0])
+    assert prompt["question"] == ROOT
+    assert all(m["content"] != text for m in prompt["recent_messages"])
+    await bundle.engine.process(
+        incoming(bundle, "$late-ack", text, reply_to_event_id="$root"), bundle.channel
+    )
+    await bundle.engine.drain()
+    case = await saved_case(bundle)
+    assert len(case.channel_metadata["incident_messages"]) == 3
+    assert case.channel_metadata["incident_messages"][-1]["text"] == text
+    assert not case.channel_metadata.get("incident_late_meaningful_update")
+    assert (
+        case.channel_metadata["incident_late_update_status"]
+        == "needs_review_no_additional_generation"
+    )
+    bundle.llm.invoke.assert_called_once()
+    assert bundle.sender.await_count == 2
+    with closing(sqlite3.connect(bundle.repository.db_path)) as db:
+        assert (
+            db.execute("SELECT COUNT(*) FROM matrix_context_attempts").fetchone()[0]
+            == 1
+        )
+        assert (
+            db.execute("SELECT COUNT(*) FROM matrix_context_trial_cases").fetchone()[0]
+            == 1
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Okay, thanks?",
+        "Yeah I did that too?",
+        "Thanks 👍?",
+        "Okay, thanks for the quick reply. How do I open mediation?",
+        "Yeah I did that, but it still fails.",
+        "Yes, I already did that, thanks. Still waiting for my deposit.",
+        "Okay, thanks, but my balance is zero.",
+        "Thanks. New issue: my profile is missing.",
+        "Thanks, the funds arrived.",
+        "Yeah I did that and it works now.",
+        "I already resynced SPV",
+        "Yeah, I already resynced SPV, thank you.",
+        "Thanks for nothing",
+        "Okay / thanks",
+        "Thanks 😕",
+    ],
+)
+async def test_acknowledgement_with_question_or_status_is_admitted(runtime_case, text):
+    from app.channels.staff_assist.context_incidents import ContextIncidentStore
+
+    bundle = runtime_case
+    hold_worker(bundle)
+    await bundle.engine.process(incoming(bundle, "$question", text), bundle.channel)
+    case = await saved_case(bundle)
+    question, _, _ = await ContextIncidentStore(bundle.repository.db_path).freeze(
+        case.id
+    )
+    assert question == text
+    await bundle.engine.close()
+    bundle.llm.invoke.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Yeah I did that, but my balance is still zero.",
+        "Thanks, the funds arrived.",
+        "Okay, thanks. How do I open mediation?",
+        "Yeah, I already resynced SPV, thank you.",
+    ],
+)
+async def test_linked_acknowledgement_with_detail_is_a_meaningful_late_update(
+    runtime_case, text
+):
+    bundle = runtime_case
+    bundle.incoming = incoming(bundle, "$root", ROOT)
+    server_events(bundle, [bundle.incoming])
+    await run(bundle)
+    await bundle.engine.process(
+        incoming(bundle, "$late", text, reply_to_event_id="$root"), bundle.channel
+    )
+    await bundle.engine.drain()
+    case = await saved_case(bundle)
+    assert case.channel_metadata["incident_late_meaningful_update"] is True
+    assert case.channel_metadata["incident_messages"][-1]["text"] == text
+    bundle.llm.invoke.assert_called_once()
+    assert bundle.sender.await_count == 2
 
 
 @pytest.mark.asyncio

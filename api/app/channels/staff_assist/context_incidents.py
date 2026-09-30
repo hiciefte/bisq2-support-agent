@@ -21,11 +21,21 @@ def context_only(text: str) -> bool:
     text = text.strip().lower().rstrip(".! ")
     if re.search(r"\b(?:error|fails?|failed|cannot|locked)\b|can['’]t|not work", text):
         return False
+    # Match entire acknowledgement clauses; never discard arbitrary words or
+    # question marks. Concrete actions and outcome updates remain substantive.
+    acknowledgement = (
+        r"(?:ok(?:ay)?|yes|yeah|great|"
+        r"(?:thanks?(?: you)?|thank you|thx)"
+        r"(?: (?:for )?(?:the )?(?:quick|speedy|prompt|fast) (?:response|reply))?|"
+        r"i (?:already )?did that(?: (?:as well|too))?)"
+    )
     return bool(
         re.fullmatch(
-            r"(?:ok(?:ay)?|thanks?(?: you)?|thank you|thx|yes|no|great|\d+\s*(?:times?)?)",
+            rf"{acknowledgement}(?:(?:[,!.]\s*|\s+){acknowledgement})*"
+            r"(?:[.!]?\s*[👍🙏🤙👌]\ufe0f?[\U0001f3fb-\U0001f3ff]?)*",
             text,
         )
+        or re.fullmatch(r"(?:no|\d+\s*(?:times?)?)", text)
         or re.fullmatch(
             r"i (?:can|could) (?:also )?(?:provide|send|share|upload) "
             r"(?:the |a |my )?(?:chat )?(?:logs?|screenshots?)"
