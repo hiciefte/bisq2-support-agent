@@ -369,7 +369,6 @@ pip-tools==7.5.3
 platformdirs==4.10.0
     # via
     #   black
-    #   python-discovery
     #   virtualenv
 pluggy==1.6.0
     # via pytest
@@ -433,8 +432,10 @@ pygments==2.20.0
     # via
     #   pytest
     #   rich
-pyjwt[crypto]==2.13.0
-    # via mcp
+pyjwt[crypto]==2.14.0
+    # via
+    #   -r api/requirements.in
+    #   mcp
 pyparsing==3.3.2
     # via matplotlib
 pyproject-hooks==1.2.0
@@ -451,7 +452,7 @@ python-dateutil==2.9.0.post0
     # via
     #   matplotlib
     #   pandas
-python-discovery==1.4.0
+python-discovery==1.6.1
     # via virtualenv
 python-dotenv==1.2.2
     # via pydantic-settings
@@ -604,7 +605,7 @@ typing-inspection==0.4.2
     #   pydantic-settings
 unpaddedbase64==2.1.0
     # via matrix-nio
-urllib3==2.7.0
+urllib3==2.8.0
     # via
     #   -r api/requirements.in
     #   qdrant-client
@@ -617,8 +618,10 @@ uvicorn==0.49.0
     # via
     #   -r api/requirements.in
     #   mcp
-virtualenv==21.4.2
-    # via pre-commit
+virtualenv==21.7.12
+    # via
+    #   -r api/requirements.in
+    #   pre-commit
 websockets==15.0.1
     # via
     #   -r api/requirements.in

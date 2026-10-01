@@ -17,6 +17,7 @@ from app.models.escalation import EscalationFilters, EscalationStatus
 from app.services.escalation.escalation_repository import EscalationRepository
 from app.services.escalation.escalation_service import EscalationService
 from app.services.faq.slug_manager import SlugManager
+from app.services.rag.canonical_fixes import CANONICAL_FIXES
 from langchain_core.documents import Document
 
 pytestmark = pytest.mark.unit
@@ -292,6 +293,74 @@ async def test_no_public_evidence_retains_case_without_model_or_send(runtime_cas
     assert case.channel_metadata["context_reason"] == "no_eligible_evidence"
     bundle.llm.invoke.assert_not_called()
     bundle.sender.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_published_faq_link_reaches_single_model_call_with_independent_guide(
+    runtime_case,
+):
+    bundle = runtime_case
+    question = "Payment started keeps saying please send confirmation again"
+    fix = CANONICAL_FIXES["payment-started-confirmation-loop"]
+    reference = fix.linked_reference_urls[-1]
+    faq_answer = f"See [the documented guide]({reference})."
+    row = NS(
+        id="42",
+        verified=True,
+        question="Where is this documented?",
+        answer=faq_answer,
+        protocol="all",
+    )
+    public = {
+        "id": row.id,
+        "question": row.question,
+        "answer": row.answer,
+        "slug": SlugManager().generate_slug(row.question, row.id),
+    }
+    bundle.incoming.question = question
+    bundle.client.room_context.side_effect = lambda *a, **kw: context(body=question)
+    bundle.rag.faq_service = NS(get_faq_by_id=Mock(return_value=row))
+    bundle.services["public_faq_service"] = NS(
+        get_faq_by_id=Mock(return_value=public),
+        get_faq_by_slug=Mock(return_value=public),
+    )
+    grounding = NS(build=Mock(return_value=None))
+    bundle.services["staff_grounding_brief_service"] = grounding
+    bundle.retrieve.return_value = ([public_doc(type="faq", id="42")], [0.8])
+
+    def generate(payload, **kwargs):
+        prompt = json.loads(payload)
+        guide = next(
+            source for source in prompt["evidence"] if source["kind"] == "wiki"
+        )
+        faq = next(source for source in prompt["evidence"] if source["kind"] == "faq")
+        assert guide["url"] == fix.url
+        assert "P2P" in guide["content"]
+        assert "trade period is ending" in guide["content"]
+        assert guide["provenance"]["linked_reference_url"] == reference
+        assert faq["content"] == f"Question: {row.question}\nAnswer: {faq_answer}"
+        return NS(
+            content=json.dumps(
+                {
+                    "action": "note",
+                    "text": "Bisq 1 documentation relates this notification loop to P2P conditions, often an offline peer; it does not establish this case's cause.",
+                    "source_ids": [guide["id"]],
+                    "reason": "Scoped documentation context.",
+                }
+            )
+        )
+
+    bundle.llm.invoke.side_effect = generate
+    case = await run(bundle)
+    bundle.llm.invoke.assert_called_once()
+    bundle.retrieve.assert_called_once()
+    args = grounding.build.call_args.kwargs
+    assert args["product"] is None and args["user_version"] is None
+    assert [source["kind"] for source in args["knowledge_sources"]] == ["faq"]
+    assert len(case.sources) == 1
+    assert case.sources[0]["url"] == fix.url
+    assert case.sources[0]["kind"] == "wiki"
+    no_public_delivery(bundle)
 
 
 @pytest.mark.asyncio
