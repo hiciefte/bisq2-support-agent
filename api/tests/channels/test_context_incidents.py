@@ -3,8 +3,11 @@
 import asyncio
 import json
 import sqlite3
+import subprocess
+import sys
 from contextlib import closing
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace as NS
 
 import pytest
@@ -39,6 +42,27 @@ ACKNOWLEDGEMENTS = [
     "Okay! Thank you. 👌",
     "Thanks 🤙🏿!",
 ]
+
+
+def test_repeated_acknowledgements_do_not_block_admission():
+    # Run the real matcher in a disposable process: a backtracking regression
+    # must fail the test without hanging the intake/test event loop.
+    script = (
+        "from app.channels.staff_assist.context_incidents import context_only\n"
+        "for separator in (' ', ', ', '. '):\n"
+        "    text = ('thank you' + separator) * 64\n"
+        "    assert context_only(text.rstrip(', '))\n"
+        "    assert not context_only(text + 'details')\n"
+        "    assert not context_only(text + 'What now?')\n"
+    )
+    subprocess.run(
+        [sys.executable, "-B", "-c", script],
+        cwd=Path(__file__).resolve().parents[2],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
 
 
 @pytest.fixture

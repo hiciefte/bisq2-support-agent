@@ -25,7 +25,7 @@ def context_only(text: str) -> bool:
     # question marks. Concrete actions and outcome updates remain substantive.
     acknowledgement = (
         r"(?:ok(?:ay)?|yes|yeah|great|"
-        r"(?:thanks?(?: you)?|thank you|thx)"
+        r"(?:thanks?(?: you)?|thx)"
         r"(?: (?:for )?(?:the )?(?:quick|speedy|prompt|fast) (?:response|reply))?|"
         r"i (?:already )?did that(?: (?:as well|too))?)"
     )
