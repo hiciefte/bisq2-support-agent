@@ -105,6 +105,7 @@ api/data/manual_matrix_alert_store*/
 api/data/pairing_qr_code.txt
 api/data/bm25_vocabulary.json
 api/data/qdrant_index_metadata.json
+/api/data/wiki/processed_wiki.jsonl
 
 # Ignore user feedback data (contains conversation_id and message_id for user tracking)
 api/data/feedback/*

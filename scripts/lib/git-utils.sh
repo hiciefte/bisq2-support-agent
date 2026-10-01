@@ -568,6 +568,28 @@ run_faq_migration() {
     fi
 }
 
+# Explicit source-boundary transition driven by a reviewed candidate updater.
+update_repository_with_wiki_cache_migration() {
+    local repo_dir="$1" remote="$2" branch="$3" target="$4" previous="$5" helper="$6"
+
+    ensure_repository_update_safe "$repo_dir" || return 1
+    fetch_remote "$repo_dir" "$remote" || return 1
+    if [ "$(git -C "$repo_dir" rev-parse "$remote/$branch")" != "$target" ]; then
+        log_error "Wiki cache migration release ref changed"
+        return 1
+    fi
+    ensure_runtime_data_git_boundary "$repo_dir" HEAD || return 1
+    ensure_runtime_data_git_boundary "$repo_dir" "$target" || return 1
+    # The helper repeats exact source/data preflight after fetch and records a
+    # durable intent/recovery block before changing the ordinary Git index.
+    PREV_HEAD="$previous"
+    DATA_BACKUP_DIR=""
+    export PREV_HEAD DATA_BACKUP_DIR
+    python3 -B "$helper" apply --repository "$repo_dir" \
+        --target "$target" --previous "$previous" || return 1
+    ensure_release_source_tree_clean "$repo_dir"
+}
+
 # Function to update repository with stash handling and production data preservation
 update_repository() {
     local repo_dir="${1:-.}"
