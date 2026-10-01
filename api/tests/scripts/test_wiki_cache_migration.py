@@ -17,8 +17,16 @@ spec.loader.exec_module(migration)
 
 def git(root, *args):
     return subprocess.check_output(
-        ["git", "-C", str(root), *args], stderr=subprocess.DEVNULL
+        ["git", "-C", str(root), *args],
+        stderr=subprocess.DEVNULL,
+        env=git_environment(),
     )
+
+
+def git_environment():
+    return {
+        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+    }
 
 
 def commit(root, message):
@@ -247,7 +255,7 @@ def test_completion_refuses_changed_state_and_preserves_block(repository, kind):
 
 
 def sourced_updater(tmp_path, body):
-    env = dict(os.environ, BISQ_SUPPORT_INSTALL_DIR=str(tmp_path))
+    env = dict(git_environment(), BISQ_SUPPORT_INSTALL_DIR=str(tmp_path))
     script = f'source "{ROOT}/scripts/update.sh" >/dev/null\n' + body
     return subprocess.run(
         ["bash", "-c", script], text=True, capture_output=True, env=env
@@ -383,3 +391,40 @@ apply_updates
     assert result.returncode == 1, result.stdout + result.stderr
     assert "ADAPTER_RECORDED_FAILURE" in result.stdout
     assert "UNSAFE_" not in result.stdout + result.stderr
+
+
+def test_ambient_git_overrides_cannot_redirect_migration(
+    repository, tmp_path, monkeypatch
+):
+    root, previous, target = repository
+    unrelated = tmp_path / "unrelated"
+    unrelated.mkdir()
+    git(unrelated, "init", "-q")
+    (unrelated / "preserve.txt").write_text("unrelated source\n")
+    unrelated_head = commit(unrelated, "unrelated source")
+    unrelated_index = (unrelated / ".git/index").read_bytes()
+    for name, value in {
+        "GIT_DIR": str(unrelated / ".git"),
+        "GIT_WORK_TREE": str(unrelated),
+        "GIT_INDEX_FILE": str(unrelated / ".git/index"),
+        "GIT_COMMON_DIR": str(unrelated / ".git"),
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "core.worktree",
+        "GIT_CONFIG_VALUE_0": str(unrelated),
+    }.items():
+        monkeypatch.setenv(name, value)
+
+    # Both disposable-repository helpers and sourced shell fixtures isolate
+    # inherited Git state before they can affect any external checkout.
+    assert git(root, "rev-parse", "HEAD").decode().strip() == previous
+    shell = sourced_updater(tmp_path, f'git -C "{root}" rev-parse HEAD')
+    assert shell.returncode == 0
+    assert shell.stdout.strip() == previous
+    before = migration.runtime_identity(root)
+    migration.migrate(root, target, previous)
+    migration.complete_deployment(root)
+    assert migration.runtime_identity(root) == before
+    assert git(root, "rev-parse", "HEAD").decode().strip() == target
+    assert git(unrelated, "rev-parse", "HEAD").decode().strip() == unrelated_head
+    assert (unrelated / ".git/index").read_bytes() == unrelated_index
+    assert (unrelated / "preserve.txt").read_text() == "unrelated source\n"

@@ -25,7 +25,12 @@ class Refused(RuntimeError):
 
 
 def git(root, *args, input_bytes=None):
-    env = dict(os.environ, GIT_OPTIONAL_LOCKS="0")
+    # This helper uses local objects only. Ambient Git location/configuration
+    # overrides must not redirect a command away from the validated checkout.
+    env = {
+        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+    }
+    env["GIT_OPTIONAL_LOCKS"] = "0"
     result = subprocess.run(
         ["git", "-C", str(root), *args], input=input_bytes, capture_output=True, env=env
     )
