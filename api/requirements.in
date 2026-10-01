@@ -49,6 +49,8 @@ aisuite[mcp]>=0.1.14
 # Note: Using mcp without [cli] extra due to typer version conflict between
 # instructor (ragas dependency) requiring typer<0.10.0 and mcp[cli] requiring typer>=0.16.0
 mcp>=1.28.1,<2  # Security fixes through CVE-2026-59950; keep the v1 API
+# Security fixes for JWT key validation, JWKS redirects and malformed input.
+pyjwt[crypto]>=2.14.0
 # Pin to 1.x until AISuite supports httpx>=0.28 and the OpenAI 2.x API surface.
 openai<2.0.0
 # Keep langchain-openai for embeddings only (not for LLM)
@@ -57,7 +59,7 @@ langchain-openai
 # Web scraping and parsing
 beautifulsoup4
 requests
-urllib3>=2.7.0  # Security fix for CVE-2026-44431, CVE-2026-44432
+urllib3>=2.8.0  # Security fixes for CVE-2026-97687 and CVE-2026-97689
 mwclient
 
 # Async SQLite (for escalation pipeline)
@@ -94,6 +96,8 @@ mypy
 flake8
 pip-tools
 pre-commit
+# Security fix for unverified downloaded seed wheels (CVE-2026-102930).
+virtualenv>=21.7.12
 
 # Added for cross-process file locking
 portalocker
