@@ -367,3 +367,19 @@ prepare_wiki_cache_migration
     # SCRIPT_DIR is only used to locate the candidate root before refusal.
     assert result.returncode != 0
     assert "Candidate index flags" in result.stdout + result.stderr
+
+
+def test_sourced_adapter_cannot_resume_after_refused_full_rebuild(tmp_path):
+    result = sourced_updater(
+        tmp_path,
+        """
+WIKI_CACHE_MIGRATION_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+REBUILD_NEEDED=true
+rollback_update() { echo ADAPTER_RECORDED_FAILURE; return 0; }
+get_build_id() { echo UNSAFE_BUILD; }
+apply_updates
+""",
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "ADAPTER_RECORDED_FAILURE" in result.stdout
+    assert "UNSAFE_" not in result.stdout + result.stderr

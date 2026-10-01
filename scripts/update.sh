@@ -388,6 +388,8 @@ apply_updates() {
     if [ -n "$WIKI_CACHE_MIGRATION_COMMIT" ] \
         && { [ "$REBUILD_NEEDED" = true ] || check_no_changes_needed; }; then
         rollback_update "Wiki cache migration requires a selective service update"
+        # Keep this refusal if a sourced maintenance adapter overrides rollback.
+        # shellcheck disable=SC2317
         return 1
     fi
 
