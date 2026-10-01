@@ -166,6 +166,47 @@ restart, or health checks. Missing, unreachable, stale, dirty, or mismatched
 commit/model evidence stops deployment; an update with a newly fetched candidate
 follows the existing rollback path.
 
+### Legacy wiki cache transition
+
+The public wiki seed is versioned at
+`api/app/resources/wiki/processed_wiki.seed.jsonl`. Its writable runtime copy,
+`api/data/wiki/processed_wiki.jsonl`, is ignored. Fresh application startup
+initializes a missing cache from the seed; it never replaces an existing cache.
+
+An installation from before this split still tracks the runtime file. Do not
+discard its local content or hide it with index flags to pass the clean-source
+gate. From a clean, detached checkout of the exact evaluated candidate, use
+the candidate's `scripts/update.sh` with:
+
+```sh
+scripts/update.sh --migrate-legacy-wiki-cache FULL_CANDIDATE_SHA \
+  --confirm-fresh-backup --confirm-writers-quiesced
+```
+
+The protected deployment paths must identify the existing installation. The
+candidate object must already be available in that installation's Git object
+store, for example through the detached worktree preparation. The explicit
+confirmations require a fresh verified recovery backup and a separately
+established writer-quiescence window; this command does not create them. Keep
+that window in place through completion. Where scheduler restart would invoke
+unwanted startup jobs, the maintenance procedure must preserve its existing
+process and exclude it from backup stop/resume.
+
+This mode accepts only the seed split with identical original seed bytes and
+the runtime cache as the sole tracked modification. It verifies the exact
+candidate quality evidence before replacing source, preserves the runtime
+file's bytes, inode, owner and permissions, and repeats the strict source and
+quality gates before service changes. Only selective service updates are
+allowed; full rebuild and general repair paths are refused.
+
+The migration writes an exclusive journal under
+`failed_updates/wiki-cache-migration` and the existing recovery block before
+changing source. Failure preserves the actual state for reviewed recovery:
+automatic Git reset or whole-stack rollback would destroy the old tracked
+cache or recreate unrelated services. Do not rerun an interrupted transition,
+remove its block, or interpret containment as successful recovery. Successful
+completion records the receipt and removes only the matching owned block.
+
 The marker is evidence that the automated floors passed, not permission to
 enable an autonomous response channel. Channel launch remains a separate,
 human-controlled process.

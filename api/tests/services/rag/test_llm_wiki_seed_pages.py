@@ -60,7 +60,7 @@ def test_seed_pages_do_not_reference_stale_local_faq_1147() -> None:
 def test_seed_pages_use_durable_resolvable_sources() -> None:
     repo = _repo_root()
     pages_dir = repo / "api" / "data" / "knowledge" / "llm_wiki" / "pages"
-    wiki_titles = _wiki_titles(repo / "api" / "data" / "wiki")
+    wiki_titles = _wiki_titles(repo / "api" / "app" / "resources" / "wiki")
     faq_refs = _faq_refs(repo / "api" / "data" / "faqs.db")
     failures = []
 

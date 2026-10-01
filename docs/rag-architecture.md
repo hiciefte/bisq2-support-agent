@@ -84,6 +84,11 @@ User Query
 ### Wiki
 
 - Source: `api/data/wiki/processed_wiki.jsonl`
+- This writable runtime cache is outside Git. A fresh data directory is
+  initialized at application startup from the versioned public seed in
+  `api/app/resources/wiki/processed_wiki.seed.jsonl`; existing caches, including
+  empty files, are preserved. Scheduled wiki updates continue to write the
+  runtime cache. Updating application code does not replace it.
 - Optional: `api/data/wiki/payment_methods_reference.jsonl`
 - Metadata includes protocol tags used for filtering
 

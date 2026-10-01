@@ -1398,7 +1398,10 @@ get_container_name() {
 validate_git_repo() {
     local dir="${1:-.}"
 
-    if [ ! -d "$dir/.git" ]; then
+    # Linked worktrees use a .git file rather than a directory. Require Git to
+    # recognize the checkout instead of mistaking that layout for a failure.
+    if [ ! -e "$dir/.git" ] \
+        || [ "$(git -C "$dir" rev-parse --is-inside-work-tree 2>/dev/null)" != true ]; then
         log_error "Not a git repository: $dir"
         return 1
     fi

@@ -10,7 +10,10 @@ from app.services.wiki_service import WikiService
 
 @pytest.fixture
 def funding_article():
-    corpus = Path(__file__).resolve().parents[2] / "data/wiki/processed_wiki.jsonl"
+    corpus = (
+        Path(__file__).resolve().parents[2]
+        / "app/resources/wiki/processed_wiki.seed.jsonl"
+    )
     return next(
         entry
         for entry in map(json.loads, corpus.read_text().splitlines())

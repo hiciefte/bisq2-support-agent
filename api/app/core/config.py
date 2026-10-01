@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import urlparse
 
+from app.core.wiki_seed import initialize_wiki_cache
 from pydantic import Field, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
@@ -1439,6 +1440,7 @@ class Settings(BaseSettings):
         Path(self.DATA_DIR).mkdir(parents=True, exist_ok=True)
         Path(self.FEEDBACK_DIR_PATH).mkdir(parents=True, exist_ok=True)
         Path(self.WIKI_DIR_PATH).mkdir(parents=True, exist_ok=True)
+        initialize_wiki_cache(Path(self.WIKI_DIR_PATH))
         Path(self.LLM_WIKI_DIR_PATH).mkdir(parents=True, exist_ok=True)
 
 

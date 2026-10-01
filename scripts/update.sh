@@ -15,6 +15,9 @@ source "$SCRIPT_DIR/lib/docker-utils.sh"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/git-utils.sh"
 
+WIKI_CACHE_MIGRATION_COMMIT=""
+WIKI_CACHE_MIGRATION_PREVIOUS=""
+
 # Initialize colors and load deploy paths before deriving INSTALL_DIR.
 setup_colors
 
@@ -113,6 +116,14 @@ create_system_backup() {
 # Function to handle rollbacks with comprehensive logging and production data preservation
 rollback_update() {
     local reason="${1:-Unknown reason}"
+    if [ -n "$WIKI_CACHE_MIGRATION_COMMIT" ]; then
+        # The old release tracks the live cache; reset --hard would destroy it.
+        # Keep the migration journal/recovery block and actual mixed state for
+        # reviewed recovery. No service or data operation is safe to infer here.
+        log_error "Wiki cache migration update failed; manual recovery required"
+        log_error "Preserve the migration journal and existing recovery block"
+        exit 2
+    fi
     log_error "Initiating rollback due to: $reason"
 
     # Ensure PREV_HEAD is set before attempting rollback
@@ -225,6 +236,17 @@ perform_update() {
     # Release updates deliberately reject local source changes. Stashing and
     # restoring them would make the built tree differ from the evaluated commit.
     local update_status
+    if [ -n "$WIKI_CACHE_MIGRATION_COMMIT" ]; then
+        if ! update_repository_with_wiki_cache_migration \
+            "$INSTALL_DIR" "$GIT_REMOTE" "$GIT_BRANCH" \
+            "$WIKI_CACHE_MIGRATION_COMMIT" "$WIKI_CACHE_MIGRATION_PREVIOUS" \
+            "$SCRIPT_DIR/migrate_wiki_cache.py"; then
+            rollback_update "Wiki cache source transition failed"
+        fi
+        NO_REPO_UPDATES=false
+        export NO_REPO_UPDATES
+        return 0
+    fi
     set +e
     update_repository "$INSTALL_DIR" "$GIT_REMOTE" "$GIT_BRANCH" false
     update_status=$?
@@ -264,6 +286,36 @@ verify_release_ai_quality_gate() {
         return 1
     fi
     log_success "Release AI-quality gate verified"
+}
+
+prepare_wiki_cache_migration() {
+    local candidate_root
+    local candidate_index
+    candidate_root=$(cd "$SCRIPT_DIR/.." && pwd -P) || return 1
+    if [ "$candidate_root" = "$(cd "$INSTALL_DIR" && pwd -P)" ] \
+        || [ -n "$(git -C "$candidate_root" branch --show-current)" ] \
+        || [ "$(git -C "$candidate_root" rev-parse HEAD)" != "$WIKI_CACHE_MIGRATION_COMMIT" ]; then
+        log_error "Wiki cache migration requires the exact detached candidate updater"
+        return 1
+    fi
+    ensure_release_source_tree_clean "$candidate_root" || return 1
+    candidate_index=$(git -C "$candidate_root" ls-files -v) || return 1
+    if grep -qv '^H ' <<< "$candidate_index"; then
+        log_error "Candidate index flags cannot substitute for clean release source"
+        return 1
+    fi
+    git -C "$candidate_root" check-ignore --no-index --quiet -- \
+        api/data/wiki/processed_wiki.jsonl || return 1
+    WIKI_CACHE_MIGRATION_PREVIOUS=$(git -C "$INSTALL_DIR" rev-parse HEAD) || return 1
+    ensure_repository_update_safe "$INSTALL_DIR" || return 1
+    python3 -B "$SCRIPT_DIR/migrate_wiki_cache.py" preflight \
+        --repository "$INSTALL_DIR" --target "$WIKI_CACHE_MIGRATION_COMMIT" \
+        --previous "$WIKI_CACHE_MIGRATION_PREVIOUS" || return 1
+    # Verify the clean candidate before changing the live tree. The normal gate
+    # is repeated against the final installed tree before migrations/builds.
+    "$candidate_root/scripts/verify-release-ai-quality-gate.sh" \
+        --repository "$candidate_root" --commit "$WIKI_CACHE_MIGRATION_COMMIT" \
+        --remote "$GIT_REMOTE" --env-file "$DOCKER_DIR/.env"
 }
 
 # Determine update requirements
@@ -332,6 +384,14 @@ check_no_changes_needed() {
 # Apply updates
 apply_updates() {
     log_info "Applying updates..."
+
+    if [ -n "$WIKI_CACHE_MIGRATION_COMMIT" ] \
+        && { [ "$REBUILD_NEEDED" = true ] || check_no_changes_needed; }; then
+        rollback_update "Wiki cache migration requires a selective service update"
+        # Keep this refusal if a sourced maintenance adapter overrides rollback.
+        # shellcheck disable=SC2317
+        return 1
+    fi
 
     cd "$DOCKER_DIR" || {
         log_error "Could not change to Docker directory: $DOCKER_DIR"
@@ -738,8 +798,26 @@ verify_feedback_persistence() {
 main() {
     acquire_production_lifecycle_lock "$INSTALL_DIR" || exit 1
 
+    if [ "$#" -ne 0 ]; then
+        if [ "$#" -ne 4 ] || [ "$1" != --migrate-legacy-wiki-cache ] \
+            || [[ ! "$2" =~ ^[0-9a-f]{40}$ ]] \
+            || [ "$3" != --confirm-fresh-backup ] \
+            || [ "$4" != --confirm-writers-quiesced ]; then
+            log_error "Use --migrate-legacy-wiki-cache COMMIT --confirm-fresh-backup --confirm-writers-quiesced"
+            exit 2
+        fi
+        WIKI_CACHE_MIGRATION_COMMIT="$2"
+    fi
+    if [ -e "$INSTALL_DIR/failed_updates/wiki-cache-migration" ] \
+        || [ -L "$INSTALL_DIR/failed_updates/wiki-cache-migration" ]; then
+        python3 -B "$SCRIPT_DIR/migrate_wiki_cache.py" check-pending \
+            --repository "$INSTALL_DIR" || exit 1
+    fi
+
     # Reject source changes before backups, fetches, resets, or stash handling.
-    if ! ensure_release_source_tree_clean "$INSTALL_DIR"; then
+    if [ -n "$WIKI_CACHE_MIGRATION_COMMIT" ]; then
+        prepare_wiki_cache_migration || exit 1
+    elif ! ensure_release_source_tree_clean "$INSTALL_DIR"; then
         log_error "Release update requires a clean source tree"
         exit 1
     fi
@@ -769,8 +847,11 @@ main() {
     # Analyze what needs to be updated
     analyze_changes
 
-    # Fix permissions before applying updates
-    fix_permissions
+    # The explicit migration preserves existing runtime and recovery-control
+    # ownership; the already-running stack was validated above.
+    if [ -z "$WIKI_CACHE_MIGRATION_COMMIT" ]; then
+        fix_permissions
+    fi
 
     # Run FAQ SQLite migration if migration script exists
     run_faq_sqlite_migration || {
@@ -787,6 +868,11 @@ main() {
     # Cleanup old backups
     cleanup_backups
 
+    if [ -n "$WIKI_CACHE_MIGRATION_COMMIT" ]; then
+        python3 -B "$SCRIPT_DIR/migrate_wiki_cache.py" complete-deployment \
+            --repository "$INSTALL_DIR" || exit 2
+    fi
+
     # Display final status
     log_info "======================================================"
     log_success "Update completed successfully!"
@@ -797,6 +883,6 @@ main() {
 
 # Run main function only when executed, not when sourced by tests.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-    main
+    main "$@"
     exit 0
 fi
