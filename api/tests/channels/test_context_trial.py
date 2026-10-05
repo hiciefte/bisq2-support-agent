@@ -19,6 +19,7 @@ from tests.channels.test_context_runtime_integration import (
     SOURCE_ROOM,
     STAFF_ROOM,
     context,
+    real_staff_adapter,
     run,
 )
 from tests.channels.test_context_runtime_integration import (
@@ -375,3 +376,57 @@ async def test_queued_generation_rechecks_policy_before_model(
         await ContextTrialStore(bundle.repository.db_path, trial).reserve(999)
         == "context_trial_capacity_reached"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "change,expected_reason",
+    [
+        ("expiry", "context_trial_expired"),
+        ("policy", "staff_context_disabled"),
+        ("target", "staff_context_destination_changed"),
+        ("runtime_stopped", "context_trial_stopped"),
+    ],
+)
+async def test_diagnostic_persistence_precedes_final_staff_guards(
+    runtime_case, monkeypatch, change, expected_reason
+):
+    bundle = runtime_case
+    trial = enable_trial(bundle)
+    real_staff_adapter(bundle)
+    update = ContextReviewStore.update
+    changed = False
+
+    async def change_after_persistence(store, case_id, **kwargs):
+        nonlocal changed
+        await update(store, case_id, **kwargs)
+        if kwargs.get("staff_root_delivery", {}).get("reason_category") != (
+            "room_send_invocation_reserved"
+        ):
+            return
+        changed = True
+        # No clocks/sleeps/network: emulate a guard transition during the
+        # diagnostic write, after the runtime's earlier delivery check.
+        if change == "expiry":
+            monkeypatch.setattr(context_trial, "utc_now", lambda: trial.end_at)
+        elif change == "policy":
+            bundle.policy.generation_enabled = False
+        elif change == "target":
+            bundle.runtime.settings.MATRIX_STAFF_ROOM = "!changed:example.org"
+        else:
+            bundle.engine._closed = True
+
+    monkeypatch.setattr(ContextReviewStore, "update", change_after_persistence)
+    case = await run(bundle)
+    assert changed
+    assert case.channel_metadata["context_status"] == "deferred"
+    assert case.channel_metadata["context_reason"] == expected_reason
+    assert case.channel_metadata["staff_root_delivery"] == {
+        "operation_started": False,
+        "response_received": False,
+        "reason_category": "pretransport_refused",
+        "response_event_id": None,
+    }
+    assert case.channel_metadata["staff_note_delivery"]["reason_category"] == "reserved"
+    bundle.client.room_send.assert_not_awaited()
+    bundle.llm.invoke.assert_called_once()

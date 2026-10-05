@@ -8,7 +8,7 @@ import inspect
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Set
+from typing import Any, Awaitable, Callable, Set
 
 from app.channels.base import ChannelBase
 from app.channels.escalation_localization import render_escalation_notice
@@ -16,6 +16,7 @@ from app.channels.models import (
     ChannelCapability,
     ChannelType,
     OutgoingMessage,
+    SendDiagnostic,
     SendResult,
 )
 from app.channels.plugins.matrix.room_filter import (
@@ -680,44 +681,70 @@ class MatrixChannel(ChannelBase):
         transaction_id: str,
         thread_root_event_id: str | None = None,
         expected_room_id: str | None = None,
+        record_diagnostic: Callable[[SendDiagnostic], Awaitable[None]] | None = None,
     ) -> SendResult:
         """Publish only to the configured staff destination, never a caller target."""
+
+        def refused(reason: str) -> SendResult:
+            return SendResult(
+                sent=False,
+                error=reason,
+                diagnostic=SendDiagnostic(
+                    operation_started=False,
+                    response_received=False,
+                    reason_category="pretransport_refused",
+                ),
+            )
+
+        async def record(diagnostic: SendDiagnostic) -> None:
+            if record_diagnostic is not None:
+                await record_diagnostic(diagnostic)
+
         async with self._session_lifecycle_lock:
+            # Persist intent before checking the final guards. This new storage
+            # await must not separate those guards from invocation of nio.
+            # Reservation does not establish HTTP transmission or invocation.
+            # A persistence error fails closed without calling room_send.
+            await record(
+                SendDiagnostic(reason_category="room_send_invocation_reserved")
+            )
             settings = getattr(self.runtime, "settings", None)
             if not (
                 getattr(settings, "MATRIX_SYNC_ENABLED", False) is True
                 and self._is_connected
             ):
-                return SendResult(sent=False, error="matrix_channel_inactive")
+                return refused("matrix_channel_inactive")
             service = self.runtime.resolve_optional(
                 "channel_autoresponse_policy_service"
             )
             if not is_staff_context_enabled(service, "matrix"):
-                return SendResult(sent=False, error="staff_context_disabled")
+                return refused("staff_context_disabled")
             target = str(getattr(settings, "MATRIX_STAFF_ROOM", "") or "").strip()
             if expected_room_id is not None and target != expected_room_id:
-                return SendResult(sent=False, error="staff_context_destination_changed")
+                return refused("staff_context_destination_changed")
             if (
                 not target.startswith("!")
                 or ":" not in target
                 or any(char.isspace() for char in target)
                 or target in resolve_allowed_context_source_rooms(settings)
             ):
-                return SendResult(sent=False, error="staff_context_destination_invalid")
+                return refused("staff_context_destination_invalid")
             if (
                 not isinstance(markdown, str)
                 or not markdown.strip()
                 or not transaction_id
             ):
-                return SendResult(sent=False, error="staff_context_content_invalid")
+                return refused("staff_context_content_invalid")
             if (
                 thread_root_event_id is not None
                 and not thread_root_event_id.startswith("$")
             ):
-                return SendResult(sent=False, error="staff_context_thread_invalid")
+                return refused("staff_context_thread_invalid")
             client = self.runtime.resolve_optional("matrix_client")
             if client is None:
-                return SendResult(sent=False, error="matrix_client_unavailable")
+                return refused("matrix_client_unavailable")
+            if self._client_knows_room(client, target) is False:
+                return refused("staff_context_room_state_unavailable")
             content = build_matrix_message_content(markdown, msgtype="m.notice")
             if thread_root_event_id is not None:
                 content["m.relates_to"] = {
@@ -729,13 +756,11 @@ class MatrixChannel(ChannelBase):
             context_runtime = self.runtime.resolve_optional("matrix_context_runtime")
             if context_runtime is None:
                 if getattr(settings, "MATRIX_CONTEXT_TRIAL_ID", ""):
-                    return SendResult(
-                        sent=False, error="context_trial_runtime_unavailable"
-                    )
+                    return refused("context_trial_runtime_unavailable")
             else:
                 reason = await context_runtime.check_trial_delivery(transaction_id)
                 if reason:
-                    return SendResult(sent=False, error=reason)
+                    return refused(reason)
             try:
                 response = await asyncio.wait_for(
                     client.room_send(
@@ -751,13 +776,74 @@ class MatrixChannel(ChannelBase):
                     ),
                     timeout=self.MATRIX_OP_TIMEOUT_SECONDS,
                 )
-            except Exception:
-                self._logger.exception("Staff context delivery failed")
-                return SendResult(sent=False, error="staff_context_delivery_failed")
-            event_id = getattr(response, "event_id", None)
-            if isinstance(event_id, str) and event_id:
-                return SendResult(sent=True, external_message_id=event_id)
-            return SendResult(sent=False, error="staff_context_delivery_failed")
+            except asyncio.CancelledError:
+                await record(
+                    SendDiagnostic(
+                        operation_started=True,
+                        response_received=False,
+                        reason_category="cancelled",
+                    )
+                )
+                raise
+            except asyncio.TimeoutError:
+                diagnostic = SendDiagnostic(
+                    operation_started=True,
+                    response_received=False,
+                    reason_category="transport_timeout",
+                )
+            except Exception as exc:
+                # Classify only known exception types, never their messages.
+                # Even local nio failures do not authorize a retry.
+                from nio.exceptions import EncryptionError, LocalProtocolError
+
+                diagnostic = SendDiagnostic(
+                    operation_started=True,
+                    response_received=False,
+                    reason_category=(
+                        "client_encryption_error"
+                        if isinstance(exc, EncryptionError)
+                        else (
+                            "client_protocol_error"
+                            if isinstance(exc, LocalProtocolError)
+                            else "transport_exception"
+                        )
+                    ),
+                )
+            else:
+                event_id = getattr(response, "event_id", None)
+                try:
+                    diagnostic = SendDiagnostic(
+                        operation_started=True,
+                        response_received=True,
+                        reason_category="acknowledged",
+                        response_event_id=event_id,
+                    )
+                except (TypeError, ValueError):
+                    event_id = None
+                if not event_id:
+                    # nio ErrorResponse exposes status_code. Its message and
+                    # arbitrary status strings are deliberately not retained.
+                    diagnostic = SendDiagnostic(
+                        operation_started=True,
+                        response_received=True,
+                        reason_category=(
+                            "response_error"
+                            if getattr(response, "status_code", None) is not None
+                            else "response_missing_event_id"
+                        ),
+                    )
+            await record(diagnostic)
+            if diagnostic.reason_category == "acknowledged":
+                return SendResult(
+                    sent=True,
+                    external_message_id=diagnostic.response_event_id,
+                    diagnostic=diagnostic,
+                )
+            return SendResult(
+                sent=False,
+                error="staff_context_delivery_failed",
+                diagnostic=diagnostic,
+            )
 
     async def send_message(self, target: str, message: OutgoingMessage) -> SendResult:
         """Send a response while holding the shared Matrix lifecycle lock."""

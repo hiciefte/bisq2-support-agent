@@ -101,16 +101,21 @@ class MatrixMessageHandler:
         if hasattr(self.connection_manager, "stop_sync"):
             self.connection_manager.stop_sync()
 
-        if self._sync_task is not None:
-            self._sync_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._sync_task
+        try:
+            if self._sync_task is not None:
+                self._sync_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await self._sync_task
+        finally:
+            # A failed bootstrap task must remain visible to the caller, but
+            # must not leave its callback or failed task attached after stop.
             self._sync_task = None
-
-        if self._callback_registered and hasattr(self.client, "remove_event_callback"):
-            self.client.remove_event_callback(self._on_message)
-            self._callback_registered = False
-        logger.info("Matrix message handler stopped")
+            if self._callback_registered and hasattr(
+                self.client, "remove_event_callback"
+            ):
+                self.client.remove_event_callback(self._on_message)
+                self._callback_registered = False
+            logger.info("Matrix message handler stopped")
 
     async def _on_message(self, room: Any, event: Any) -> None:
         """Process Matrix message events through the standard channel pipeline."""
@@ -137,6 +142,12 @@ class MatrixMessageHandler:
                 room_id or "<empty>",
             )
             return
+
+        if getattr(self.connection_manager, "room_state_ready", None) is False:
+            if self.connection_manager.defer_until_room_state_ready(
+                self._on_message, room, event
+            ):
+                return
 
         effective_event = await self._resolve_event(event)
         if effective_event is None:

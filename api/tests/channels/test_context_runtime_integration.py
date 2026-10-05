@@ -916,3 +916,220 @@ async def test_source_context_timeout_remains_durable_without_model_or_delivery(
     bundle.llm.invoke.assert_not_called()
     bundle.sender.assert_not_awaited()
     no_public_delivery(bundle)
+
+
+def real_staff_adapter(bundle):
+    """Use the actual adapter and SQLite runtime; replace only nio transport."""
+    from app.channels.plugins.matrix.channel import MatrixChannel
+
+    bundle.runtime.settings.MATRIX_SYNC_ENABLED = True
+    bundle.services["matrix_context_runtime"] = bundle.engine
+    bundle.client.room_send = AsyncMock(
+        side_effect=[NS(event_id="$staff-root"), NS(event_id="$staff-note")]
+    )
+    channel = MatrixChannel(bundle.runtime)
+    channel._is_connected = True
+    channel.handle_incoming = AsyncMock()
+    channel.send_message = AsyncMock()
+    bundle.channel = channel
+    return channel
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure,category,phase,response_received",
+    [
+        ("root_refused", "pretransport_refused", "root", False),
+        ("root_timeout", "transport_timeout", "root", False),
+        ("root_exception", "transport_exception", "root", False),
+        ("root_protocol", "client_protocol_error", "root", False),
+        ("root_response_error", "response_error", "root", True),
+        ("root_bad_event", "response_missing_event_id", "root", True),
+        ("root_cancelled", "cancelled", "root", False),
+        ("note_timeout", "transport_timeout", "note", False),
+        ("note_cancelled", "cancelled", "note", False),
+        ("success", "acknowledged", "note", True),
+    ],
+)
+async def test_actual_staff_adapter_preserves_phase_evidence_without_replay(
+    runtime_case, failure, category, phase, response_received, caplog
+):
+    from nio.exceptions import LocalProtocolError
+
+    bundle = runtime_case
+    channel = real_staff_adapter(bundle)
+    secret = "SECRET-PRIVATE-TRANSPORT-DETAIL"
+    response = {
+        "root_timeout": TimeoutError(secret),
+        "root_exception": RuntimeError(secret),
+        "root_protocol": LocalProtocolError(secret),
+        "root_response_error": NS(status_code="M_FORBIDDEN", message=secret),
+        "root_bad_event": NS(event_id=f"$bad event {secret}"),
+        "root_cancelled": asyncio.CancelledError(secret),
+        "note_timeout": TimeoutError(secret),
+        "note_cancelled": asyncio.CancelledError(secret),
+    }.get(failure)
+    if failure == "root_refused":
+        channel._is_connected = False
+    elif failure != "success":
+        bundle.client.room_send.side_effect = (
+            [NS(event_id="$staff-root"), response] if phase == "note" else [response]
+        )
+    if failure.endswith("cancelled"):
+        with pytest.raises(asyncio.CancelledError):
+            await run(bundle)
+        case = await saved_case(bundle)
+    else:
+        case = await run(bundle)
+    metadata = case.channel_metadata
+    diagnostic = metadata[f"staff_{phase}_delivery"]
+    assert diagnostic["reason_category"] == category
+    assert diagnostic["operation_started"] is (failure != "root_refused")
+    assert diagnostic["response_received"] is response_received
+    expected_sends = 0 if failure == "root_refused" else 2 if phase == "note" else 1
+    assert bundle.client.room_send.await_count == expected_sends
+    assert metadata["context_status"] == (
+        "delivered"
+        if failure == "success"
+        else "deferred" if failure == "root_refused" else "delivery_uncertain"
+    )
+    if phase == "root":
+        assert metadata["staff_note_delivery"]["reason_category"] == "reserved"
+        assert metadata["staff_note_delivery"]["operation_started"] is False
+    else:
+        assert metadata["staff_root_delivery"]["reason_category"] == "acknowledged"
+        assert metadata["staff_root_delivery"]["response_event_id"] == "$staff-root"
+        assert metadata["staff_root_event_id"] == "$staff-root"
+        note = bundle.client.room_send.await_args_list[1].kwargs
+        assert note["room_id"] == STAFF_ROOM
+        assert note["content"]["m.relates_to"] == {
+            "rel_type": "m.thread",
+            "event_id": "$staff-root",
+            "is_falling_back": True,
+            "m.in_reply_to": {"event_id": "$staff-root"},
+        }
+    if failure == "success":
+        assert diagnostic["response_event_id"] == "$staff-note"
+        assert metadata["staff_note_event_id"] == "$staff-note"
+    else:
+        assert diagnostic["response_event_id"] is None
+        assert "staff_note_event_id" not in metadata
+    assert secret not in json.dumps(metadata)
+    assert secret not in caplog.text
+    restarted = MatrixContextRuntime(bundle.runtime)
+    assert await restarted.process(bundle.incoming, bundle.channel) is False
+    await restarted.drain()
+    assert bundle.client.room_send.await_count == expected_sends
+    bundle.llm.invoke.assert_called_once()
+    no_public_delivery(bundle)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "phase,boundary,expected_sends",
+    [
+        ("root", "room_send_invocation_reserved", 0),
+        ("root", "acknowledged", 1),
+        ("note", "acknowledged", 2),
+    ],
+)
+async def test_diagnostic_storage_failure_cannot_trigger_transport_retry(
+    runtime_case, monkeypatch, phase, boundary, expected_sends
+):
+    bundle = runtime_case
+    real_staff_adapter(bundle)
+    update = ContextReviewStore.update
+    failed = False
+
+    async def fail_diagnostic_once(store, case_id, **kwargs):
+        nonlocal failed
+        if (
+            not failed
+            and kwargs.get(f"staff_{phase}_delivery", {}).get("reason_category")
+            == boundary
+        ):
+            failed = True
+            raise OSError("Synthetic unavailable diagnostic storage")
+        await update(store, case_id, **kwargs)
+
+    monkeypatch.setattr(ContextReviewStore, "update", fail_diagnostic_once)
+    case = await run(bundle)
+    assert failed
+    assert case.channel_metadata["context_status"] == "delivery_uncertain"
+    assert bundle.client.room_send.await_count == expected_sends
+    if boundary == "acknowledged":
+        assert case.channel_metadata[f"staff_{phase}_event_id"] == f"$staff-{phase}"
+        saved = case.channel_metadata[f"staff_{phase}_delivery"]
+        assert saved["reason_category"] == "acknowledged"
+        assert saved["response_received"] is True
+        assert saved["response_event_id"] == f"$staff-{phase}"
+    if phase == "root":
+        assert "staff_note_event_id" not in case.channel_metadata
+    assert await bundle.engine.process(bundle.incoming, bundle.channel) is False
+    await bundle.engine.drain()
+    assert bundle.client.room_send.await_count == expected_sends
+    bundle.llm.invoke.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_real_nio_missing_staff_cache_defers_without_sync_or_send(runtime_case):
+    from nio import AsyncClient, AsyncClientConfig
+
+    bundle = runtime_case
+    real_staff_adapter(bundle)
+    client = AsyncClient(
+        "https://example.invalid",
+        "@synthetic:example.invalid",
+        config=AsyncClientConfig(encryption_enabled=False, store_sync_tokens=True),
+    )
+    client.restore_login("@synthetic:example.invalid", "SYNTHETIC", "fake-token")
+    # Model the restored fields without making a crypto-store or network call.
+    client.encrypted_rooms = {STAFF_ROOM}
+    client.loaded_sync_token = "synthetic-saved-cursor"
+    client.room_context = bundle.client.room_context
+    client.room_send = AsyncMock(wraps=client.room_send)
+    client._send = AsyncMock(side_effect=AssertionError("Network access forbidden"))
+    client.sync = AsyncMock(side_effect=AssertionError("Sync forbidden"))
+    client.join = AsyncMock(side_effect=AssertionError("Join forbidden"))
+    bundle.services["matrix_client"] = client
+    try:
+        case = await run(bundle)
+        assert case.channel_metadata["context_status"] == "deferred"
+        assert (
+            case.channel_metadata["context_reason"]
+            == "staff_context_room_state_unavailable"
+        )
+        assert case.channel_metadata["staff_root_delivery"] == {
+            "operation_started": False,
+            "response_received": False,
+            "reason_category": "pretransport_refused",
+            "response_event_id": None,
+        }
+        assert (
+            case.channel_metadata["staff_note_delivery"]["reason_category"]
+            == "reserved"
+        )
+        assert client.loaded_sync_token == "synthetic-saved-cursor"
+        assert not client.rooms
+        assert client.encrypted_rooms == {STAFF_ROOM}
+        client.room_send.assert_not_awaited()
+        client._send.assert_not_awaited()
+        client.sync.assert_not_awaited()
+        client.join.assert_not_awaited()
+        assert await bundle.engine.process(bundle.incoming, bundle.channel) is False
+        await bundle.engine.drain()
+        client.room_send.assert_not_awaited()
+        bundle.llm.invoke.assert_called_once()
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_rejected_model_output_retains_only_bounded_validation_code(runtime_case):
+    bundle = runtime_case
+    bundle.llm.invoke.return_value = NS(content="SECRET-RAW-INVALID-MODEL-OUTPUT")
+    case = await run(bundle)
+    assert case.channel_metadata["context_status"] == "needs_human"
+    assert case.channel_metadata["validation_diagnostic"] == "invalid_json"
+    assert "SECRET-RAW-INVALID-MODEL-OUTPUT" not in json.dumps(case.channel_metadata)
+    bundle.sender.assert_not_awaited()
