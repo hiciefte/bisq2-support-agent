@@ -96,8 +96,9 @@ mypy
 flake8
 pip-tools
 pre-commit
-# Security fix for unverified downloaded seed wheels (CVE-2026-102930).
-virtualenv>=21.7.12
+# Security fixes for seed wheel verification (CVE-2026-102930) and shell
+# activation paths (CVE-2026-102925).
+virtualenv>=21.7.13
 
 # Added for cross-process file locking
 portalocker
