@@ -17,6 +17,7 @@ from typing import Any
 from urllib.parse import quote
 
 import aiosqlite
+from app.channels.models import SendDiagnostic
 from app.channels.plugins.matrix.context_text import context_relationships, context_text
 from app.channels.policy import (
     get_first_response_delay_seconds,
@@ -140,8 +141,8 @@ class ContextReviewStore:
         self,
         case_id: int,
         *,
-        status: str,
-        reason: str,
+        status: str | None = None,
+        reason: str | None = None,
         answer: str | None = None,
         sources: list[dict[str, Any]] | None = None,
         **metadata: Any,
@@ -156,13 +157,13 @@ class ContextReviewStore:
                 raise RuntimeError("Context case no longer exists")
             merged = json.loads(row[0] or "{}")
             merged.update(metadata)
-            merged.update(
-                context_status=status,
-                context_reason=reason,
-                context_updated_at=datetime.now(timezone.utc).isoformat(),
-            )
+            if status is not None:
+                merged["context_status"] = status
+            if reason is not None:
+                merged["context_reason"] = reason
+            merged["context_updated_at"] = datetime.now(timezone.utc).isoformat()
             await db.execute(
-                "UPDATE escalations SET channel_metadata=?, routing_reason=?, "
+                "UPDATE escalations SET channel_metadata=?, routing_reason=COALESCE(?, routing_reason), "
                 "ai_draft_answer=COALESCE(?, ai_draft_answer), "
                 "sources=COALESCE(?, sources) WHERE id=?",
                 (
@@ -190,6 +191,7 @@ class MatrixContextRuntime:
             "staff_context_thread_invalid",
             "staff_context_case_changed",
             "matrix_client_unavailable",
+            "staff_context_room_state_unavailable",
         }
     )
 
@@ -662,6 +664,7 @@ class MatrixContextRuntime:
             ),
             model_usage=counters or None,
             model_decision=preview.decision.model_dump(),
+            validation_diagnostic=getattr(preview, "validation_diagnostic", None),
         )
         if not preview.rendered_note:
             # Model silence is not evidence the customer's issue was resolved.
@@ -730,12 +733,24 @@ class MatrixContextRuntime:
             staff_note_content=note,
             staff_root_transaction_id=f"context-{case_id}-root",
             staff_note_transaction_id=f"context-{case_id}-note",
+            staff_root_delivery=SendDiagnostic(
+                operation_started=False,
+                response_received=False,
+                reason_category="reserved",
+            ).model_dump(),
+            staff_note_delivery=SendDiagnostic(
+                operation_started=False,
+                response_received=False,
+                reason_category="reserved",
+            ).model_dump(),
         )
         try:
             result = await self._send_if_open(
                 case_id,
                 channel,
                 root,
+                store=store,
+                phase="root",
                 transaction_id=f"context-{case_id}-root",
                 expected_room_id=staff_room,
             )
@@ -759,6 +774,8 @@ class MatrixContextRuntime:
                 case_id,
                 channel,
                 note,
+                store=store,
+                phase="note",
                 thread_root_event_id=root_id,
                 transaction_id=f"context-{case_id}-note",
                 expected_room_id=staff_room,
@@ -796,7 +813,14 @@ class MatrixContextRuntime:
         )
 
     async def _send_if_open(
-        self, case_id: int, channel: Any, text: str, **kwargs: Any
+        self,
+        case_id: int,
+        channel: Any,
+        text: str,
+        *,
+        store: ContextReviewStore,
+        phase: str,
+        **kwargs: Any,
     ) -> Any:
         """Serialize the final decision/send with Admin review and incident writes.
 
@@ -804,6 +828,24 @@ class MatrixContextRuntime:
         prevents the send. Later updates wait for this decision/transport to
         finish and remain reviewable; an in-flight message cannot be recalled.
         """
+        if phase not in {"root", "note"}:
+            raise ValueError("Unknown staff delivery phase")
+        latest = SendDiagnostic(
+            operation_started=False,
+            response_received=False,
+            reason_category="reserved",
+        )
+
+        async def record(diagnostic: SendDiagnostic) -> None:
+            nonlocal latest
+            latest = diagnostic
+            metadata: dict[str, Any] = {
+                f"staff_{phase}_delivery": diagnostic.model_dump()
+            }
+            if diagnostic.response_event_id:
+                metadata[f"staff_{phase}_event_id"] = diagnostic.response_event_id
+            await store.update(case_id, **metadata)
+
         service = self.runtime.resolve_optional("escalation_service")
         lock = await service._acquire_delivery_lock(case_id)
         try:
@@ -825,7 +867,33 @@ class MatrixContextRuntime:
             # and Admin actions share this lock through the transport result.
             if self._closed or not await self._case_is_open(case_id):
                 raise PublicationSuppressed("staff_context_case_changed")
-            result = await channel.send_staff_context(text, **kwargs)
+            await record(SendDiagnostic(reason_category="adapter_invocation_reserved"))
+            result = await channel.send_staff_context(
+                text, record_diagnostic=record, **kwargs
+            )
+            diagnostic = getattr(result, "diagnostic", None)
+            if not isinstance(diagnostic, SendDiagnostic):
+                # Legacy adapters/mocks expose no operation boundary. Do not
+                # turn their false result into evidence that no send occurred.
+                try:
+                    event_id = getattr(result, "external_message_id", None)
+                    diagnostic = SendDiagnostic(
+                        operation_started=True if result and event_id else None,
+                        response_received=True if result and event_id else None,
+                        reason_category=(
+                            "acknowledged"
+                            if result and event_id
+                            else "legacy_outcome_unknown"
+                        ),
+                        response_event_id=event_id,
+                    )
+                except (TypeError, ValueError):
+                    diagnostic = SendDiagnostic(
+                        reason_category="legacy_outcome_unknown"
+                    )
+            await record(diagnostic)
+            if result and not diagnostic.response_event_id:
+                raise RuntimeError("Staff response event ID unavailable")
             reason = getattr(result, "error", None)
             if not result and (
                 reason in self.PRETRANSPORT_REFUSALS
@@ -833,6 +901,44 @@ class MatrixContextRuntime:
             ):
                 raise PublicationSuppressed(reason)
             return result
+        except PublicationSuppressed:
+            if latest.reason_category == "pretransport_refused":
+                raise
+            await record(
+                SendDiagnostic(
+                    operation_started=False,
+                    response_received=False,
+                    reason_category="suppressed",
+                )
+            )
+            raise
+        except (asyncio.CancelledError, Exception) as exc:
+            # Salvage a received acknowledgement after a transient storage
+            # error. This retries only the local snapshot, never transport; the
+            # caller still records uncertainty and does not send another phase.
+            if latest.reason_category == "acknowledged":
+                await record(latest)
+            elif latest.reason_category not in {
+                "transport_timeout",
+                "transport_exception",
+                "response_error",
+                "response_missing_event_id",
+                "cancelled",
+                "client_protocol_error",
+                "client_encryption_error",
+            }:
+                await record(
+                    latest.model_copy(
+                        update={
+                            "reason_category": (
+                                "cancelled"
+                                if isinstance(exc, asyncio.CancelledError)
+                                else "adapter_exception"
+                            )
+                        }
+                    )
+                )
+            raise
         finally:
             await service._release_delivery_lock(case_id, lock)
 

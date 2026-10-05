@@ -151,6 +151,106 @@ async def test_stop_removes_callback_and_stops_sync_loop() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stop_cleans_up_failed_bootstrap_and_preserves_error() -> None:
+    from app.channels.plugins.matrix.client.connection_manager import (
+        MatrixRoomStateError,
+    )
+
+    client = MagicMock()
+    connection_manager = MagicMock()
+    error = MatrixRoomStateError("initial_sync_processing_failed")
+    connection_manager.sync_forever = AsyncMock(side_effect=error)
+    handler = MatrixMessageHandler(
+        client=client,
+        connection_manager=connection_manager,
+        allowed_room_ids=["!room:server"],
+    )
+    await handler.start()
+    await asyncio.sleep(0)
+    assert handler._sync_task.done()
+
+    with pytest.raises(MatrixRoomStateError) as raised:
+        await handler.stop()
+
+    assert raised.value is error
+    assert handler._sync_task is None
+    assert handler._callback_registered is False
+    client.remove_event_callback.assert_called_once_with(handler._on_message)
+    connection_manager.stop_sync.assert_called_once()
+    # Cleanup is complete; a second local stop neither reconnects nor replays.
+    await handler.stop()
+    connection_manager.sync_forever.assert_awaited_once()
+    client.remove_event_callback.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_buffers_only_in_scope_messages_until_room_state_ready() -> (
+    None
+):
+    from app.channels.plugins.matrix.client.connection_manager import ConnectionManager
+    from nio import SyncResponse
+
+    client = MagicMock()
+    connection_manager = ConnectionManager(client, MagicMock())
+    connection_manager._sync_running = True
+    channel = MagicMock()
+    channel.runtime.settings = SimpleNamespace(MATRIX_RESPONDER_ROOMS=None)
+    handler = MatrixMessageHandler(
+        client=client,
+        connection_manager=connection_manager,
+        channel=channel,
+        allowed_room_ids=["!room:server"],
+    )
+    handler._resolve_event = AsyncMock(return_value=None)
+
+    outside_room, outside_event = _matrix_event(room_id="!outside:server")
+    await handler._on_message(outside_room, outside_event)
+    assert not connection_manager._initial_events
+    room, event = _matrix_event()
+    await handler._on_message(room, event)
+    assert len(connection_manager._initial_events) == 1
+    handler._resolve_event.assert_not_awaited()
+
+    await connection_manager._on_sync_response(
+        SyncResponse.from_dict({"next_batch": "after-delta"})
+    )
+
+    handler._resolve_event.assert_awaited_once_with(event)
+    assert not connection_manager._initial_events
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_release_rechecks_changed_room_scope() -> None:
+    from app.channels.plugins.matrix.client.connection_manager import ConnectionManager
+    from nio import SyncResponse
+
+    client = MagicMock()
+    connection_manager = ConnectionManager(client, MagicMock())
+    connection_manager._sync_running = True
+    channel = MagicMock()
+    channel.runtime.settings = SimpleNamespace(MATRIX_RESPONDER_ROOMS=None)
+    handler = MatrixMessageHandler(
+        client=client,
+        connection_manager=connection_manager,
+        channel=channel,
+        allowed_room_ids=["!room:server"],
+    )
+    handler._resolve_event = AsyncMock(return_value=None)
+    room, event = _matrix_event()
+    await handler._on_message(room, event)
+    assert len(connection_manager._initial_events) == 1
+    handler.allowed_room_ids = set()
+    handler.staff_command_room_ids = set()
+
+    await connection_manager._on_sync_response(
+        SyncResponse.from_dict({"next_batch": "after-delta"})
+    )
+
+    handler._resolve_event.assert_not_awaited()
+    assert not connection_manager._initial_events
+
+
+@pytest.mark.asyncio
 async def test_on_message_skips_when_generation_disabled() -> None:
     client = MagicMock()
     connection_manager = MagicMock()

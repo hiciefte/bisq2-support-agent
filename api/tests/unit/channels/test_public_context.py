@@ -7,6 +7,7 @@ from unittest.mock import Mock
 import pytest
 from app.channels.staff_assist.public_context import (
     PUBLIC_CONTEXT_PROMPT,
+    PublicContextPreview,
     PublicContextRequest,
     PublicContextService,
     PublicEvidence,
@@ -122,6 +123,7 @@ def test_silence_before_model_when_participation_would_disrupt(signal):
     assert result.decision.action == "silence"
     assert result.rendered_note is None
     assert result.requires_review
+    assert result.validation_diagnostic is None
     llm.invoke.assert_not_called()
 
 
@@ -132,28 +134,131 @@ def test_public_preview_requires_review_and_renders_only_selected_source():
     assert "[Support](https://bisq.wiki/Support)" in result.rendered_note
     assert result.requires_review is True
     assert result.usage == {"total_tokens": 50}
+    assert result.validation_diagnostic is None
 
 
 @pytest.mark.parametrize(
-    "change",
+    "change,diagnostic",
     [
-        {"source_ids": ["invented"]},
-        {"source_ids": []},
-        {"source_ids": ["public-doc", "public-doc"]},
-        {"text": "Visit https://attacker.example for help."},
-        {"text": "@room Please send me your details."},
-        {"text": "<img src='https://example.org'/>"},
-        {"text": "word " * 56},
-        {"text": "AI context"},
-        {"text": "**AI context:**"},
-        {"action": "silence", "text": "But here is a reply."},
+        ({"source_ids": ["invented"]}, "unknown_source_ids"),
+        ({"source_ids": []}, "missing_note_citation"),
+        ({"source_ids": ["public-doc", "public-doc"]}, "duplicate_source_ids"),
+        ({"text": "Visit https://attacker.example for help."}, "non_plain_note"),
+        ({"text": "@room Please send me your details."}, "non_plain_note"),
+        ({"text": "<img src='https://example.org'/>"}, "non_plain_note"),
+        ({"text": "word " * 56}, "note_too_long"),
+        ({"text": "AI context"}, "empty_note"),
+        ({"text": "**AI context:**"}, "empty_note"),
+        ({"text": " \n\t "}, "empty_note"),
+        ({"action": "silence", "text": "But here is a reply."}, "invalid_silence"),
+        ({"action": "silence", "text": ""}, "invalid_silence"),
     ],
 )
-def test_invalid_generation_never_falls_back_to_a_full_answer(change):
-    result = PublicContextService(llm_output(**change)).preview(request())
+def test_invalid_generation_never_falls_back_to_a_full_answer(change, diagnostic):
+    llm = llm_output(**change)
+    result = PublicContextService(llm).preview(request())
     assert result.decision.action == "silence"
     assert result.decision.reason == "invalid_model_output"
     assert result.rendered_note is None
+    assert result.validation_diagnostic == diagnostic
+    assert result.model_called is True
+    assert result.usage == {"total_tokens": 50}
+    llm.invoke.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "content,diagnostic",
+    [
+        ('{"text":"private-\u79d8\u5bc6-\u2066<script>@room"', "invalid_json"),
+        (
+            json.dumps({"private-\u79d8\u5bc6-\u2066<script>@room": "value"}),
+            "invalid_schema",
+        ),
+        (json.dumps(["private-\u79d8\u5bc6-\u2066<script>@room"]), "invalid_schema"),
+        (None, "invalid_response"),
+        ({"text": "private-\u79d8\u5bc6-\u2066<script>@room"}, "invalid_response"),
+    ],
+)
+def test_parse_failure_diagnostic_does_not_export_pydantic_input(content, diagnostic):
+    llm = Mock(
+        invoke=Mock(
+            return_value=SimpleNamespace(content=content, usage={"total_tokens": 50})
+        )
+    )
+    result = PublicContextService(llm).preview(request())
+    assert result.decision.reason == "invalid_model_output"
+    assert result.validation_diagnostic == diagnostic
+    assert result.rendered_note is None
+    assert result.usage == {"total_tokens": 50}
+    assert "private-" not in result.model_dump_json()
+    llm.invoke.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "change,diagnostic",
+    [
+        ({"action": "private-\u79d8\u5bc6-<script>@room"}, "invalid_schema"),
+        ({"reason": {"private-\u79d8\u5bc6-<script>@room": "value"}}, "invalid_schema"),
+        ({"source_ids": ["private-\u79d8\u5bc6-<script>@room"]}, "unknown_source_ids"),
+        ({"text": "private-\u79d8\u5bc6-<script>@room"}, "non_plain_note"),
+    ],
+)
+def test_rejection_diagnostic_does_not_copy_private_model_fields(change, diagnostic):
+    result = PublicContextService(llm_output(**change)).preview(request())
+    assert result.decision.reason == "invalid_model_output"
+    assert result.validation_diagnostic == diagnostic
+    assert "private-" not in result.model_dump_json()
+
+
+@pytest.mark.parametrize("error_type", [ValueError, TypeError, AttributeError])
+def test_render_failure_diagnostic_does_not_copy_exception_details(
+    monkeypatch, error_type
+):
+    monkeypatch.setattr(
+        "app.channels.staff_assist.public_context._markdown_literal",
+        Mock(side_effect=error_type("private-\u79d8\u5bc6-<script>@room")),
+    )
+    llm = llm_output()
+    result = PublicContextService(llm).preview(request())
+    assert result.decision.reason == "invalid_model_output"
+    assert result.validation_diagnostic == "rendering_failed"
+    assert result.rendered_note is None
+    assert "private-" not in result.model_dump_json()
+    llm.invoke.assert_called_once()
+
+
+def test_response_without_content_gets_bounded_diagnostic():
+    llm = Mock(invoke=Mock(return_value=SimpleNamespace(usage={"total_tokens": 50})))
+    result = PublicContextService(llm).preview(request())
+    assert result.decision.reason == "invalid_model_output"
+    assert result.validation_diagnostic == "invalid_response"
+    llm.invoke.assert_called_once()
+
+
+def test_validation_helper_failure_is_distinct_from_rendering(monkeypatch):
+    monkeypatch.setattr(
+        "app.channels.staff_assist.public_context._without_ai_heading",
+        Mock(side_effect=TypeError("private-\u79d8\u5bc6-<script>@room")),
+    )
+    result = PublicContextService(llm_output()).preview(request())
+    assert result.decision.reason == "invalid_model_output"
+    assert result.validation_diagnostic == "validation_failed"
+    assert "private-" not in result.model_dump_json()
+
+
+def test_preview_without_diagnostic_remains_readable_and_codes_are_closed():
+    preview = PublicContextService(llm_output()).preview(request())
+    old_payload = preview.model_dump(exclude={"validation_diagnostic"})
+    assert (
+        PublicContextPreview.model_validate(old_payload).validation_diagnostic is None
+    )
+    with pytest.raises(ValidationError):
+        PublicContextPreview.model_validate(
+            {
+                **old_payload,
+                "validation_diagnostic": "private-\u79d8\u5bc6-<script>@room",
+            }
+        )
 
 
 def test_no_public_evidence_is_silent_without_a_model_call():
@@ -187,6 +292,7 @@ def test_legacy_clarification_action_is_never_rendered(text, source_ids):
     assert result.rendered_note is None
     assert result.model_called is True
     assert result.usage == {"total_tokens": 50}
+    assert result.validation_diagnostic is None
 
 
 @pytest.mark.parametrize(
@@ -210,6 +316,7 @@ def test_question_only_note_is_suppressed_even_with_a_citation(text):
     assert result.decision.action == "silence"
     assert result.decision.reason == "clarification_suppressed"
     assert result.rendered_note is None
+    assert result.validation_diagnostic is None
 
 
 @pytest.mark.parametrize(
@@ -279,6 +386,7 @@ def test_generation_receives_complete_question_and_evidence_without_rewriting():
     assert preview_request.question not in kwargs["system_content"]
     assert result.decision.action == "silence"
     assert result.rendered_note is None
+    assert result.validation_diagnostic is None
     llm.invoke.assert_called_once()
 
 
@@ -363,6 +471,7 @@ def test_generation_failure_is_silent_without_retry():
     result = PublicContextService(llm).preview(request())
     assert result.decision.reason == "generation_unavailable"
     assert result.rendered_note is None
+    assert result.validation_diagnostic is None
     assert llm.invoke.call_count == 1
 
 

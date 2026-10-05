@@ -84,6 +84,50 @@ these cases in Admin against the linked staff thread. A root accepted before a
 later failure may exist without its context child. Deferred cases remain open
 for staff handling; this first version does not automatically re-evaluate them.
 
+New publication attempts retain separate `staff_root_delivery` and `staff_note_delivery`
+diagnostics in their existing metadata. Each contains a fixed reason category,
+whether the client send operation was invoked, whether it returned a response,
+and a bounded response event ID when acknowledged. `operation_started` refers to
+invoking the Matrix client method, not proof of an HTTP request: encryption and
+local protocol checks can fail inside that method before transmission. A null
+value preserves uncertainty around an interrupted invocation. Reserved transaction
+IDs alone never prove that either message was sent. An acknowledged ID is still a
+transport claim until an independently scoped readback verifies the actual event
+and native thread relation.
+
+These phase diagnostics begin when delivery is reserved. Earlier processing
+interruptions retain their existing review status without a transport diagnostic;
+in particular, cancellation does not prove that background provider work stopped.
+
+Known policy refusals remain deferred. If the client definitely lacks the staff
+room in its local room cache, publication is deferred with
+`staff_context_room_state_unavailable` before calling the send method. The send path
+does not sync, join, reset the saved cursor, or retry to recover that room. Other outcomes
+distinguish response errors, missing event IDs, timeouts, local protocol/encryption
+exceptions, and cancellation without storing exception messages. They remain
+subject to the same reconciliation and no-retry rules.
+
+At listener startup and reconnection, the first Matrix sync requests full room
+state while retaining the existing saved cursor. This restores room objects and
+encryption state without requesting an initial historical timeline. Since nio
+processes rooms in response order, the handler temporarily buffers in-scope
+messages until the complete successful response has been processed. It then
+dispatches those messages once, in order, under the current room policy.
+
+This buffer holds at most 1,024 callbacks and is not crash-durable. A buffer
+overflow, interrupted dispatch, or failed initialization after cursor advancement
+stops intake as unhealthy and requires operator reconciliation. The runtime does
+not reset the cursor or automatically replay the buffered messages. A failed sync
+that has not advanced the cursor can reconnect and request full state again.
+Authenticated connection health alone does not establish active listener readiness.
+
+Rejected model output keeps `context_reason=invalid_model_output` and now includes
+an optional `validation_diagnostic` with a fixed code for JSON/schema, source-ID,
+silence, note-text/citation, or rendering failures. It does not include rejected
+text or exception details, and it does not relax validation. Older cases without
+these diagnostics remain unclassified; absence is not evidence of success or a
+specific failure cause.
+
 The runtime caps concurrently pending context tasks at 100; overflow creates an
 Admin case without model calls or a public fallback. SQLite availability is
 required before generation. If persistence fails, processing stops and logs the

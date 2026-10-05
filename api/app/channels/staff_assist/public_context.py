@@ -12,7 +12,14 @@ import re
 from typing import Any, Literal
 from urllib.parse import quote, unquote, urlparse
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 PUBLIC_CONTEXT_PROMPT = """You prepare a short AI context note for a public Bisq
 support conversation with human support staff. You assist the existing discussion.
@@ -279,16 +286,38 @@ class PublicContextDecision(_StrictModel):
     reason: str = Field(min_length=1, max_length=500)
 
 
+ValidationDiagnostic = Literal[
+    "invalid_response",
+    "invalid_json",
+    "invalid_schema",
+    "duplicate_source_ids",
+    "unknown_source_ids",
+    "invalid_silence",
+    "empty_note",
+    "note_too_long",
+    "non_plain_note",
+    "missing_note_citation",
+    "validation_failed",
+    "rendering_failed",
+]
+
+
 class PublicContextPreview(_StrictModel):
     decision: PublicContextDecision
     rendered_note: str | None
     requires_review: Literal[True] = True
     model_called: bool = False
     usage: dict[str, Any] | None = None
+    # Fixed local codes only: never model text, source IDs or exception details.
+    validation_diagnostic: ValidationDiagnostic | None = None
 
 
 def _silence(
-    reason: str, *, model_called: bool = False, usage: Any = None
+    reason: str,
+    *,
+    model_called: bool = False,
+    usage: Any = None,
+    validation_diagnostic: ValidationDiagnostic | None = None,
 ) -> PublicContextPreview:
     return PublicContextPreview(
         decision=PublicContextDecision(
@@ -297,6 +326,7 @@ def _silence(
         rendered_note=None,
         model_called=model_called,
         usage=usage,
+        validation_diagnostic=validation_diagnostic,
     )
 
 
@@ -370,32 +400,68 @@ class PublicContextService:
             return _silence("generation_unavailable", model_called=True)
 
         usage = getattr(response, "usage", None)
+        diagnostic: ValidationDiagnostic = "invalid_response"
         try:
-            decision = PublicContextDecision.model_validate_json(response.content)
+            try:
+                decision = PublicContextDecision.model_validate_json(response.content)
+            except ValidationError as exc:
+                # Pydantic errors can contain private input. Inspect only fixed
+                # error types, explicitly omitting input and exception context.
+                error_types = {
+                    item["type"]
+                    for item in exc.errors(
+                        include_url=False, include_context=False, include_input=False
+                    )
+                }
+                return _silence(
+                    "invalid_model_output",
+                    model_called=True,
+                    usage=usage,
+                    validation_diagnostic=(
+                        "invalid_json"
+                        if "json_invalid" in error_types
+                        else (
+                            "invalid_response"
+                            if "json_type" in error_types
+                            else "invalid_schema"
+                        )
+                    ),
+                )
+            diagnostic = "validation_failed"
             if decision.action == "clarification":
                 return _silence(
                     "clarification_suppressed", model_called=True, usage=usage
                 )
             sources = {source.id: source for source in request.evidence}
             if len(set(decision.source_ids)) != len(decision.source_ids):
+                diagnostic = "duplicate_source_ids"
                 raise ValueError("duplicate evidence ID")
             if any(key not in sources for key in decision.source_ids):
+                diagnostic = "unknown_source_ids"
                 raise ValueError("unknown evidence ID")
             if decision.action == "silence":
                 if decision.text or decision.source_ids:
+                    diagnostic = "invalid_silence"
                     raise ValueError("silence must be empty")
                 return _silence(decision.reason, model_called=True, usage=usage)
             text = _without_ai_heading(decision.text.strip())
-            if not text or len(text.split()) > 55:
+            if not text:
+                diagnostic = "empty_note"
+                raise ValueError("note length")
+            if len(text.split()) > 55:
+                diagnostic = "note_too_long"
                 raise ValueError("note length")
             if re.search(r"https?://|www\.|code:|```|[<>@\[\]{}]", text, re.I):
+                diagnostic = "non_plain_note"
                 raise ValueError("note must be plain text without links or mentions")
             if decision.action == "note" and not decision.source_ids:
+                diagnostic = "missing_note_citation"
                 raise ValueError("factual note needs evidence")
             if _question_only(text):
                 return _silence(
                     "clarification_suppressed", model_called=True, usage=usage
                 )
+            diagnostic = "rendering_failed"
             links = []
             for key in decision.source_ids:
                 source = sources[key]
@@ -469,4 +535,9 @@ class PublicContextService:
                 usage=usage,
             )
         except (ValueError, TypeError, AttributeError):
-            return _silence("invalid_model_output", model_called=True, usage=usage)
+            return _silence(
+                "invalid_model_output",
+                model_called=True,
+                usage=usage,
+                validation_diagnostic=diagnostic,
+            )

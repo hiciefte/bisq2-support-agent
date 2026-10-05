@@ -292,6 +292,49 @@ class OutgoingMessage(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class SendDiagnostic(BaseModel):
+    """Bounded staff-send evidence, never a claim of HTTP transmission.
+
+    ``operation_started`` concerns invocation of the client's room_send method;
+    that method can fail locally during encryption before transmitting anything.
+    None preserves the crash window around invocation. An acknowledged event is
+    a transport claim and still requires independent readback for verification.
+    """
+
+    model_config = {"frozen": True, "extra": "forbid"}
+
+    operation_started: bool | None = None
+    response_received: bool | None = None
+    reason_category: Literal[
+        "reserved",
+        "adapter_invocation_reserved",
+        "room_send_invocation_reserved",
+        "acknowledged",
+        "pretransport_refused",
+        "response_error",
+        "response_missing_event_id",
+        "transport_timeout",
+        "transport_exception",
+        "client_protocol_error",
+        "client_encryption_error",
+        "cancelled",
+        "adapter_exception",
+        "legacy_outcome_unknown",
+        "suppressed",
+    ]
+    response_event_id: str | None = Field(default=None, max_length=512)
+
+    @field_validator("response_event_id")
+    @classmethod
+    def valid_response_event_id(cls, value: str | None) -> str | None:
+        if value is not None and (
+            not value.startswith("$")
+            or any(char.isspace() or ord(char) < 32 for char in value)
+        ):
+            raise ValueError("Invalid Matrix response event ID")
+        return value
+
+
 @dataclass(frozen=True)
 class SendResult:
     """Structured transport delivery result for channel sends.
@@ -303,6 +346,7 @@ class SendResult:
     external_message_id: str | None = None
     editable: bool = False
     error: str | None = None
+    diagnostic: SendDiagnostic | None = None
 
     def __bool__(self) -> bool:
         return bool(self.sent)

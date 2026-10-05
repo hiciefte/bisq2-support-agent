@@ -24,6 +24,8 @@ def mock_client():
     client.user_id = "@test:matrix.org"
     client.access_token = None
     client.device_id = None
+    client.next_batch = None
+    client.loaded_sync_token = None
     client.close = AsyncMock()
     return client
 
@@ -285,3 +287,288 @@ class TestContainerRestartScenario:
 
         # Verify: Login called twice (initial + after restart)
         assert connection_count == 2
+
+
+class TestRoomStateInitialization:
+    """Restore nio room objects before admitting the first delta's messages."""
+
+    @pytest.mark.asyncio
+    async def test_full_state_preserves_cursor_and_releases_callbacks_in_order(
+        self, connection_manager, mock_client
+    ):
+        from nio import SyncResponse
+
+        connection_manager.connected = True
+        mock_client.loaded_sync_token = "saved-cursor"
+        mock_client.next_batch = ""
+        mock_client.rooms = {}
+        dispatched = []
+
+        async def on_message(room, event):
+            assert connection_manager.room_state_ready is True
+            assert "!staff:example.org" in mock_client.rooms
+            dispatched.append(event)
+
+        async def sync_forever(**kwargs):
+            assert kwargs == {"timeout": 30000, "full_state": True}
+            assert mock_client.loaded_sync_token == "saved-cursor"
+            assert mock_client.next_batch == ""
+            assert not connection_manager.health_check()
+            assert connection_manager.defer_until_room_state_ready(
+                on_message, "!source:example.org", "first"
+            )
+            assert connection_manager.defer_until_room_state_ready(
+                on_message, "!source:example.org", "second"
+            )
+            assert dispatched == []
+            mock_client.rooms["!staff:example.org"] = object()
+            response = SyncResponse.from_dict({"next_batch": "after-delta"})
+            await connection_manager._on_sync_response(response)
+            await connection_manager._on_sync_response(response)
+            connection_manager.stop_sync()
+
+        mock_client.sync_forever = AsyncMock(side_effect=sync_forever)
+        await connection_manager.sync_forever()
+
+        assert dispatched == ["first", "second"]
+        assert not connection_manager.defer_until_room_state_ready(
+            on_message, "!source:example.org", "later"
+        )
+        mock_client.sync_forever.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_initial_sync_error_requests_full_state_again(
+        self, connection_manager, mock_client
+    ):
+        from nio import SyncError, SyncResponse
+
+        connection_manager.connected = True
+        calls = 0
+
+        async def sync_forever(**kwargs):
+            nonlocal calls
+            calls += 1
+            assert kwargs["full_state"] is True
+            assert connection_manager.room_state_ready is False
+            if calls == 1:
+                await connection_manager._on_sync_response(
+                    SyncError("fixture sync failure", "M_UNKNOWN")
+                )
+            else:
+                await connection_manager._on_sync_response(
+                    SyncResponse.from_dict({"next_batch": "after-delta"})
+                )
+                connection_manager.stop_sync()
+
+        mock_client.sync_forever = AsyncMock(side_effect=sync_forever)
+        with patch(
+            "app.channels.plugins.matrix.client.connection_manager.asyncio.sleep",
+            new=AsyncMock(),
+        ):
+            await connection_manager.sync_forever()
+        assert calls == 2
+        assert connection_manager.room_state_ready is True
+
+    @pytest.mark.asyncio
+    async def test_partial_response_failure_does_not_dispatch_or_reconnect(
+        self, connection_manager, mock_client
+    ):
+        from app.channels.plugins.matrix.client.connection_manager import (
+            MatrixRoomStateError,
+        )
+
+        callback = AsyncMock()
+        connection_manager.connected = True
+
+        async def sync_forever(**kwargs):
+            connection_manager.defer_until_room_state_ready(
+                callback, object(), object()
+            )
+            raise ValueError("fixture parsing failed after an earlier room")
+
+        mock_client.sync_forever = AsyncMock(side_effect=sync_forever)
+        with pytest.raises(
+            MatrixRoomStateError, match="initial_sync_processing_failed"
+        ):
+            await connection_manager.sync_forever()
+        callback.assert_not_awaited()
+        assert not connection_manager.room_state_ready
+        assert not connection_manager.health_check()
+        assert len(connection_manager._initial_events) == 1
+        with pytest.raises(MatrixRoomStateError):
+            await connection_manager.sync_forever()
+        mock_client.sync_forever.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("cancelled", [False, True])
+    async def test_cursor_advance_before_first_callback_requires_reconciliation(
+        self, connection_manager, mock_client, cancelled
+    ):
+        import asyncio
+
+        from app.channels.plugins.matrix.client.connection_manager import (
+            MatrixRoomStateError,
+        )
+
+        connection_manager.connected = True
+        mock_client.loaded_sync_token = "saved-cursor"
+
+        async def sync_forever(**kwargs):
+            # Nio persists this before parsing the first room's state/events.
+            mock_client.next_batch = "partially-processed-delta"
+            if cancelled:
+                raise asyncio.CancelledError()
+            raise ValueError("fixture processing failed before first callback")
+
+        mock_client.sync_forever = AsyncMock(side_effect=sync_forever)
+        expected = asyncio.CancelledError if cancelled else MatrixRoomStateError
+        with pytest.raises(expected):
+            await connection_manager.sync_forever()
+        assert not connection_manager._initial_events
+        assert connection_manager.room_state_error is not None
+        assert not connection_manager.health_check()
+        assert mock_client.next_batch == "partially-processed-delta"
+        with pytest.raises(MatrixRoomStateError):
+            await connection_manager.sync_forever()
+        mock_client.sync_forever.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_partial_dispatch_failure_never_replays_callbacks(
+        self, connection_manager, mock_client
+    ):
+        from app.channels.plugins.matrix.client.connection_manager import (
+            MatrixRoomStateError,
+        )
+        from nio import SyncResponse
+
+        first = AsyncMock()
+        second = AsyncMock(side_effect=RuntimeError("fixture callback failed"))
+        third = AsyncMock()
+        connection_manager.connected = True
+
+        async def sync_forever(**kwargs):
+            for callback in (first, second, third):
+                connection_manager.defer_until_room_state_ready(
+                    callback, object(), object()
+                )
+            await connection_manager._on_sync_response(
+                SyncResponse.from_dict({"next_batch": "after-delta"})
+            )
+
+        mock_client.sync_forever = AsyncMock(side_effect=sync_forever)
+        with pytest.raises(
+            MatrixRoomStateError, match="initial_message_dispatch_interrupted"
+        ):
+            await connection_manager.sync_forever()
+        first.assert_awaited_once()
+        second.assert_awaited_once()
+        third.assert_not_awaited()
+        assert len(connection_manager._initial_events) == 1
+        assert not connection_manager.room_state_ready
+        assert not connection_manager.health_check()
+        mock_client.sync_forever.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_initial_buffer_limit_fails_closed(
+        self, connection_manager, mock_client
+    ):
+        from app.channels.plugins.matrix.client.connection_manager import (
+            MatrixRoomStateError,
+        )
+
+        connection_manager.connected = True
+        connection_manager._MAX_INITIAL_EVENTS = 2
+        callback = AsyncMock()
+
+        async def sync_forever(**kwargs):
+            for event in range(3):
+                connection_manager.defer_until_room_state_ready(
+                    callback, object(), event
+                )
+
+        mock_client.sync_forever = AsyncMock(side_effect=sync_forever)
+        with pytest.raises(MatrixRoomStateError, match="initial_event_buffer_limit"):
+            await connection_manager.sync_forever()
+        assert len(connection_manager._initial_events) == 2
+        callback.assert_not_awaited()
+        assert not connection_manager.health_check()
+
+    @pytest.mark.asyncio
+    async def test_cancellation_retains_pending_callback_and_stops(
+        self, connection_manager, mock_client
+    ):
+        import asyncio
+
+        callback = AsyncMock()
+        connection_manager.connected = True
+
+        async def sync_forever(**kwargs):
+            connection_manager.defer_until_room_state_ready(
+                callback, object(), object()
+            )
+            raise asyncio.CancelledError()
+
+        mock_client.sync_forever = AsyncMock(side_effect=sync_forever)
+        with pytest.raises(asyncio.CancelledError):
+            await connection_manager.sync_forever()
+        assert connection_manager.room_state_error == "initial_sync_interrupted"
+        assert not connection_manager.room_state_ready
+        assert not connection_manager.health_check()
+        assert len(connection_manager._initial_events) == 1
+        callback.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_normal_cancellation_after_bootstrap_needs_no_reconciliation(
+        self, connection_manager, mock_client
+    ):
+        import asyncio
+
+        from nio import SyncResponse
+
+        connection_manager.connected = True
+        mock_client.loaded_sync_token = "saved-cursor"
+
+        async def sync_forever(**kwargs):
+            mock_client.next_batch = "after-delta"
+            await connection_manager._on_sync_response(
+                SyncResponse.from_dict({"next_batch": "after-delta"})
+            )
+            raise asyncio.CancelledError()
+
+        mock_client.sync_forever = AsyncMock(side_effect=sync_forever)
+        with pytest.raises(asyncio.CancelledError):
+            await connection_manager.sync_forever()
+        assert connection_manager.room_state_error is None
+        assert not connection_manager.health_check()
+
+    @pytest.mark.asyncio
+    async def test_stop_during_bootstrap_dispatch_preserves_remaining_callbacks(
+        self, connection_manager, mock_client
+    ):
+        from app.channels.plugins.matrix.client.connection_manager import (
+            MatrixRoomStateError,
+        )
+        from nio import SyncResponse
+
+        first = AsyncMock(side_effect=connection_manager.stop_sync)
+        second = AsyncMock()
+        connection_manager.connected = True
+
+        async def sync_forever(**kwargs):
+            connection_manager.defer_until_room_state_ready(first, object(), object())
+            connection_manager.defer_until_room_state_ready(second, object(), object())
+            await connection_manager._on_sync_response(
+                SyncResponse.from_dict({"next_batch": "after-delta"})
+            )
+
+        # Ignore the callback arguments when simulating a local shutdown signal.
+        first.side_effect = lambda *args: connection_manager.stop_sync()
+        mock_client.sync_forever = AsyncMock(side_effect=sync_forever)
+        with pytest.raises(
+            MatrixRoomStateError, match="initial_message_dispatch_interrupted"
+        ):
+            await connection_manager.sync_forever()
+        first.assert_awaited_once()
+        second.assert_not_awaited()
+        assert len(connection_manager._initial_events) == 1
+        assert not connection_manager.health_check()
