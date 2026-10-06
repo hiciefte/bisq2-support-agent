@@ -122,9 +122,12 @@ async def test_absent_price_errors_do_not_claim_failure_free(service, monkeypatc
     assert "do not prove no failures" in result["coverage"]
 
 
-@pytest.mark.parametrize("payload", [[], [series(value=None)], [series(age=700)]])
-async def test_missing_or_stale_is_unknown(service, monkeypatch, payload):
-    upstream(monkeypatch, payload)
+@pytest.mark.parametrize(
+    "payload_factory",
+    [lambda: [], lambda: [series(value=None)], lambda: [series(age=700)]],
+)
+async def test_missing_or_stale_is_unknown(service, monkeypatch, payload_factory):
+    upstream(monkeypatch, payload_factory())
     result = await service.get_status("tor")
     assert result["status"] == "unknown"
     assert result["freshness"]["status"] == "stale_or_missing"
@@ -160,31 +163,35 @@ async def test_invalid_scope_cannot_trigger_request(service, monkeypatch, area):
 
 
 @pytest.mark.parametrize(
-    "payload",
+    "payload_factory",
     [
-        {},
-        [None],
-        [series(value=-1)],
-        [series(value=True)],
-        [series(value=float("nan"))],
-        [series(age=-120)],
-        [series(age=1200)],
-        [series(target="private_node.injected")],
-        [series(), series()],
-        [{"target": "bisq_v2.torNetwork.torStartupTime", "datapoints": [[3]]}],
-        [{"target": "bisq_v2.torNetwork.torStartupTime", "datapoints": [[3, "now"]]}],
-        [
+        lambda: {},
+        lambda: [None],
+        lambda: [series(value=-1)],
+        lambda: [series(value=True)],
+        lambda: [series(value=float("nan"))],
+        lambda: [series(age=-120)],
+        lambda: [series(age=1200)],
+        lambda: [series(target="private_node.injected")],
+        lambda: [series(), series()],
+        lambda: [{"target": "bisq_v2.torNetwork.torStartupTime", "datapoints": [[3]]}],
+        lambda: [
+            {"target": "bisq_v2.torNetwork.torStartupTime", "datapoints": [[3, "now"]]}
+        ],
+        lambda: [
             {
                 "target": "bisq_v2.torNetwork.torStartupTime",
                 "datapoints": [[3, time.time()]] * 901,
             }
         ],
-        [series()] * 65,
+        lambda: [series()] * 65,
     ],
 )
 async def test_invalid_response_fails_closed_without_payload(
-    service, monkeypatch, payload
+    service, monkeypatch, payload_factory
 ):
+    # Create relative timestamps at execution, independent of collection delay.
+    payload = payload_factory()
     # json.dumps deliberately permits NaN to test hostile upstream JSON.
     upstream(monkeypatch, raw=json.dumps(payload).encode())
     result = await service.get_status("tor")

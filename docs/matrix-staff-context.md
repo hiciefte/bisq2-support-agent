@@ -43,6 +43,20 @@ before generation and again before publication. Recent staff participation
 defers a case; it does not establish that the question was answered. Sources
 older than one hour or with an incomplete context window remain for Admin review.
 
+Native replies and thread messages join a captured incident only for the same
+author, source room and trial. When their referenced incident is unavailable,
+eligible questions are saved for Admin with `incident_relation_unresolved` before
+retrieval or model reservation. This is deterministic deferral, not model silence.
+It also holds self-contained replies to another author's uncaptured incident;
+the runtime does not guess whether their missing context matters. The existing
+explicit-new-issue rule can still start a separate incident. Follow-ups to a held
+case remain there without automatic generation or delivery.
+
+Captured same-author messages already feed both the combined retrieval question
+and model context. Unlinked fragments still use the existing bounded continuation
+rule; the runtime does not reconstruct a missing relationship from user identity
+or nearby room messages alone.
+
 The context generator uses the configured answer model and a staff-only variant
 of the public-context prompt. Before drafting, an evidence resolver combines
 relevant public wiki passages, verified published harness FAQs, current reviewed

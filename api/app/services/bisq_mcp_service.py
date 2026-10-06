@@ -441,6 +441,8 @@ def get_five_system_score(total_score: int) -> float:
 class Bisq2MCPService:
     """Service for fetching live Bisq 2 data with caching and resilience."""
 
+    READINESS_RECOVERY_INTERVAL_SECONDS = 30.0
+
     @staticmethod
     def _replace_host(parsed: ParseResult, host: str) -> str:
         auth_prefix = ""
@@ -522,6 +524,9 @@ class Bisq2MCPService:
 
         # Rate limiting semaphore
         self._rate_limiter = None  # Will be initialized on first use
+        self._readiness_recovery_task: Optional[asyncio.Task[None]] = None
+        self._readiness_retry_after = 0.0
+        self._closing = False
 
         logger.info(
             f"Bisq2MCPService initialized (enabled={self.enabled}, "
@@ -750,11 +755,14 @@ class Bisq2MCPService:
     # Core API Methods
     # =========================================================================
 
-    async def get_market_prices(self, currency: Optional[str] = None) -> Dict[str, Any]:
+    async def get_market_prices(
+        self, currency: Optional[str] = None, *, use_cache: bool = True
+    ) -> Dict[str, Any]:
         """Get current market prices from Bisq 2 network.
 
         Args:
             currency: Optional currency code to filter (e.g., "USD", "EUR")
+            use_cache: Whether an existing cached result may satisfy the request.
 
         Returns:
             Dictionary with market prices
@@ -771,7 +779,7 @@ class Bisq2MCPService:
 
         # Check cache
         cache_key = f"prices_{currency or 'all'}"
-        if cache_key in self._price_cache:
+        if use_cache and cache_key in self._price_cache:
             logger.debug(f"Cache hit for {cache_key}")
             return self._price_cache[cache_key]
 
@@ -831,6 +839,8 @@ class Bisq2MCPService:
         self,
         currency: Optional[str] = None,
         direction: Optional[str] = None,
+        *,
+        use_cache: bool = True,
     ) -> Dict[str, Any]:
         """Get current offerbook from Bisq 2 network.
 
@@ -838,6 +848,7 @@ class Bisq2MCPService:
             currency: Currency code to filter offers (e.g., "EUR", "USD").
                      If not provided, returns empty with message to specify currency.
             direction: Optional direction filter ("buy" or "sell") - applied client-side
+            use_cache: Whether an existing cached result may satisfy the request.
 
         Returns:
             Dictionary with offers
@@ -867,7 +878,7 @@ class Bisq2MCPService:
 
         # Check cache
         cache_key = f"offers_{currency}_{direction or 'all'}"
-        if cache_key in self._offers_cache:
+        if use_cache and cache_key in self._offers_cache:
             logger.debug(f"Cache hit for {cache_key}")
             return self._offers_cache[cache_key]
 
@@ -1482,6 +1493,10 @@ class Bisq2MCPService:
 
     async def close(self) -> None:
         """Close the HTTP client and clean up resources."""
+        self._closing = True
+        if self._readiness_recovery_task is not None:
+            self._readiness_recovery_task.cancel()
+            await asyncio.gather(self._readiness_recovery_task, return_exceptions=True)
         if self._client is not None and not self._client.is_closed:
             await self._client.aclose()
             self._client = None
@@ -1490,12 +1505,69 @@ class Bisq2MCPService:
             await self._auth_api.cleanup()
             self._auth_api = None
 
-    async def health_check(self) -> Dict[str, Any]:
+    async def _recover_live_probes(self, probes: tuple[str, ...]) -> None:
+        """Refresh only failed public live-data reads; never export conversations."""
+        for probe in probes:
+            try:
+                result = (
+                    await self.get_market_prices("EUR", use_cache=False)
+                    if probe == "market_prices"
+                    else await self.get_offerbook("EUR", "SELL", use_cache=False)
+                )
+                _record_bisq2_probe_health(probe, result.get("success") is True)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Bisq %s readiness recovery failed (%s)", probe, type(exc).__name__
+                )
+                _record_bisq2_probe_health(probe, False)
+
+    def _finish_readiness_recovery(self, task: asyncio.Task[None]) -> None:
+        self._readiness_recovery_task = None
+        self._readiness_retry_after = (
+            asyncio.get_running_loop().time() + self.READINESS_RECOVERY_INTERVAL_SECONDS
+        )
+        if not task.cancelled():
+            task.exception()
+
+    async def _refresh_failed_live_probes(self) -> None:
+        """Coalesce readiness-triggered recovery without a scheduler dependency.
+
+        Route timeouts must not cancel the task: existing HTTP retries can outlive
+        a readiness request, and a cancelled thread-backed request would otherwise
+        let the next healthcheck start overlapping work.
+        """
+        if not self.enabled or self._closing:
+            return
+        task = self._readiness_recovery_task
+        if task is None:
+            if asyncio.get_running_loop().time() < self._readiness_retry_after:
+                return
+            checks = _get_bisq_readiness_snapshot(enabled=True).get("checks", {})
+            probes = tuple(
+                probe
+                for probe in ("market_prices", "offerbook")
+                if checks.get(probe, {}).get("healthy") is not True
+            )
+            if not probes:
+                return
+            task = asyncio.create_task(self._recover_live_probes(probes))
+            self._readiness_recovery_task = task
+            task.add_done_callback(self._finish_readiness_recovery)
+        await asyncio.shield(task)
+
+    async def health_check(
+        self, *, refresh_failed_live_probes: bool = False
+    ) -> Dict[str, Any]:
         """Check service health.
+
+        Internal readiness may retry failed public live-data probes. Ordinary
+        health reads only inspect their state and API availability.
 
         Returns:
             Dictionary with health status
         """
+        if refresh_failed_live_probes:
+            await self._refresh_failed_live_probes()
         bisq_enabled = bool(
             self.enabled
             or self._setting_bool("BISQ2_CHANNEL_ENABLED", False)
