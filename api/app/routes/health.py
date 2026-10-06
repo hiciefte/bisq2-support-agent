@@ -75,7 +75,7 @@ async def _bisq_api_ready(request: Request) -> bool:
         return False
     try:
         health = await asyncio.wait_for(
-            health_check(),
+            health_check(refresh_failed_live_probes=True),
             timeout=READINESS_DEPENDENCY_TIMEOUT_SECONDS,
         )
         readiness = health.get("readiness", {}) if isinstance(health, dict) else {}

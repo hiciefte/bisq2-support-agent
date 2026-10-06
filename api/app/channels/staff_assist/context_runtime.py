@@ -30,6 +30,7 @@ from app.channels.staff_assist.context_incidents import (
     ContextIncidentStore,
     context_only,
     incident_texts,
+    new_issue,
 )
 from app.channels.staff_assist.context_trial import (
     ContextTrial,
@@ -334,6 +335,19 @@ class MatrixContextRuntime:
         classification = getattr(incoming, "classification", None)
         if classification is not None and not classification.should_process:
             return False
+        # Do not assume a native reply is standalone when its incident was not
+        # captured: the reply fallback has already been removed from its text.
+        # Preserve the missing relationship for Admin instead of spending a
+        # reservation on a guessed referent. Keep the existing explicit-new-
+        # issue exception; it deliberately starts a separate incident.
+        unresolved_relation = (
+            (
+                incoming.channel_metadata.get("thread_root_event_id")
+                or incoming.channel_metadata.get("reply_to_event_id")
+            )
+            if not new_issue(question)
+            else None
+        )
         case = await service.create_escalation(
             EscalationCreate(
                 message_id="matrix-context:" + _digest([room_id, incoming.message_id]),
@@ -358,6 +372,11 @@ class MatrixContextRuntime:
                     "incident_messages": [incidents.message(incoming, question)],
                     "incident_frozen": False,
                     **(
+                        {"incident_unresolved_relation": unresolved_relation}
+                        if unresolved_relation
+                        else {}
+                    ),
+                    **(
                         {"context_trial_id": self._trial.trial_id}
                         if self._trial
                         else {}
@@ -366,6 +385,11 @@ class MatrixContextRuntime:
             )
         )
         store = ContextReviewStore(service.repository.db_path)
+        if unresolved_relation:
+            await store.update(
+                case.id, status="deferred", reason="incident_relation_unresolved"
+            )
+            return False
         if not await store.reserve(case.id):
             return False
         reason = await self._trial_reason()

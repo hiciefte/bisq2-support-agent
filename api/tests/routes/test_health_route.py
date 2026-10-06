@@ -248,7 +248,9 @@ class TestHealthRoute:
             "status": "unavailable",
             "required": True,
         }
-        bisq_service.health_check.assert_awaited_once_with()
+        bisq_service.health_check.assert_awaited_once_with(
+            refresh_failed_live_probes=True
+        )
 
     @pytest.mark.parametrize(
         ("api_available", "readiness_status", "expected_http", "expected_status"),
@@ -293,7 +295,9 @@ class TestHealthRoute:
             "channel_count": 1,
             "sender_profile_count": 1,
         }
-        bisq_service.health_check.assert_awaited_once_with()
+        bisq_service.health_check.assert_awaited_once_with(
+            refresh_failed_live_probes=True
+        )
 
     def test_readiness_accepts_healthy_enabled_integrations(
         self, test_client, test_settings

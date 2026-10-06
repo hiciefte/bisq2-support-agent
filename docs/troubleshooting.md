@@ -41,6 +41,26 @@ To fix:
 
 ## Bisq API Connection Issues
 
+### API readiness after a temporary live-data failure
+
+The internal `/health/ready` check can refresh failed or unchecked Bisq market
+price and offerbook probes without waiting for the scheduler. This avoids a
+startup cycle in which the scheduler waits for a healthy API while the API waits
+for a scheduler refresh. Recovery uses the existing public EUR market-price and
+SELL offerbook reads; it performs no conversation export, Matrix operation or
+model call.
+
+Concurrent readiness checks share one recovery task, with a thirty-second
+cooldown after it finishes. A readiness timeout returns unready while the bounded
+HTTP work finishes; it does not launch overlapping retries. Healthy probes are
+not repeated, and a failed probe cannot be satisfied by an old cached success.
+Ordinary `/health` reads remain observational. Other readiness requirements,
+including enabled export, channel scope and API availability, still fail closed.
+
+This recovery does not diagnose the original network failure or repair invalid
+credentials, scope or configuration. Inspect the failed readiness component when
+the service remains unready rather than disabling its check.
+
 ### Cannot Connect to Bisq API
 
 If the FAQ extractor can't connect to the Bisq API, you might see errors like:
