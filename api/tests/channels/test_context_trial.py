@@ -8,7 +8,7 @@ from types import SimpleNamespace as NS
 from unittest.mock import Mock
 
 import pytest
-from app.channels.staff_assist import context_trial
+from app.channels.staff_assist import context_runtime, context_trial
 from app.channels.staff_assist.context_runtime import (
     ContextReviewStore,
     MatrixContextRuntime,
@@ -288,29 +288,67 @@ async def test_direct_trial_delivery_requires_reserved_case(runtime_case):
 
 
 @pytest.mark.asyncio
-async def test_expiry_task_disables_policy_and_closes_pending_workers(runtime_case):
+async def test_expiry_task_disables_policy_and_closes_pending_workers(
+    runtime_case, monkeypatch
+):
     bundle = runtime_case
     now = datetime.now(timezone.utc)
-    enable_trial(
+    clock = [now]
+    monkeypatch.setattr(context_trial, "utc_now", lambda: clock[0])
+    monkeypatch.setattr(context_runtime, "utc_now", lambda: clock[0])
+    trial = enable_trial(
         bundle,
         MATRIX_CONTEXT_TRIAL_END_AT=(now + timedelta(milliseconds=100)).isoformat(),
     )
+    timer_waiting, worker_waiting, expire = (
+        asyncio.Event(),
+        asyncio.Event(),
+        asyncio.Event(),
+    )
+    worker_blocked = asyncio.Event()
+
+    async def controlled_sleep(delay):
+        if asyncio.current_task() is bundle.engine._expiry_task:
+            assert delay == pytest.approx(0.1)
+            timer_waiting.set()
+            await expire.wait()
+        else:
+            assert delay == 10
+            worker_waiting.set()
+            await worker_blocked.wait()
+
+    # Isolate the runtime's two timers without replacing asyncio for database I/O
+    # or pytest. Admission must not race a real 100 ms deadline on a busy runner.
+    runtime_asyncio = NS(**vars(asyncio))
+    runtime_asyncio.sleep = controlled_sleep
+    monkeypatch.setattr(context_runtime, "asyncio", runtime_asyncio)
     policy = bundle.services["channel_autoresponse_policy_service"]
     policy.set_policy = Mock()
     bundle.policy.first_response_delay_seconds = 10
-    await bundle.engine.process(bundle.incoming, bundle.channel)
-    await asyncio.wait_for(bundle.engine._expiry_task, timeout=2)
-    policy.set_policy.assert_called_once_with(
-        "matrix", generation_enabled=False, enabled=False
-    )
-    assert bundle.engine._closed
-    case = await saved_case(bundle)
-    assert (
-        case.channel_metadata["context_reason"]
-        == "processing_interrupted_review_required"
-    )
-    bundle.llm.invoke.assert_not_called()
-    bundle.sender.assert_not_awaited()
+    try:
+        await bundle.engine.process(bundle.incoming, bundle.channel)
+        await asyncio.wait_for(
+            asyncio.gather(timer_waiting.wait(), worker_waiting.wait()), timeout=2
+        )
+        assert bundle.engine._expiry_task is not None
+        assert bundle.engine._tasks
+        policy.set_policy.assert_not_called()
+        clock[0] = trial.end_at
+        expire.set()
+        await asyncio.wait_for(bundle.engine._expiry_task, timeout=2)
+        policy.set_policy.assert_called_once_with(
+            "matrix", generation_enabled=False, enabled=False
+        )
+        assert bundle.engine._closed
+        case = await saved_case(bundle)
+        assert (
+            case.channel_metadata["context_reason"]
+            == "processing_interrupted_review_required"
+        )
+        bundle.llm.invoke.assert_not_called()
+        bundle.sender.assert_not_awaited()
+    finally:
+        await bundle.engine.close()
 
 
 @pytest.mark.asyncio
