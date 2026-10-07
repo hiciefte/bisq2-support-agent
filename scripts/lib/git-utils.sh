@@ -1071,6 +1071,7 @@ cleanup_old_backups() {
 # Used by update.sh to inject BUILD_ID into Docker build process
 get_build_id() {
     local repo_dir="${1:-.}"
+    local resolved_repo_dir=""
 
     # SECURITY: Canonicalize path to prevent traversal attacks
     # macOS and Linux have different realpath implementations
@@ -1078,12 +1079,13 @@ get_build_id() {
     # Linux: realpath supports -e flag for existence check
     if command -v realpath >/dev/null 2>&1; then
         # Try GNU realpath first (Linux)
-        repo_dir=$(realpath -e "$repo_dir" 2>/dev/null) || \
+        resolved_repo_dir=$(realpath -e "$repo_dir" 2>/dev/null) || \
         # Fallback to BSD realpath (macOS)
-        repo_dir=$(realpath "$repo_dir" 2>/dev/null) || {
+        resolved_repo_dir=$(realpath "$repo_dir" 2>/dev/null) || {
             log_error "Repository directory does not exist: $repo_dir"
             return 1
         }
+        repo_dir="$resolved_repo_dir"
     else
         # Fallback if realpath not available
         cd "$repo_dir" >/dev/null 2>&1 || {
@@ -1098,13 +1100,11 @@ get_build_id() {
         return 1
     }
 
-    local git_dir="$repo_dir/.git"
-
-    # Check if .git directory exists
-    if [ -d "$git_dir" ]; then
+    # A linked worktree has a .git file, so let Git resolve its actual directory.
+    if git -C "$repo_dir" -c "safe.directory=$repo_dir" rev-parse --git-dir >/dev/null 2>&1; then
         # Use git to get short commit hash
         local commit_hash
-        commit_hash=$(git --git-dir="$git_dir" rev-parse --short HEAD 2>/dev/null)
+        commit_hash=$(git -C "$repo_dir" -c "safe.directory=$repo_dir" rev-parse --short HEAD 2>/dev/null)
 
         if [ -n "$commit_hash" ]; then
             # Return build ID in format: build-{hash}

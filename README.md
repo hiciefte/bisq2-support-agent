@@ -215,6 +215,14 @@ rebuilding Docker images, restarting services, and automatic rollback. An
 installation whose updater predates the release gate must first follow
 [`docs/runbooks/production-gate-transition.md`](docs/runbooks/production-gate-transition.md).
 
+The selective `plan`, `apply`, `continue`, `reconcile` and `status` subcommands
+provide a durable source-only API/web release workflow. Planning and status are
+offline; apply holds one host lifecycle lock through backup transfer, isolated
+restore verification and service switching.
+Apply executes the supported release phases using an explicitly approved,
+hash-bound profile. See the [deployment workflow](docs/runbooks/deployment-workflow.md)
+for configuration, recovery boundaries and current validation limits.
+
 ### Handling Source Changes
 
 Release updates require a clean tracked and nonignored source tree. Keep runtime

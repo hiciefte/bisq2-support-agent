@@ -1,6 +1,11 @@
 #!/bin/bash
 # Common utilities and configuration for Bisq Support Assistant scripts
 
+# Exported Bash functions lose BASH_SOURCE in their receiving shell. Resolve
+# this checked-in helper while sourcing, and carry that exact path with them.
+_BISQ_LIFECYCLE_HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/lifecycle_lock.py"
+export _BISQ_LIFECYCLE_HELPER
+
 # Colors and formatting
 setup_colors() {
     RED='\033[0;31m'
@@ -89,6 +94,22 @@ check_docker_compose() {
     return 0
 }
 
+verify_inherited_production_lifecycle_lock() {
+    local install_dir="$1"
+    local descriptor="${BISQ_SUPPORT_LIFECYCLE_LOCK_FD:-}"
+
+    if [[ ! "$descriptor" =~ ^[0-9]+$ ]]; then
+        log_error "Inherited production lifecycle lock is invalid" >&2
+        return 1
+    fi
+    # Read-only proof of the actual flock. Never relock or unlock a borrowed FD,
+    # create/chmod its path, or treat a numeric open descriptor as ownership.
+    if ! python3 -I -B "${_BISQ_LIFECYCLE_HELPER:?}" "$install_dir" "$descriptor"; then
+        log_error "Inherited production lifecycle lock is invalid" >&2
+        return 1
+    fi
+}
+
 acquire_production_lifecycle_lock() {
     local install_dir="$1"
     local canonical_install_dir=""
@@ -104,12 +125,8 @@ acquire_production_lifecycle_lock() {
     fi
 
     if [ -n "${BISQ_SUPPORT_LIFECYCLE_LOCK_FD:-}" ]; then
-        if [[ "$BISQ_SUPPORT_LIFECYCLE_LOCK_FD" =~ ^[0-9]+$ ]] \
-            && [ -e "/dev/fd/$BISQ_SUPPORT_LIFECYCLE_LOCK_FD" ]; then
-            return 0
-        fi
-        log_error "Inherited production lifecycle lock is invalid" >&2
-        return 1
+        verify_inherited_production_lifecycle_lock "$install_dir"
+        return $?
     fi
     canonical_install_dir=$(cd "$install_dir" 2>/dev/null && pwd -P) || {
         log_error "Production installation directory is unavailable" >&2
@@ -159,6 +176,18 @@ acquire_production_lifecycle_lock() {
     IFS= read -r lock_state < "$lock_file" || true
     if [ "$lock_state" = blocked ]; then
         log_error "Production recovery is blocked; refusing a lifecycle change" >&2
+        flock -u "$BISQ_SUPPORT_LIFECYCLE_LOCK_FD" || true
+        exec 202>&-
+        unset BISQ_SUPPORT_LIFECYCLE_LOCK_FD
+        return 1
+    fi
+    # Keep a crashed deterministic deployment from being replaced by a new
+    # plan or an ordinary legacy updater. The same checked owner may reconnect.
+    if { [ -e "$control_dir/deployment-active.json" ] \
+            || [ -L "$control_dir/deployment-active.json" ]; } \
+        && ! python3 -I -B "${_BISQ_LIFECYCLE_HELPER:?}" \
+            --active-marker "$canonical_install_dir"; then
+        log_error "An incomplete deployment requires reconciliation" >&2
         flock -u "$BISQ_SUPPORT_LIFECYCLE_LOCK_FD" || true
         exec 202>&-
         unset BISQ_SUPPORT_LIFECYCLE_LOCK_FD
@@ -1445,6 +1474,7 @@ export -f check_required_commands
 export -f check_root
 export -f check_docker_daemon
 export -f check_docker_compose
+export -f verify_inherited_production_lifecycle_lock
 export -f acquire_production_lifecycle_lock
 export -f _validate_compose_container_mode
 export -f _normalize_container_ids

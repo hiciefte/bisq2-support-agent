@@ -273,7 +273,7 @@ def test_transition_runbook_proves_private_access_and_exact_build() -> None:
     assert "`BISQ_SUPPORT_LIFECYCLE_LOCK_FD`" in runbook
 
 
-def test_production_lifecycle_lock_is_reentrant_in_one_process(
+def test_production_lifecycle_lock_routes_reentrant_call_to_verifier(
     tmp_path: Path,
 ) -> None:
     install_dir = tmp_path / "bisq-support-test"
@@ -293,6 +293,12 @@ def test_production_lifecycle_lock_is_reentrant_in_one_process(
         export PATH="{fakebin}:$PATH"
         source "{COMMON_SH}"
         setup_colors
+        # This fixture tests routing/umask with fake flock, not kernel ownership.
+        # Actual /proc/flock proof lives in scripts/test_lifecycle_lock.py.
+        verify_inherited_production_lifecycle_lock() {{
+            test "$1" = "{install_dir}"
+            printf 'verify:%s\\n' "$BISQ_SUPPORT_LIFECYCLE_LOCK_FD" >> "{flock_log}"
+        }}
         umask 022
         acquire_production_lifecycle_lock "{install_dir}"
         acquire_production_lifecycle_lock "{install_dir}"
@@ -303,7 +309,10 @@ def test_production_lifecycle_lock_is_reentrant_in_one_process(
     )
 
     assert result.returncode == 0, result.stderr or result.stdout
-    assert flock_log.read_text(encoding="utf-8").splitlines() == ["-n 202"]
+    assert flock_log.read_text(encoding="utf-8").splitlines() == [
+        "-n 202",
+        "verify:202",
+    ]
     lock_file = install_dir / "failed_updates" / "disaster-recovery" / "recovery.lock"
     assert lock_file.is_file()
     assert lock_file.stat().st_mode & 0o777 == 0o600

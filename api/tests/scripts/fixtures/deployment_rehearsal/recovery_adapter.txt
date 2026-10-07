@@ -1,0 +1,71 @@
+# Appended ONLY in the disposable synthetic repository. Actual receive_ciphertext
+# above remains unchanged. These are not real encryption, capture or restore proofs.
+def preflight_recovery(profile):
+    validate_profile(profile)
+    return {
+        "local_tooling_ready": True,
+        "key_metadata_checked": False,
+        "runtime_image_id": profile["recovery"]["verifier_runtime"]["runtime_image_id"],
+    }
+
+
+def preflight_capture(profile):
+    validate_profile(profile)
+    return {
+        "capture_inputs_ready": True,
+        "destination_kind": "same_host_encrypted_export",
+    }
+
+
+def capture_backup(profile, attempt_dir, binding):
+    from lib.lifecycle_lock import verify_inherited_lock
+
+    verify_inherited_lock(
+        Path(profile["host"]["repository"]),
+        int(os.environ["BISQ_SUPPORT_LIFECYCLE_LOCK_FD"]),
+    )
+    _remaining(profile, binding)
+    exclusive_record(attempt_dir / "capture-intent.json", binding)
+    raw = ("SYNTHETIC_NOT_ENCRYPTED_" + binding["phase"]).encode()
+    name = "bisq-support-backup-fixture-" + binding["phase"] + ".tar.gz.age"
+    path = Path(profile["recovery"]["export_directory"]) / name
+    with _private_log(path) as stream:
+        stream.write(raw)
+        stream.flush()
+        os.fsync(stream.fileno())
+    record = {
+        "ciphertext_name": name,
+        "ciphertext_sha256": hashlib.sha256(raw).hexdigest(),
+        "ciphertext_bytes": len(raw),
+        "destination_kind": "same_host_encrypted_export",
+        "writers_resumed": True,
+    }
+    exclusive_record(attempt_dir / "synthetic-capture.json", record)
+    return record | {"canonical_backup_receipt_sha256": canonical_sha256(record)}
+
+
+def verify_restore(profile, attempt_dir, receive_receipt, binding):
+    _remaining(profile, binding)
+    export = read_record(attempt_dir / "export-receipt.json")
+    validate_receive_receipt(receive_receipt, export)
+    assert _file(attempt_dir / "ciphertext", private=True) == (
+        receive_receipt["ciphertext_sha256"],
+        receive_receipt["ciphertext_bytes"],
+    )
+    record = {
+        "synthetic_restore": True,
+        "receive_receipt_sha256": canonical_sha256(receive_receipt),
+    }
+    exclusive_record(attempt_dir / "synthetic-restore.json", record)
+    return {
+        "receive_receipt_sha256": canonical_sha256(receive_receipt),
+        "ciphertext_sha256": receive_receipt["ciphertext_sha256"],
+        "ciphertext_bytes": receive_receipt["ciphertext_bytes"],
+        "canonical_restore_receipt_sha256": canonical_sha256(record),
+        "components": ["all"],
+        "qdrant_restored": True,
+        "scratch_cleanup_verified": True,
+        "local_runtime_image_id": profile["recovery"]["verifier_runtime"][
+            "runtime_image_id"
+        ],
+    }

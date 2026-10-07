@@ -13,6 +13,8 @@ ENCRYPTION="${BACKUP_ENCRYPTION:-age}"
 RECIPIENT=""
 RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-30}"
 OFF_HOST_CONFIRMED=false
+EXPORT_DIR=""
+BACKUP_RECEIPT=""
 INSTALL_DIR=""
 DOCKER_DIR=""
 DATA_DIR=""
@@ -22,12 +24,18 @@ STAGING_DIR=""
 PARTIAL_OUTPUT=""
 COMPLETED_OUTPUT_NAME=""
 LOCK_FD=""
+LOCK_FD_BORROWED=false
 RECOVERY_CONTROL_DIR=""
 RECOVERY_FAILURE_MARKER=""
 RECOVERY_LOCK_FILE=""
 EXPECTED_MOUNT_IDENTITY=""
 EXPECTED_TARGET_IDENTITY=""
 BACKUP_TARGET_IDENTITY_CAPTURED=false
+WRITER_METADATA_DIR=""
+RESUME_STATE=not_attempted
+CAPTURE_COMPLETE=false
+BACKUP_COMPLETED=false
+PRESERVED_PAUSED_SCHEDULER=false
 declare -a QUIESCED_SERVICES=()
 
 initialize_paths() {
@@ -50,6 +58,9 @@ usage() {
 Usage: backup.sh --target DIR --mount-root DIR --confirm-off-host [options]
 
 Create a component-consistent, encrypted disaster-recovery backup set.
+Alternatively: backup.sh --export-dir DIR [encryption options]
+An export is same-host ciphertext only; it is NOT an off-host backup.
+  --receipt FILE           Exclusive success receipt after writer/scratch cleanup
 
 Required:
   --target DIR             Mounted off-host backup target
@@ -73,6 +84,16 @@ EOF
 parse_args() {
     while [ "$#" -gt 0 ]; do
         case "$1" in
+            --export-dir)
+                [ "$#" -ge 2 ] || return 2
+                EXPORT_DIR="$2"
+                shift 2
+                ;;
+            --receipt)
+                [ "$#" -ge 2 ] || return 2
+                BACKUP_RECEIPT="$2"
+                shift 2
+                ;;
             --target)
                 [ "$#" -ge 2 ] || { log_error "--target requires a value"; return 2; }
                 TARGET_DIR="$2"
@@ -131,36 +152,308 @@ service_is_configured() {
     grep -Fxq "$1" <<< "$configured_services"
 }
 
+prepare_writer_metadata() {
+    if [ -n "$WRITER_METADATA_DIR" ] || [ -z "$STAGING_DIR" ] \
+        || [ ! -d "$STAGING_DIR" ] || [ -L "$STAGING_DIR" ]; then
+        log_error "Backup writer metadata directory is unavailable or already used"
+        return 1
+    fi
+    # Full Config includes environment values, which must never enter a backup
+    # archive. Keep private evidence beside (not inside) the snapshot payload.
+    WRITER_METADATA_DIR="$STAGING_DIR.writer-identities"
+    (umask 077; mkdir -m 700 -- "$WRITER_METADATA_DIR") || return 1
+}
+
+capture_writer_identity() {
+    local service="$1"
+    local phase="$2"
+    local container_id
+    local destination="$WRITER_METADATA_DIR/$service.$phase"
+    local format='{"Id":{{json .Id}},"Image":{{json .Image}},"Created":{{json .Created}},"Config":{{json .Config}},"Mounts":{{json .Mounts}}}'
+
+    container_id="$(container_id_for_service "$service")" || return 1
+    if [[ ! "$container_id" =~ ^[0-9a-f]{64}$ ]]; then
+        log_error "Backup writer container identity is invalid: $service"
+        return 1
+    fi
+    # Inspect may contain credentials. Keep the full evidence private and never
+    # put it in command arguments, logs, or the digest helper's error output.
+    (
+        umask 077
+        set -o noclobber
+        printf '%s\n' "$container_id" > "$destination.id" || exit 1
+        docker inspect --format "$format" "$container_id" > "$destination.json" || exit 1
+        python3 "$SCRIPT_DIR/lib/docker_identity.py" "$container_id" \
+            < "$destination.json" > "$destination.sha256"
+    ) || return 1
+}
+
+verify_writer_identity() {
+    local service="$1"
+    local phase="$2"
+    capture_writer_identity "$service" "$phase" || return 1
+    if ! cmp -s "$WRITER_METADATA_DIR/$service.before.id" \
+        "$WRITER_METADATA_DIR/$service.$phase.id" \
+        || ! cmp -s "$WRITER_METADATA_DIR/$service.before.sha256" \
+            "$WRITER_METADATA_DIR/$service.$phase.sha256"; then
+        log_error "Backup writer identity changed: $service"
+        return 1
+    fi
+}
+
+verify_writer_running() {
+    local service="$1"
+    local container_id
+    local destination="$WRITER_METADATA_DIR/$service.after-state.json"
+    local format='{"Id":{{json .Id}},"Running":{{json .State.Running}},"Paused":{{json .State.Paused}},"Restarting":{{json .State.Restarting}},"Pid":{{json .State.Pid}}}'
+    container_id="$(cat "$WRITER_METADATA_DIR/$service.before.id")" || return 1
+    (
+        umask 077
+        set -o noclobber
+        docker inspect --format "$format" "$container_id" > "$destination" || exit 1
+        python3 - "$container_id" "$destination" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[2], "rb") as stream:
+        raw = stream.read(4097)
+    if len(raw) > 4096:
+        raise ValueError
+    state = json.loads(raw)
+    valid = (
+        isinstance(state, dict)
+        and set(state) == {"Id", "Running", "Paused", "Restarting", "Pid"}
+        and state["Id"] == sys.argv[1]
+        and state["Running"] is True
+        and state["Paused"] is False
+        and state["Restarting"] is False
+        and type(state["Pid"]) is int
+        and state["Pid"] > 0
+    )
+except (OSError, ValueError, TypeError):
+    valid = False
+sys.exit(0 if valid else 1)
+PY
+    ) || {
+        log_error "Backup writer did not resume running: $service"
+        return 1
+    }
+}
+
+scheduler_pause_state() {
+    local phase="$1"
+    local container_id="$2"
+    local destination="$WRITER_METADATA_DIR/scheduler.pause-$phase.json"
+    local format='{"Id":{{json .Id}},"Running":{{json .State.Running}},"Paused":{{json .State.Paused}},"Restarting":{{json .State.Restarting}},"Pid":{{json .State.Pid}},"StartedAt":{{json .State.StartedAt}}}'
+    (
+        umask 077
+        set -o noclobber
+        docker inspect --format "$format" "$container_id" > "$destination" || exit 1
+        python3 - "$container_id" "$destination" "$phase" \
+            "$WRITER_METADATA_DIR/scheduler.pause-before.json" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[2], "rb") as stream:
+        raw = stream.read(4097)
+    if len(raw) > 4096:
+        raise ValueError
+    state = json.loads(raw)
+    if not (
+        isinstance(state, dict)
+        and set(state) == {"Id", "Running", "Paused", "Restarting", "Pid", "StartedAt"}
+        and state["Id"] == sys.argv[1]
+        and all(type(state[key]) is bool for key in ("Running", "Paused", "Restarting"))
+        and type(state["Pid"]) is int
+        and state["Pid"] >= 0
+        and isinstance(state["StartedAt"], str)
+        and state["StartedAt"]
+    ):
+        raise ValueError
+    if state["Paused"] and not (
+        state["Running"] and not state["Restarting"] and state["Pid"] > 0
+    ):
+        raise ValueError
+    if sys.argv[3] != "before":
+        with open(sys.argv[4], "rb") as stream:
+            before = json.load(stream)
+        if not state["Paused"] or state != before:
+            raise ValueError
+except (OSError, ValueError, TypeError):
+    sys.exit(1)
+print("paused" if state["Paused"] else "not_paused")
+PY
+    )
+}
+
+observe_paused_scheduler() {
+    local container_id
+    local state
+    container_id="$(compose ps --all -q scheduler)" || return 1
+    # Preserve legacy absence behavior; main independently requires its helper
+    # container. Observation grants no authority to pause or unpause anything.
+    [ -n "$container_id" ] || return 0
+    [[ "$container_id" =~ ^[0-9a-f]{64}$ ]] || return 1
+    state="$(scheduler_pause_state before "$container_id")" || return 1
+    if [ "$state" = paused ]; then
+        capture_writer_identity scheduler before || return 1
+        if [ "$(cat "$WRITER_METADATA_DIR/scheduler.before.id")" != "$container_id" ]; then
+            log_error "Scheduler changed during initial pause observation"
+            return 1
+        fi
+        PRESERVED_PAUSED_SCHEDULER=true
+    fi
+}
+
+verify_preserved_scheduler() {
+    local phase="$1"
+    local container_id
+    [ "$PRESERVED_PAUSED_SCHEDULER" = true ] || return 0
+    container_id="$(cat "$WRITER_METADATA_DIR/scheduler.before.id")" || return 1
+    verify_writer_identity scheduler "$phase" || return 1
+    if ! scheduler_pause_state "$phase" "$container_id" >/dev/null; then
+        log_error "Paused scheduler changed during backup; leaving its state untouched"
+        return 1
+    fi
+}
+
 resume_services() {
+    local service
+    local resume_status=0
+    local identity_status=0
     if [ "${#QUIESCED_SERVICES[@]}" -eq 0 ]; then
         return 0
     fi
-    log_info "Restarting quiesced services"
-    if ! compose start "${QUIESCED_SERVICES[@]}" >/dev/null; then
-        log_error "Could not restart every quiesced service"
+    if [ "$RESUME_STATE" != not_attempted ]; then
+        log_error "Backup writer resume was already attempted; refusing a retry"
         return 1
     fi
+    # Set before every check and effect: an interrupted or failed start must not
+    # be repeated by the EXIT trap, even if some writers are still stopped.
+    RESUME_STATE=attempted
+    if ! verify_preserved_scheduler resume; then
+        RESUME_STATE=failed
+        return 1
+    fi
+    for service in "${QUIESCED_SERVICES[@]}"; do
+        if ! verify_writer_identity "$service" resume; then
+            RESUME_STATE=failed
+            return 1
+        fi
+    done
+    log_info "Restarting quiesced services"
+    compose start "${QUIESCED_SERVICES[@]}" >/dev/null || resume_status=$?
+    # A failed Compose start may have resumed a subset. Inspect once even after
+    # failure, retaining the actual identities instead of retrying the start.
+    for service in "${QUIESCED_SERVICES[@]}"; do
+        verify_writer_identity "$service" after || identity_status=1
+        verify_writer_running "$service" || identity_status=1
+    done
+    verify_preserved_scheduler after || identity_status=1
+    if [ "$resume_status" -ne 0 ] || [ "$identity_status" -ne 0 ]; then
+        RESUME_STATE=failed
+        log_error "Could not verify every quiesced service resumed unchanged"
+        return 1
+    fi
+    RESUME_STATE=succeeded
     QUIESCED_SERVICES=()
 }
 
 cleanup() {
     local exit_code=$?
+    local cleanup_status
+    trap - EXIT
     set +e
     resume_services
-    if [ -n "$PARTIAL_OUTPUT" ] && [ -e "$PARTIAL_OUTPUT" ]; then
-        if revalidate_backup_target; then
-            rm -f -- "$PARTIAL_OUTPUT"
-        else
-            log_error "Backup target changed; refusing to remove the partial path"
-        fi
+    cleanup_status=$?
+    if [ "$cleanup_status" -ne 0 ] && [ "$exit_code" -eq 0 ]; then
+        exit_code="$cleanup_status"
+    fi
+    verify_preserved_scheduler final
+    cleanup_status=$?
+    if [ "$cleanup_status" -ne 0 ] && [ "$exit_code" -eq 0 ]; then
+        exit_code="$cleanup_status"
+    fi
+    if [ "$exit_code" -eq 0 ] && [ "$BACKUP_COMPLETED" != true ]; then
+        exit_code=1
+    fi
+    if [ "$exit_code" -eq 0 ] && [ -n "$PARTIAL_OUTPUT" ]; then
+        exit_code=1
     fi
     if [ -n "$STAGING_DIR" ] && [ -d "$STAGING_DIR" ]; then
-        rm -rf -- "$STAGING_DIR"
+        if [ "$exit_code" -eq 0 ]; then
+            rm -rf -- "$STAGING_DIR"
+            cleanup_status=$?
+            if [ "$cleanup_status" -ne 0 ]; then
+                exit_code="$cleanup_status"
+            fi
+        else
+            # Both complete and incomplete snapshots remain private evidence.
+            # Neither this record nor a partial ciphertext claims a valid backup.
+            (
+                umask 077
+                set -o noclobber
+                printf 'capture_complete=%s\nresume_state=%s\nexit_code=%s\n' \
+                    "$CAPTURE_COMPLETE" "$RESUME_STATE" "$exit_code" \
+                    > "$STAGING_DIR/backup-failure.state"
+            )
+            log_error "Backup failed; private staging retained at $STAGING_DIR"
+        fi
     fi
-    if [ -n "$LOCK_FD" ]; then
+    if [ -n "$WRITER_METADATA_DIR" ] && [ -d "$WRITER_METADATA_DIR" ]; then
+        if [ "$exit_code" -eq 0 ]; then
+            rm -rf -- "$WRITER_METADATA_DIR"
+            cleanup_status=$?
+            if [ "$cleanup_status" -ne 0 ]; then
+                exit_code="$cleanup_status"
+            fi
+        else
+            log_error "Private writer metadata retained at $WRITER_METADATA_DIR"
+        fi
+    fi
+    # Never remove a partial ciphertext after failure. Its off-host target may
+    # have changed, and the bytes are useful for read-only reconciliation.
+    if [ -n "$PARTIAL_OUTPUT" ]; then
+        log_error "Incomplete encrypted backup retained for reconciliation"
+    fi
+    if [ -n "$LOCK_FD" ] && [ "$LOCK_FD_BORROWED" = false ]; then
         flock -u "$LOCK_FD"
+        cleanup_status=$?
+        if [ "$cleanup_status" -ne 0 ] && [ "$exit_code" -eq 0 ]; then
+            exit_code="$cleanup_status"
+        fi
+    fi
+    if [ "$exit_code" -eq 0 ] && [ -n "$BACKUP_RECEIPT" ]; then
+        write_backup_receipt || exit_code=1
     fi
     exit "$exit_code"
+}
+
+write_backup_receipt() {
+    revalidate_backup_target || return 1
+    python3 - "$BACKUP_RECEIPT" "$TARGET_DIR/$COMPLETED_OUTPUT_NAME" "$EXPORT_DIR" <<'PYRECEIPT'
+import hashlib, json, os, pathlib, stat, sys
+receipt, ciphertext, export = sys.argv[1:]
+p = pathlib.Path(ciphertext)
+fd = os.open(p, os.O_RDONLY | os.O_NOFOLLOW)
+with os.fdopen(fd, 'rb') as f:
+    st = os.fstat(f.fileno())
+    assert stat.S_ISREG(st.st_mode) and st.st_nlink == 1 and st.st_size > 0
+    sha = hashlib.file_digest(f, 'sha256').hexdigest()
+record = {'schema': 'canonical-backup-v1', 'ciphertext_name': p.name,
+          'ciphertext_sha256': sha, 'ciphertext_bytes': st.st_size,
+          'destination_kind': 'same_host_encrypted_export' if export else 'mounted_off_host',
+          'writers_resumed': True, 'scratch_cleanup_verified': True}
+fd = os.open(receipt, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+with os.fdopen(fd, 'w') as f:
+    json.dump(record, f, sort_keys=True, separators=(',', ':')); f.write('\n')
+    f.flush(); os.fsync(f.fileno())
+fd = os.open(pathlib.Path(receipt).parent, os.O_RDONLY)
+try: os.fsync(fd)
+finally: os.close(fd)
+PYRECEIPT
 }
 
 recovery_control_path_is_safe() {
@@ -177,43 +470,6 @@ recovery_control_path_is_safe() {
     fi
 }
 
-sync_recovery_path() {
-    python3 - "$1" <<'PY'
-import os
-import sys
-
-path = sys.argv[1]
-flags = os.O_RDONLY
-if os.path.isdir(path):
-    flags |= getattr(os, "O_DIRECTORY", 0)
-descriptor = os.open(path, flags)
-try:
-    os.fsync(descriptor)
-finally:
-    os.close(descriptor)
-PY
-}
-
-prepare_recovery_control_dir() {
-    recovery_control_path_is_safe || return 1
-    mkdir -p -- "$RECOVERY_CONTROL_DIR" || {
-        log_error "Could not create the disaster-recovery control directory"
-        return 1
-    }
-    recovery_control_path_is_safe || return 1
-    if [ ! -d "$RECOVERY_CONTROL_DIR" ]; then
-        log_error "Disaster-recovery control directory is unavailable"
-        return 1
-    fi
-    chmod 700 "$RECOVERY_CONTROL_DIR" || {
-        log_error "Could not protect the disaster-recovery control directory"
-        return 1
-    }
-    sync_recovery_path "$RECOVERY_CONTROL_DIR" || return 1
-    sync_recovery_path "$INSTALL_DIR/failed_updates" || return 1
-    sync_recovery_path "$INSTALL_DIR" || return 1
-}
-
 ensure_recovery_not_blocked() {
     recovery_control_path_is_safe || return 1
     local lock_state=""
@@ -228,17 +484,13 @@ ensure_recovery_not_blocked() {
 }
 
 open_recovery_lock() {
-    prepare_recovery_control_dir || return 1
-    LOCK_FD=201
-    if ! exec 201<>"$RECOVERY_LOCK_FILE"; then
-        log_error "Could not open the protected disaster-recovery lock"
-        return 1
+    # Record the caller's ownership before common.sh exports a newly acquired
+    # descriptor. An invalid inherited proof must not fall back to acquisition.
+    if [ -n "${BISQ_SUPPORT_LIFECYCLE_LOCK_FD:-}" ]; then
+        LOCK_FD_BORROWED=true
     fi
-    chmod 600 "$RECOVERY_LOCK_FILE" || return 1
-    if ! flock -n "$LOCK_FD"; then
-        log_error "Another disaster-recovery operation is already running"
-        return 1
-    fi
+    acquire_production_lifecycle_lock "$INSTALL_DIR" || return 1
+    LOCK_FD="$BISQ_SUPPORT_LIFECYCLE_LOCK_FD"
 }
 
 acquire_recovery_lock() {
@@ -252,10 +504,14 @@ path_identity() {
 }
 
 capture_backup_target_identity() {
+    if [ -z "$EXPORT_DIR" ]; then
     EXPECTED_MOUNT_IDENTITY="$(mountpoint -d -- "$MOUNT_ROOT")" || {
         log_error "Could not capture the off-host mount identity"
         return 1
     }
+    else
+        EXPECTED_MOUNT_IDENTITY=private-export
+    fi
     EXPECTED_TARGET_IDENTITY="$(path_identity "$TARGET_DIR")" || {
         log_error "Could not capture the backup target identity"
         return 1
@@ -277,6 +533,7 @@ revalidate_backup_target() {
     if [ "$BACKUP_TARGET_IDENTITY_CAPTURED" != true ]; then
         return 0
     fi
+    if [ -z "$EXPORT_DIR" ]; then
     if [ ! -d "$MOUNT_ROOT" ] || [ -L "$MOUNT_ROOT" ] \
         || ! mountpoint -q -- "$MOUNT_ROOT"; then
         log_error "Off-host mount is no longer available"
@@ -289,6 +546,7 @@ revalidate_backup_target() {
     if [ "$current_mount_identity" != "$EXPECTED_MOUNT_IDENTITY" ]; then
         log_error "Off-host mount identity changed during backup"
         return 1
+    fi
     fi
     if [ ! -d "$TARGET_DIR" ] || [ -L "$TARGET_DIR" ]; then
         log_error "Backup target is no longer available or safe"
@@ -315,11 +573,17 @@ revalidate_backup_target() {
 quiesce_services() {
     local service
     local status
+    prepare_writer_metadata || return 1
+    observe_paused_scheduler || return 1
     for service in scheduler api alertmanager matrix-alert-relay grafana prometheus bisq2-api; do
+        if [ "$service" = scheduler ] && [ "$PRESERVED_PAUSED_SCHEDULER" = true ]; then
+            continue
+        fi
         if service_is_running "$service"; then
+            capture_writer_identity "$service" before || return 1
             log_info "Quiescing $service"
             QUIESCED_SERVICES+=("$service")
-            compose stop --timeout 30 "$service" >/dev/null
+            compose stop --timeout 30 "$service" >/dev/null || return 1
         else
             status=$?
             if [ "$status" -ne 1 ]; then
@@ -513,12 +777,24 @@ validate_gpg_recipient_fingerprint() {
 }
 
 validate_configuration() {
+    if [ -n "$BACKUP_RECEIPT" ] && { [ -e "$BACKUP_RECEIPT" ] || [ -L "$BACKUP_RECEIPT" ]; }; then
+        log_error "Backup receipt already exists; reconcile instead of retrying"
+        return 2
+    fi
+    if [ -n "$EXPORT_DIR" ]; then
+        if [ -n "$TARGET_DIR" ] || [ -n "$MOUNT_ROOT" ] || [ "$OFF_HOST_CONFIRMED" != false ]; then
+            log_error "Private export and mounted off-host options are mutually exclusive"
+            return 2
+        fi
+        TARGET_DIR="$EXPORT_DIR"
+    else
     [ -n "$TARGET_DIR" ] || { log_error "An off-host backup target is required"; return 2; }
     [ -n "$MOUNT_ROOT" ] || { log_error "An off-host mount root is required"; return 2; }
     [ "$OFF_HOST_CONFIRMED" = true ] || {
         log_error "Pass --confirm-off-host after verifying the target is off-host"
         return 2
     }
+    fi
     [[ "$RETENTION_DAYS" =~ ^[1-9][0-9]*$ ]] || {
         log_error "Retention days must be a positive integer"
         return 2
@@ -541,13 +817,14 @@ validate_configuration() {
             ;;
     esac
 
-    check_required_commands docker flock python3 tar find grep rm mv mktemp mountpoint stat || return 1
+    check_required_commands docker flock python3 tar find grep rm mv ln mktemp mountpoint stat || return 1
     check_docker_daemon || return 1
     check_docker_compose || return 1
     [ -f "$DR_HELPER" ] || { log_error "Disaster-recovery helper is missing"; return 1; }
     [ -d "$DATA_DIR" ] || { log_error "Application data directory is missing"; return 1; }
     [ -f "$DOCKER_DIR/.env" ] || { log_error "Docker environment file is missing"; return 1; }
 
+    if [ -z "$EXPORT_DIR" ]; then
     if [ ! -d "$MOUNT_ROOT" ] || [ -L "$MOUNT_ROOT" ]; then
         log_error "Off-host mount root is missing or unsafe"
         return 1
@@ -557,11 +834,13 @@ validate_configuration() {
         log_error "Off-host mount root is not mounted"
         return 1
     fi
+    fi
     if [ ! -d "$TARGET_DIR" ] || [ -L "$TARGET_DIR" ]; then
         log_error "Backup target is missing or unsafe"
         return 1
     fi
     TARGET_DIR="$(cd "$TARGET_DIR" && pwd -P)"
+    if [ -z "$EXPORT_DIR" ]; then
     case "$TARGET_DIR/" in
         "$MOUNT_ROOT/"*) ;;
         *)
@@ -569,6 +848,13 @@ validate_configuration() {
             return 2
             ;;
     esac
+    else
+        python3 - "$TARGET_DIR" <<'PYPRIVATE'
+import os, stat, sys
+s = os.stat(sys.argv[1], follow_symlinks=False)
+assert stat.S_ISDIR(s.st_mode) and s.st_uid == os.geteuid() and stat.S_IMODE(s.st_mode) == 0o700
+PYPRIVATE
+    fi
     case "$TARGET_DIR/" in
         "$INSTALL_DIR/"*)
             log_error "Backup target must not be inside the installation tree"
@@ -594,26 +880,29 @@ encrypt_backup() {
 
     log_info "Encrypting backup set" >&2
     if [ "$ENCRYPTION" = age ]; then
-        if ! tar -C "$STAGING_DIR" -czf - . | \
-            age --recipient "$RECIPIENT" --output "$PARTIAL_OUTPUT"; then
+        if ! (umask 077; tar -C "$STAGING_DIR" -czf - . | \
+            age --recipient "$RECIPIENT" --output "$PARTIAL_OUTPUT"); then
             return 1
         fi
     else
-        if ! tar -C "$STAGING_DIR" -czf - . | \
+        if ! (umask 077; tar -C "$STAGING_DIR" -czf - . | \
             gpg --batch --yes \
-                --recipient "$RECIPIENT" --output "$PARTIAL_OUTPUT" --encrypt; then
+                --recipient "$RECIPIENT" --output "$PARTIAL_OUTPUT" --encrypt); then
             return 1
         fi
     fi
     revalidate_backup_target || return 1
     chmod 600 "$PARTIAL_OUTPUT" || return 1
     revalidate_backup_target || return 1
-    mv -- "$PARTIAL_OUTPUT" "$TARGET_DIR/$filename" || return 1
+    ln -- "$PARTIAL_OUTPUT" "$TARGET_DIR/$filename" || return 1
+    rm -- "$PARTIAL_OUTPUT" || return 1
     PARTIAL_OUTPUT=""
     COMPLETED_OUTPUT_NAME="$filename"
 }
 
 apply_retention() {
+    # Deployment exports have an explicit copy/restore lifecycle, no age deletion.
+    [ -z "$EXPORT_DIR" ] || return 0
     revalidate_backup_target || return 1
     log_info "Applying backup retention"
     find "$TARGET_DIR" -maxdepth 1 -type f \
@@ -709,6 +998,7 @@ main() {
     snapshot_volume bisq2 "$bisq2_volume" "$helper_image"
     snapshot_volume alertmanager "$alertmanager_volume" "$helper_image"
 
+    CAPTURE_COMPLETE=true
     resume_services
 
     log_info "Building value-free configuration inventory and manifest"
@@ -720,6 +1010,7 @@ main() {
     timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
     encrypt_backup "$timestamp"
     apply_retention
+    BACKUP_COMPLETED=true
     log_success "Encrypted backup completed: $COMPLETED_OUTPUT_NAME"
 }
 
