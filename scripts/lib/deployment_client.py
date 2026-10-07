@@ -292,7 +292,7 @@ def bindings(
     return profile, approval
 
 
-def checked_receipts(journal: DeploymentJournal, profile: dict) -> dict:
+def checked_receipts(journal: DeploymentJournal, profile: dict, approval: dict) -> dict:
     receipts = {}
     baseline = None
     for item in journal.status()["phases"]:
@@ -302,7 +302,13 @@ def checked_receipts(journal: DeploymentJournal, profile: dict) -> dict:
         intent = read_record(journal.root / f"{phase}.intent.json")
         receipt = read_record(journal.root / "receipts" / f"{phase}.json")
         validate_phase_receipt(
-            receipt, journal.plan, profile, phase, canonical_sha256(intent), baseline
+            receipt,
+            journal.plan,
+            profile,
+            phase,
+            canonical_sha256(intent),
+            baseline,
+            approval=approval,
         )
         baseline = receipt["baseline_sha256"]
         result = read_record(journal.root / f"{phase}.result.json")
@@ -325,8 +331,18 @@ def _execute(
     profile, approval = bindings(journal, profile_path, approval_path)
     state = journal.status()
     require(not state["needs_attention"], "reconciliation_required")
-    receipts = checked_receipts(journal, profile)
+    receipts = checked_receipts(journal, profile, approval)
     if state["completed"]:
+        if not any(
+            path.exists() or path.is_symlink()
+            for path in (
+                journal.root / "completion.json",
+                journal.root / "final-host-status.json",
+            )
+        ):
+            return recover_completion(
+                journal, profile, approval, receipts, transport_factory
+            )
         completion = read_record(journal.root / "completion.json")
         require(
             completion.get("schema") == "deployment-completion-v1"
@@ -436,7 +452,13 @@ def _execute(
                     require(set(reply) == {"receipt"}, "transport_effect")
                     receipt = reply["receipt"]
                 validate_phase_receipt(
-                    receipt, journal.plan, profile, phase, intent_hash, baseline
+                    receipt,
+                    journal.plan,
+                    profile,
+                    phase,
+                    intent_hash,
+                    baseline,
+                    approval=approval,
                 )
                 exclusive_record(journal.root / "receipts" / f"{phase}.json", receipt)
                 journal.finish(
@@ -457,24 +479,7 @@ def _execute(
                 )
                 raise JournalError("phase_requires_reconciliation") from error
         final = transport.request({"command": "status"})
-        require(
-            final.get("complete") is True
-            and final.get("receipts") == receipts
-            and final.get("verification", {}).get("fresh_runtime_verified") is True
-            and final.get("verification", {}).get("active_marker_retired") is True,
-            "host_completion_unverified",
-        )
-        exclusive_record(journal.root / "final-host-status.json", final)
-        exclusive_record(
-            journal.root / "completion.json",
-            {
-                "schema": "deployment-completion-v1",
-                "plan_sha256": journal.plan_sha256,
-                "profile_sha256": canonical_sha256(profile),
-                "verified_at": now(),
-                "host_status_sha256": canonical_sha256(final),
-            },
-        )
+        publish_completion(journal, profile, receipts, final)
         orderly = True
         return {
             "completed": True,
@@ -482,6 +487,97 @@ def _execute(
             "phases": len(receipts),
             "transport": profile["transport"]["kind"],
             "fresh_runtime_verified": True,
+        }
+    finally:
+        transport.close(orderly=orderly)
+
+
+def publish_completion(journal, profile, receipts, final):
+    verification = final.get("verification")
+    baseline = receipts["resume_scheduler"]["baseline_sha256"]
+    require(
+        set(final) == {"verification", "receipts", "host_status", "complete"}
+        and final.get("complete") is True
+        and final.get("receipts") == receipts
+        and isinstance(final.get("host_status"), dict)
+        and isinstance(verification, dict)
+        and set(verification)
+        == {
+            "complete",
+            "fresh_runtime_verified",
+            "active_marker_retired",
+            "baseline_sha256",
+            "verified_at",
+        }
+        and verification.get("complete") is True
+        and verification.get("fresh_runtime_verified") is True
+        and verification.get("active_marker_retired") is True
+        and verification.get("baseline_sha256") == baseline
+        and all(
+            receipt["baseline_sha256"] == baseline for receipt in receipts.values()
+        ),
+        "host_completion_unverified",
+    )
+    verified_at = verification["verified_at"]
+    require(
+        timestamp(verified_at)
+        >= timestamp(receipts["resume_scheduler"]["finished_at"]),
+        "completion_time",
+    )
+    exclusive_record(journal.root / "final-host-status.json", final)
+    exclusive_record(
+        journal.root / "completion.json",
+        {
+            "schema": "deployment-completion-v1",
+            "plan_sha256": journal.plan_sha256,
+            "profile_sha256": canonical_sha256(profile),
+            "verified_at": verified_at,
+            "host_status_sha256": canonical_sha256(final),
+        },
+    )
+
+
+def recover_completion(journal, profile, approval, receipts, transport_factory):
+    """Recover a lost final reply, never repeat finalization or runtime probes."""
+    transport = transport_factory(profile, journal.root, read_only=True)
+    orderly = False
+    try:
+        opened = transport.request(
+            {
+                "command": "open",
+                "mode": "reconcile",
+                "plan": journal.plan,
+                "profile": profile,
+                "approval": approval,
+            }
+        )
+        require(
+            set(opened) == {"baseline", "receipts", "host_status"}, "transport_open"
+        )
+        require(opened["receipts"] == receipts, "host_client_receipt_mismatch")
+        baseline = opened["baseline"]["baseline_sha256"]
+        require(
+            all(
+                receipt["baseline_sha256"] == baseline for receipt in receipts.values()
+            ),
+            "baseline_changed",
+        )
+        final = transport.request({"command": "completion"})
+        verification = final.get("verification")
+        require(
+            isinstance(verification, dict)
+            and verification.get("baseline_sha256") == baseline,
+            "completion_baseline",
+        )
+        publish_completion(journal, profile, receipts, final)
+        orderly = True
+        return {
+            "completed": True,
+            "completion_recovered": True,
+            "plan_sha256": journal.plan_sha256,
+            "effects_performed": False,
+            "fresh_runtime_verified": False,
+            "saved_runtime_verified": True,
         }
     finally:
         transport.close(orderly=orderly)

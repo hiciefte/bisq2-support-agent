@@ -123,7 +123,14 @@ def docker():
                 overlays.append(json.loads(Path(value).read_text()))
         action, *rest = options
         if action == "config":
-            emit({"services": {name: {} for name in state["containers"]}})
+            emit(
+                {
+                    "services": {
+                        name: {"image": "fixture-original-" + name}
+                        for name in state["containers"]
+                    }
+                }
+            )
         elif action == "ps":
             names = [name for name in state["containers"] if name in rest]
             values = (

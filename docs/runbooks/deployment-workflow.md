@@ -70,13 +70,23 @@ Its private `deployment-profile-v1` record binds:
 - Bounded phase and readiness timeouts. Profiles do not contain configuration,
   credential or key contents, arbitrary environment overrides, or image tags.
 
-The external `deployment-approval-v1` record binds canonical plan/profile
+The external `deployment-approval-v2` record binds canonical plan/profile
 SHA-256 hashes, the exact ordered phase scope, operator, approval time and UTC
 deadline. It explicitly allows the standard and live-MCP smoke calls for an API
 release, data-compatible availability rollback, and private disabled channels.
 Web-only releases have no model-smoke scope. Empty, broad, mismatched or expired
 approvals cannot authorize effects. Creating or validating a record does not
 supply the human authorization required by the release policy.
+
+The approval also names the physical `image_consumers` for each selected service.
+An API release must include `matrix-alert-relay` when it is present because both
+consume the API image. The controller checks this scope against the existing
+topology before effects; it never adds a consumer to an existing approval. The
+API and relay switch together and each must pass readiness. A known failed
+switch restores both to their original image together; unrelated services remain
+unchanged. A deployment without the relay can explicitly bind only `api`.
+Version-1 approvals do not authorize this expanded contract. Prepare a new
+version-2 approval for a new operation; never rewrite an attempted journal.
 
 Both the client and host check the current approval window before effects.
 Read-only status and reconciliation remain available after expiry. Completion
@@ -103,6 +113,14 @@ Reconcile is read-only: it reads host status and receipts without mutating the
 journal or replaying an effect. Status is entirely offline. A missing outcome,
 failed effect or conflicting receipt requires investigation; another invocation
 is not a retry authorization.
+
+If all phases succeeded but the final transport reply was lost, `continue` can
+recover completion only when both local completion records are absent. It reads
+the already-saved host reply through the reconciliation transport, validates its
+receipt bindings, and publishes local records exclusively. It does not rerun
+finalization, runtime probes or effects, and reports the original verification
+time. A partial or malformed local record, or a missing saved host reply, still
+requires read-only investigation.
 
 A fixed dependency-free bootstrap verifies the host helper hashes before loading
 repository code. It transports the same checked-in source for every release;

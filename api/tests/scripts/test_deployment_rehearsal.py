@@ -344,7 +344,7 @@ def prepare(source, root, scenario):
         },
     }
     approval = {
-        "schema": "deployment-approval-v1",
+        "schema": "deployment-approval-v2",
         "plan_sha256": canonical(plan),
         "profile_sha256": canonical(profile),
         "phases": plan["phases"],
@@ -352,6 +352,7 @@ def prepare(source, root, scenario):
         "approved_at": datetime.now(timezone.utc).isoformat(),
         "deadline": deadline,
         "smoke_calls": ["standard", "live_mcp"],
+        "image_consumers": {"api": ["api"], "web": ["web"]},
         "data_compatible_rollback": True,
         "policy": "private-disabled-channels",
     }

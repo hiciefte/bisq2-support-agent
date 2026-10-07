@@ -57,15 +57,16 @@ case "$action" in
             build --build-arg "BUILD_ID=$build_id" "$service"
         ;;
     switch)
-        test "$#" -eq 2
-        overlay=$1; service=$2
-        case "$service" in api|web) ;; *) exit 2;; esac
+        overlay=${1:?}; shift
+        case "$#:${1-}:${2-}" in
+            1:api:|1:web:|2:api:matrix-alert-relay) ;; *) exit 2;;
+        esac
         run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" -f "$overlay" \
-            up -d --no-deps --no-build --pull never "$service"
+            up -d --no-deps --no-build --pull never "$@"
         ;;
     health)
         test "$#" -eq 2
-        case "$1" in api|web) ;; *) exit 2;; esac
+        case "$1" in api|web|matrix-alert-relay) ;; *) exit 2;; esac
         wait_for_healthy "$1" "$2" "$DOCKER_DIR" "$COMPOSE_FILE"
         ;;
     smoke)

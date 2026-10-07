@@ -515,6 +515,7 @@ class DeploymentHost:
                     phase,
                     intent["client_intent_sha256"],
                     self.baseline_sha256,
+                    approval=self.approval,
                 )
                 require(payload == value["payload"], "host_effect_receipt_join")
             result[phase] = value["payload"]
@@ -682,6 +683,7 @@ class DeploymentHost:
                 prior,
                 receipt["intent_sha256"],
                 self.baseline_sha256,
+                approval=self.approval,
             )
 
     def _replacement(self, service, current, expected_image):
@@ -723,10 +725,15 @@ class DeploymentHost:
                 "build",
                 intent["client_intent_sha256"],
                 self.baseline_sha256,
+                approval=self.approval,
             )
             require(payload == outcome["payload"], "host_builder_receipt_join")
-            proof = payload["images"][service]
-            saved = private_json(self.root / f"build_{service}.image.private.json")
+            image_service = "api" if service == "matrix-alert-relay" else service
+            require(service in self._consumers(image_service), "host_image_consumer")
+            proof = payload["images"][image_service]
+            saved = private_json(
+                self.root / f"build_{image_service}.image.private.json"
+            )
             require(
                 proof["image_id"] == expected_image == saved["Id"]
                 and proof["image_inspect_sha256"] == digest(encode(saved)),
@@ -797,13 +804,14 @@ class DeploymentHost:
         current = self._inspect()
         for service in self.plan["services"]:
             built = effects["build"]["images"][service]
-            self._ready(
-                service,
-                current,
-                built["image_id"],
-                built["build_id"],
-                reload_nginx=False,
-            )
+            for consumer in self._consumers(service):
+                self._ready(
+                    consumer,
+                    current,
+                    built["image_id"],
+                    built["build_id"],
+                    reload_nginx=False,
+                )
         self._preserved(self._inspect())
         result = {
             "complete": True,
@@ -864,6 +872,41 @@ class DeploymentHost:
                 )
         self._disabled(containers)
 
+    def _consumers(self, service):
+        return self.approval["image_consumers"][service]
+
+    def _consumer_topology(self, config, containers):
+        """Only the explicitly approved, existing API relay shares a release."""
+        services = config["services"]
+        for service in self.plan["services"]:
+            expected = [service]
+            if service == "api" and "matrix-alert-relay" in services:
+                expected.append("matrix-alert-relay")
+            require(self._consumers(service) == expected, "host_consumer_scope")
+            reference = services[service].get("image")
+            require(
+                isinstance(reference, str) and bool(reference), "host_consumer_image"
+            )
+            image = containers[service]["Image"]
+            require(
+                all(
+                    services[name].get("image") == reference
+                    and containers[name]["Image"] == image
+                    for name in expected
+                ),
+                "host_consumer_image",
+            )
+            require(
+                {
+                    name
+                    for name, configuration in services.items()
+                    if configuration.get("image") == reference
+                    or containers[name]["Image"] == image
+                }
+                == set(expected),
+                "host_unknown_image_consumer",
+            )
+
     def preflight(self):
         verify_inherited_lock(self.install, self.lock_fd)
         self._marker()
@@ -889,14 +932,25 @@ class DeploymentHost:
                 and self.baseline["profile_sha256"] == digest(encode(self.profile)),
                 "host_baseline_join",
             )
+            self._consumer_topology(config, self.baseline["containers"])
             for service in self.plan["services"]:
                 if "switch_" + service in effects:
-                    self.expected[service] = private_json(
-                        self.root / f"switch_{service}.container.private.json"
-                    )
+                    proofs = effects["switch_" + service]["consumers"]
+                    for consumer in self._consumers(service):
+                        saved = private_json(
+                            self.root / f"switch_{consumer}.container.private.json"
+                        )
+                        require(
+                            saved["Id"] == proofs[consumer]["container_id"]
+                            and saved["Image"] == proofs[consumer]["image_id"],
+                            "host_consumer_receipt_join",
+                        )
+                        self._replacement(consumer, saved, proofs[consumer]["image_id"])
+                        self.expected[consumer] = saved
             self._preserved(containers)
         else:
             require(not effects, "host_baseline_missing")
+            self._consumer_topology(config, containers)
             build_id = self._shell("build-id", self.candidate).decode().strip()
             require(
                 bool(re.fullmatch(r"build-[0-9a-f]{7,40}", build_id))
@@ -1091,6 +1145,24 @@ class DeploymentHost:
             timeout=self.host["readiness_timeout_seconds"] + 10,
         )
         cid = current[service]["Id"]
+        if service == "matrix-alert-relay":
+            ready = json.loads(
+                self._run(
+                    [
+                        "docker",
+                        "exec",
+                        cid,
+                        "curl",
+                        "-fsS",
+                        "--max-time",
+                        "10",
+                        "http://localhost:8000/ready",
+                    ],
+                    "relay-ready",
+                )
+            )
+            require(ready.get("status") == "ready", "host_relay_readiness")
+            return
         if service == "api":
             ready = json.loads(
                 self._run(
@@ -1186,29 +1258,43 @@ class DeploymentHost:
         image = effects["build"]["images"][service]
         saved = private_json(self.root / f"build_{service}.image.private.json")
         require(self._image(image["image_id"]) == saved, "host_built_image_changed")
+        consumers = self._consumers(service)
         overlay = self._overlay(
             "switch_" + service,
-            {service: {"image": image["image_id"], "pull_policy": "never"}},
+            {
+                name: {"image": image["image_id"], "pull_policy": "never"}
+                for name in consumers
+            },
         )
-        self._shell("switch", overlay, service, timeout=120)
+        self._shell("switch", overlay, *consumers, timeout=120)
         current = self._inspect()
-        require(
-            current[service]["Id"] != self.baseline["containers"][service]["Id"],
-            "host_service_not_replaced",
-        )
-        require(current[service]["Image"] == image["image_id"], "host_running_image")
-        self._replacement(service, current[service], image["image_id"])
-        self.expected[service] = current[service]
+        for name in consumers:
+            require(
+                current[name]["Id"] != self.baseline["containers"][name]["Id"],
+                "host_service_not_replaced",
+            )
+            self._replacement(name, current[name], image["image_id"])
+            self.expected[name] = current[name]
         self._preserved(current)
-        self._ready(service, current, image["image_id"], image["build_id"])
+        for name in consumers:
+            self._ready(name, current, image["image_id"], image["build_id"])
         current = self._inspect()
         self._preserved(current)
-        private_bytes(
-            self.root / f"switch_{service}.container.private.json",
-            encode(current[service]),
-        )
+        for name in consumers:
+            private_bytes(
+                self.root / f"switch_{name}.container.private.json",
+                encode(current[name]),
+            )
         return {
             "service": service,
+            "consumers": {
+                name: {
+                    "container_id": current[name]["Id"],
+                    "image_id": image["image_id"],
+                    "ready": True,
+                }
+                for name in consumers
+            },
             "container_id": current[service]["Id"],
             "image_id": image["image_id"],
             "build_id": image["build_id"],
@@ -1275,18 +1361,32 @@ class DeploymentHost:
         )
         service = phase.removeprefix("switch_")
         baseline = cast(dict, self.baseline)
-        before = baseline["containers"][service]
+        consumers = self._consumers(service)
         candidate = private_json(self.root / f"build_{service}.image.private.json")
-        current = self._inspect()
+        # The prior build receipt was validated by _prefix; bind its immutable
+        # image proof even when no builder-label variance needs normalization.
+        built = read_record(self.operation / "receipts/build.json")["payload"][
+            "images"
+        ][service]
         require(
-            current[service]["Image"] in {before["Image"], candidate["Id"]},
-            "host_recovery_topology",
+            candidate["Id"] == built["image_id"]
+            and digest(encode(candidate)) == built["image_inspect_sha256"],
+            "host_recovery_candidate_image",
         )
-        self._replacement(service, current[service], current[service]["Image"])
-        self.expected[service] = current[service]
-        self._preserved(current, allow_unready={service})
-        original_image = self._image(before["Image"])
-        require(original_image["Id"] == before["Image"], "host_recovery_original_image")
+        current = self._inspect()
+        for name in consumers:
+            before = baseline["containers"][name]
+            require(
+                current[name]["Image"] in {before["Image"], candidate["Id"]},
+                "host_recovery_topology",
+            )
+            self._replacement(name, current[name], current[name]["Image"])
+            self.expected[name] = current[name]
+            original_image = self._image(before["Image"])
+            require(
+                original_image["Id"] == before["Image"], "host_recovery_original_image"
+            )
+        self._preserved(current, allow_unready=set(consumers))
         recovery = {
             "phase": phase,
             "failed_result_sha256": digest(result_path.read_bytes()),
@@ -1294,24 +1394,35 @@ class DeploymentHost:
         }
         exclusive_record(self.root / "availability-recovery.intent.json", recovery)
         try:
-            if (
-                current[service]["Image"] != before["Image"]
-                or not current[service]["State"]["Running"]
+            if any(
+                current[name]["Image"] != baseline["containers"][name]["Image"]
+                or not current[name]["State"]["Running"]
+                for name in consumers
             ):
                 overlay = self._overlay(
                     "availability-recovery",
-                    {service: {"image": before["Image"], "pull_policy": "never"}},
+                    {
+                        name: {
+                            "image": baseline["containers"][name]["Image"],
+                            "pull_policy": "never",
+                        }
+                        for name in consumers
+                    },
                 )
-                self._shell("switch", overlay, service, timeout=120)
+                self._shell("switch", overlay, *consumers, timeout=120)
             current = self._inspect()
-            self._replacement(service, current[service], before["Image"])
-            self.expected[service] = current[service]
-            self._ready(
-                service,
-                current,
-                before["Image"],
-                baseline["old_build_ids"][service],
-            )
+            for name in consumers:
+                self._replacement(
+                    name, current[name], baseline["containers"][name]["Image"]
+                )
+                self.expected[name] = current[name]
+            for name in consumers:
+                self._ready(
+                    name,
+                    current,
+                    baseline["containers"][name]["Image"],
+                    baseline["old_build_ids"][service],
+                )
             self._preserved(self._inspect())
         except Exception as error:
             exclusive_record(
@@ -1330,6 +1441,14 @@ class DeploymentHost:
         result = {
             "intent_sha256": digest(encode(recovery)),
             "status": "availability_restored",
+            "consumers": {
+                name: {
+                    "container_id": current[name]["Id"],
+                    "image_id": current[name]["Image"],
+                    "ready": True,
+                }
+                for name in consumers
+            },
             "rollout_complete": False,
             "failed_phase_preserved": True,
             "scheduler_remains_held": True,

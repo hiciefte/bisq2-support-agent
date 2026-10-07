@@ -61,8 +61,11 @@ def container(service, digit, install):
 
 
 @pytest.fixture
-def host(tmp_path, monkeypatch, module, protocol, records):
+def host(tmp_path, monkeypatch, module, protocol, records, request):
     plan, profile, approval = copy.deepcopy(records)
+    coupled = getattr(request, "param", False)
+    if coupled:
+        approval["image_consumers"]["api"].append("matrix-alert-relay")
     instant = datetime.now(timezone.utc)
     plan["created_at"] = (instant - timedelta(minutes=1)).isoformat()
     plan["deadline"] = (instant + timedelta(hours=1)).isoformat()
@@ -96,12 +99,25 @@ def host(tmp_path, monkeypatch, module, protocol, records):
             ("scheduler", "4"),
         )
     }
+    if coupled:
+        state["matrix-alert-relay"] = container("matrix-alert-relay", "5", install)
+        state["matrix-alert-relay"]["Image"] = state["api"]["Image"]
     calls = []
 
     def shell(action, *args, **kwargs):
         calls.append((action, args))
         if action == "config":
-            return module.encode({"services": dict.fromkeys(state, {})})
+            return module.encode(
+                {
+                    "services": {
+                        name: {
+                            "image": "original-"
+                            + ("api" if name == "matrix-alert-relay" else name)
+                        }
+                        for name in state
+                    }
+                }
+            )
         if action == "build-id":
             return b"build-aaaaaaa\n"
         return b""
@@ -442,9 +458,7 @@ def test_get_build_id_actual_linked_worktree(tmp_path):
         assert result.stdout.strip() == b"build-" + expected
 
 
-def test_complete_real_host_phase_sequence_with_fixture_commands(
-    host, module, protocol, monkeypatch
-):
+def install_phase_command_models(host, module, monkeypatch):
     state = host.fixture_state
     built = {
         s: {
@@ -462,18 +476,20 @@ def test_complete_real_host_phase_sequence_with_fixture_commands(
     def shell(action, *args, **kwargs):
         if action == "switch":
             overlay = module.private_json(Path(args[0]))
-            service = args[1]
-            replacement = copy.deepcopy(state[service])
-            replacement["Id"] = ("c" if service == "api" else "d") * 64
-            replacement["Image"] = overlay["services"][service]["image"]
-            replacement["Config"]["Image"] = replacement["Image"]
-            replacement["Config"]["Hostname"] = replacement["Id"][:12]
-            replacement["Config"]["Env"][0] = "BUILD_ID=build-aaaaaaa"
-            replacement["Config"]["Env"].reverse()
-            replacement["Config"]["Labels"][
-                "com.docker.compose.image.builder"
-            ] = "classic"
-            state[service] = replacement
+            for service in args[1:]:
+                replacement = copy.deepcopy(state[service])
+                replacement["Id"] = {"api": "c", "web": "d", "matrix-alert-relay": "e"}[
+                    service
+                ] * 64
+                replacement["Image"] = overlay["services"][service]["image"]
+                replacement["Config"]["Image"] = replacement["Image"]
+                replacement["Config"]["Hostname"] = replacement["Id"][:12]
+                replacement["Config"]["Env"][0] = "BUILD_ID=build-aaaaaaa"
+                replacement["Config"]["Env"].reverse()
+                replacement["Config"]["Labels"][
+                    "com.docker.compose.image.builder"
+                ] = "classic"
+                state[service] = replacement
         return base_shell(action, *args, **kwargs)
 
     def run(argv, _label, *_args, **_kwargs):
@@ -484,7 +500,7 @@ def test_complete_real_host_phase_sequence_with_fixture_commands(
             state["scheduler"]["State"]["Paused"] = False
         elif "cat" in argv:
             return b"build-aaaaaaa\n"
-        elif argv[-1].endswith("/health/ready"):
+        elif argv[-1].endswith("/ready"):
             return b'{"status":"ready"}'
         elif argv[-1].endswith("/health"):
             return b'{"build_id":"build-aaaaaaa"}'
@@ -504,6 +520,15 @@ def test_complete_real_host_phase_sequence_with_fixture_commands(
             if ref == v["Id"] or ref.startswith("bisq-release-" + k + ":")
         ),
     )
+    return commands
+
+
+@pytest.mark.parametrize("host", [False, True], indirect=True)
+def test_complete_real_host_phase_sequence_with_fixture_commands(
+    host, module, protocol, monkeypatch
+):
+    commands = install_phase_command_models(host, module, monkeypatch)
+    state = host.fixture_state
     for phase in host.plan["phases"]:
         payload = (
             payload_for(phase)
@@ -524,6 +549,22 @@ def test_complete_real_host_phase_sequence_with_fixture_commands(
     assert actions.index("build") < actions.index("switch")
     assert actions.count("build") == 2 and actions.count("switch") == 2
     assert len([c for c in commands if c[:2] == ["docker", "unpause"]]) == 1
+    proof = module.read_record(host.operation / "receipts/switch_api.json")["payload"]
+    assert set(proof["consumers"]) == set(host._consumers("api"))
+    assert all(
+        state[name]["Image"] == state["api"]["Image"] for name in host._consumers("api")
+    )
+    api_switch = [args for action, args in host.fixture_calls if action == "switch"][0]
+    assert list(api_switch[1:]) == host._consumers("api")
+    # A new lock owner's reconnect must reload every physical snapshot.
+    host.expected.clear()
+    host.preflight()
+    assert set(host.expected) == set(host._consumers("api") + ["web"])
+    host.verify_completion()
+    if "matrix-alert-relay" in state:
+        state["matrix-alert-relay"]["Mounts"][0]["RW"] = False
+        with pytest.raises(module.JournalError, match="host_service_identity_changed"):
+            host.verify_completion()
 
 
 def failed_switch(
@@ -646,6 +687,7 @@ def test_original_image_recovery_rejects_candidate_builder_before_readiness(
     )
 
 
+@pytest.mark.parametrize("host", [False, True], indirect=True)
 def test_uncertain_switch_is_never_restored_automatically(
     host, module, protocol, monkeypatch
 ):
@@ -905,3 +947,203 @@ def test_context_drain_proof_refuses_malformed_or_unknown_metadata(
         module.JournalError, match="host_context_(metadata|work_unsettled)"
     ):
         module.DeploymentHost._preserved_data(host, host.fixture_state)
+
+
+@pytest.mark.parametrize("host", [False, True], indirect=True)
+@pytest.mark.parametrize(
+    "fault", ["scope", "runtime", "config", "unknown_runtime", "unknown_config"]
+)
+def test_image_consumer_preflight_refuses_ambiguous_topology_before_effects(
+    host, module, monkeypatch, fault
+):
+    state = host.fixture_state
+    config = json.loads(host._shell("config"))
+    if fault == "scope":
+        host.approval["image_consumers"]["api"] = (
+            ["api"] if "matrix-alert-relay" in state else ["api", "matrix-alert-relay"]
+        )
+        code = "host_consumer_scope"
+    elif fault in {"runtime", "config"}:
+        if "matrix-alert-relay" not in state:
+            state["matrix-alert-relay"] = container(
+                "matrix-alert-relay", "5", host.install
+            )
+            state["matrix-alert-relay"]["Image"] = state["api"]["Image"]
+            config["services"]["matrix-alert-relay"] = copy.deepcopy(
+                config["services"]["api"]
+            )
+            host.approval["image_consumers"]["api"].append("matrix-alert-relay")
+        if fault == "runtime":
+            state["matrix-alert-relay"]["Image"] = "sha256:" + "9" * 64
+        else:
+            config["services"]["matrix-alert-relay"]["image"] = "another-image"
+        code = "host_consumer_image"
+    else:
+        if fault == "unknown_runtime":
+            state["nginx"]["Image"] = state["api"]["Image"]
+        else:
+            config["services"]["nginx"]["image"] = config["services"]["api"]["image"]
+        code = "host_unknown_image_consumer"
+    # A fresh synthetic preflight must reject before persisting a baseline or intent.
+    (host.root / "baseline.private.json").unlink()
+    host.baseline = host.baseline_sha256 = None
+    original_shell = host._shell
+    monkeypatch.setattr(
+        host,
+        "_shell",
+        lambda action, *args, **kw: (
+            module.encode(config)
+            if action == "config"
+            else original_shell(action, *args, **kw)
+        ),
+    )
+    with pytest.raises(module.JournalError, match=code):
+        host.preflight()
+    assert not (host.root / "baseline.private.json").exists()
+    assert not list(host.root.glob("*.intent.json"))
+
+
+@pytest.mark.parametrize("host", [True], indirect=True)
+@pytest.mark.parametrize("fault", ["readiness", "image", "mount", "config"])
+def test_relay_failure_prevents_switch_success_and_smokes(
+    host, module, protocol, monkeypatch, fault
+):
+    install_phase_command_models(host, module, monkeypatch)
+    original_shell, original_run = host._shell, host._run
+
+    def shell(action, *args, **kwargs):
+        result = original_shell(action, *args, **kwargs)
+        if action == "switch":
+            relay = host.fixture_state["matrix-alert-relay"]
+            if fault == "image":
+                relay["Image"] = "sha256:" + "9" * 64
+            elif fault == "mount":
+                relay["Mounts"][0]["RW"] = False
+            elif fault == "config":
+                relay["Config"]["Cmd"] = ["different-entrypoint"]
+        return result
+
+    def run(argv, *args, **kwargs):
+        if fault == "readiness" and argv[-1] == "http://localhost:8000/ready":
+            return b'{"status":"not-ready"}'
+        return original_run(argv, *args, **kwargs)
+
+    monkeypatch.setattr(host, "_shell", shell)
+    monkeypatch.setattr(host, "_run", run)
+    for phase in host.plan["phases"][: host.plan["phases"].index("switch_api")]:
+        payload = (
+            payload_for(phase)
+            if phase.endswith(("_backup", "_restore"))
+            else host.effect(phase, "f" * 64)
+        )
+        save_receipt(host, module, protocol, phase, payload)
+    with pytest.raises(module.JournalError):
+        host.effect("switch_api", "f" * 64)
+    assert (
+        module.read_record(host.root / "switch_api.result.json")["status"] == "failed"
+    )
+    assert not list(host.root.glob("smoke_*.intent.json"))
+    assert host.fixture_state["scheduler"]["State"]["Paused"] is True
+    assert not (host.root / "switch_matrix-alert-relay.container.private.json").exists()
+
+
+@pytest.mark.parametrize("host", [True], indirect=True)
+@pytest.mark.parametrize(
+    "changed", [["api"], ["matrix-alert-relay"], ["api", "matrix-alert-relay"]]
+)
+def test_known_failed_coupled_switch_restores_both_even_after_partial_recreate(
+    host, module, protocol, monkeypatch, changed
+):
+    phase = failed_switch(host, module, protocol, monkeypatch, builder_metadata=True)
+    for name in host._consumers("api"):
+        host.fixture_state[name] = copy.deepcopy(host.baseline["containers"][name])
+        if name in changed:
+            host.fixture_state[name]["Image"] = "sha256:" + "a" * 64
+            host.fixture_state[name]["Config"]["Labels"][
+                "com.docker.compose.image.builder"
+            ] = "classic"
+    switches, ready = [], []
+
+    def shell(action, overlay, *consumers, **kwargs):
+        assert action == "switch"
+        switches.append(consumers)
+        saved = module.private_json(overlay)
+        assert set(saved["services"]) == set(host._consumers("api"))
+        for name in consumers:
+            host.fixture_state[name] = copy.deepcopy(host.baseline["containers"][name])
+            assert saved["services"][name]["image"] == host.fixture_state[name]["Image"]
+
+    monkeypatch.setattr(host, "_shell", shell)
+    monkeypatch.setattr(host, "_configuration", lambda: None)
+    monkeypatch.setattr(host, "_ready", lambda name, *_args: ready.append(name))
+    result = host.restore_availability(phase)
+    assert switches == [("api", "matrix-alert-relay")]
+    assert ready == ["api", "matrix-alert-relay"]
+    assert set(result["consumers"]) == set(ready)
+    assert all(
+        item["image_id"] == "sha256:" + "1" * 64
+        for item in result["consumers"].values()
+    )
+    assert result["rollout_complete"] is False
+    assert host.fixture_state["scheduler"]["State"]["Paused"] is True
+    with pytest.raises(module.JournalError, match="record_already_exists"):
+        host.restore_availability(phase)
+
+
+@pytest.mark.parametrize("host", [True], indirect=True)
+def test_coupled_rollback_cannot_claim_success_if_relay_remains_candidate(
+    host, module, protocol, monkeypatch
+):
+    phase = failed_switch(host, module, protocol, monkeypatch)
+    host.fixture_state["matrix-alert-relay"]["Image"] = "sha256:" + "a" * 64
+
+    def shell(*args, **kwargs):
+        host.fixture_state["api"] = copy.deepcopy(host.baseline["containers"]["api"])
+
+    monkeypatch.setattr(host, "_shell", shell)
+    monkeypatch.setattr(host, "_configuration", lambda: None)
+    monkeypatch.setattr(
+        host, "_ready", lambda *_args: pytest.fail("partial rollback is not ready")
+    )
+    with pytest.raises(module.JournalError, match="host_running_image"):
+        host.restore_availability(phase)
+    result = module.read_record(host.root / "availability-recovery.result.json")
+    assert result["status"] == "failed"
+    assert host.fixture_state["scheduler"]["State"]["Paused"] is True
+
+
+def test_fixed_shell_adapter_couples_only_the_exact_api_relay_group(tmp_path):
+    script = tmp_path / "deployment_host.sh"
+    script.write_bytes((ROOT / "scripts/lib/deployment_host.sh").read_bytes())
+    (tmp_path / "common.sh").write_text("""
+setup_colors() { :; }
+source_deploy_paths() { :; }
+pin_existing_compose_project() { :; }
+run_docker_compose() { printf '%s\\n' "$@"; }
+""")
+    (tmp_path / "docker-utils.sh").write_text("")
+    (tmp_path / "git-utils.sh").write_text("")
+    prefix = [
+        "bash",
+        str(script),
+        "switch",
+        "/fixture/install",
+        "fixture",
+        "/fixture/overlay",
+    ]
+    for group in [["api"], ["web"], ["api", "matrix-alert-relay"]]:
+        result = subprocess.run(
+            prefix + group, capture_output=True, check=True, text=True
+        )
+        assert result.stdout.splitlines()[-len(group) :] == group
+        assert result.stdout.splitlines().count("up") == 1
+    for group in [
+        ["matrix-alert-relay"],
+        ["api", "web"],
+        ["api", "matrix-alert-relay", "web"],
+        ["--all"],
+        ["api matrix-alert-relay"],
+        ["matrix-alert-relay", "api"],
+    ]:
+        result = subprocess.run(prefix + group, capture_output=True)
+        assert result.returncode != 0 and not result.stdout

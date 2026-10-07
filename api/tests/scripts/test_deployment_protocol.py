@@ -77,7 +77,7 @@ def records(protocol):
         },
     }
     approval = {
-        "schema": "deployment-approval-v1",
+        "schema": "deployment-approval-v2",
         "plan_sha256": protocol.canonical_sha256(plan),
         "profile_sha256": protocol.canonical_sha256(profile),
         "phases": plan["phases"],
@@ -85,6 +85,7 @@ def records(protocol):
         "approved_at": "2026-01-01T10:01:00+00:00",
         "deadline": "2026-01-01T11:00:00+00:00",
         "smoke_calls": ["standard", "live_mcp"],
+        "image_consumers": {"api": ["api"], "web": ["web"]},
         "data_compatible_rollback": True,
         "policy": "private-disabled-channels",
     }
@@ -115,6 +116,13 @@ def payload_for(phase):
     if phase.startswith("switch_"):
         return {
             "service": phase.removeprefix("switch_"),
+            "consumers": {
+                phase.removeprefix("switch_"): {
+                    "container_id": "2" * 64,
+                    "image_id": "sha256:" + "3" * 64,
+                    "ready": True,
+                }
+            },
             "container_id": "2" * 64,
             "image_id": "sha256:" + "3" * 64,
             "build_id": "build-aaaaaaa",
@@ -369,3 +377,105 @@ def test_wire_size_and_encoding_are_bounded(protocol):
     assert protocol.decode_object(protocol.encode_object(record)) == record
     assert protocol.canonical_sha256(record) == protocol.digest(b'{"a":1,"b":2}\n')
     assert json.loads(protocol.encode_object(record)) == record
+
+
+def test_old_approval_cannot_silently_authorize_physical_consumers(protocol, records):
+    plan, profile, approval = records
+    approval["schema"] = "deployment-approval-v1"
+    with pytest.raises(protocol.JournalError, match="approval_binding"):
+        protocol.validate_approval(approval, plan, profile)
+    approval["schema"] = "deployment-approval-v2"
+    del approval["image_consumers"]
+    with pytest.raises(protocol.JournalError, match="approval_schema"):
+        protocol.validate_approval(approval, plan, profile)
+
+
+@pytest.mark.parametrize(
+    "consumers",
+    [
+        {},
+        {"api": ["api"]},
+        {"api": ["api", "scheduler"], "web": ["web"]},
+        {"api": ["matrix-alert-relay", "api"], "web": ["web"]},
+        {"api": ["api", "api"], "web": ["web"]},
+        {"api": ["api"], "web": ["web", "matrix-alert-relay"]},
+    ],
+)
+def test_approval_refuses_unimplemented_or_missing_consumer_groups(
+    protocol, records, consumers
+):
+    plan, profile, approval = records
+    approval["image_consumers"] = consumers
+    with pytest.raises(protocol.JournalError, match="approval_consumers"):
+        protocol.validate_approval(approval, plan, profile)
+
+
+@pytest.mark.parametrize("coupled", [False, True])
+def test_switch_proof_consumer_scope_must_match_approval(protocol, records, coupled):
+    plan, profile, approval = records
+    payload = payload_for("switch_api")
+    if coupled:
+        approval["image_consumers"]["api"].append("matrix-alert-relay")
+        payload["consumers"]["matrix-alert-relay"] = {
+            "container_id": "4" * 64,
+            "image_id": payload["image_id"],
+            "ready": True,
+        }
+    produced = protocol.make_phase_receipt(
+        plan,
+        profile,
+        "switch_api",
+        "a" * 64,
+        "b" * 64,
+        payload,
+        "2026-01-01T10:02:00Z",
+        "2026-01-01T10:03:00Z",
+    )
+    protocol.validate_phase_receipt(
+        produced, plan, profile, "switch_api", "a" * 64, approval=approval
+    )
+    approval["image_consumers"]["api"] = (
+        ["api"] if coupled else ["api", "matrix-alert-relay"]
+    )
+    with pytest.raises(protocol.JournalError, match="receipt_consumer_scope"):
+        protocol.validate_phase_receipt(
+            produced, plan, profile, "switch_api", "a" * 64, approval=approval
+        )
+
+
+@pytest.mark.parametrize(
+    "fault", ["image", "duplicate_id", "ready", "extra", "primary"]
+)
+def test_switch_consumer_proofs_require_distinct_exact_ready_images(
+    protocol, records, fault
+):
+    plan, profile, _ = records
+    payload = payload_for("switch_api")
+    payload["consumers"]["matrix-alert-relay"] = {
+        "container_id": "4" * 64,
+        "image_id": payload["image_id"],
+        "ready": True,
+    }
+    if fault == "image":
+        payload["consumers"]["matrix-alert-relay"]["image_id"] = "sha256:" + "5" * 64
+    elif fault == "duplicate_id":
+        payload["consumers"]["matrix-alert-relay"]["container_id"] = payload[
+            "container_id"
+        ]
+    elif fault == "ready":
+        payload["consumers"]["matrix-alert-relay"]["ready"] = False
+    elif fault == "extra":
+        payload["consumers"]["nginx"] = payload["consumers"]["matrix-alert-relay"]
+    else:
+        payload["container_id"] = "6" * 64
+    with pytest.raises(protocol.JournalError, match="receipt_consumers"):
+        protocol.make_phase_receipt(
+            plan,
+            profile,
+            "switch_api",
+            "a" * 64,
+            "b" * 64,
+            payload,
+            "2026-01-01T10:02:00Z",
+            "2026-01-01T10:03:00Z",
+        )

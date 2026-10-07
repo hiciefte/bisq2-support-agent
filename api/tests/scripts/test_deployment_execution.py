@@ -64,7 +64,9 @@ def setup(tmp_path, monkeypatch):
     journal.exclusive_record(profile_path, profile)
     journal.exclusive_record(approval_path, approval)
     effects = []
-    fail = {"phase": None, "drop": False}
+    verifications = []
+    fail = {"phase": None, "drop": False, "drop_final": False}
+    commands = []
 
     class SyntheticHost:
         def __init__(self, plan, profile, approval, directory):
@@ -96,11 +98,16 @@ def setup(tmp_path, monkeypatch):
             return {"preserved": True}
 
         def verify_completion(self):
-            return {
+            verifications.append("runtime")
+            result = {
                 "complete": True,
                 "fresh_runtime_verified": True,
-                "active_marker_retired": True,
+                "baseline_sha256": "b" * 64,
             }
+            directory = self.directory / "host"
+            directory.mkdir(mode=0o700, exist_ok=True)
+            journal.exclusive_record(directory / "completion.json", result)
+            return result | {"active_marker_retired": True}
 
         def close(self):
             pass
@@ -113,10 +120,13 @@ def setup(tmp_path, monkeypatch):
 
         def request(self, message):
             # Exercise the real strict codec and owner, not hand-built replies.
+            commands.append((self.owner.read_only, message["command"]))
             incoming = protocol.decode_object(protocol.encode_object(message))
             reply = self.owner.dispatch(incoming)
             if fail["drop"] and message.get("phase") == "smoke_standard":
                 raise journal.JournalError("synthetic_lost_response")
+            if fail["drop_final"] and message["command"] == "status":
+                raise journal.JournalError("synthetic_lost_final_response")
             return protocol.decode_object(protocol.encode_object(reply))
 
         def ciphertext(self, phase, receipt):
@@ -167,7 +177,7 @@ def test_complete_phase_flow_joins_actual_producer_consumer_contract(setup):
     assert setup.effects == setup.plan["phases"]
     j = setup.journal.DeploymentJournal(setup.operation)
     assert j.status()["completed"]
-    assert len(setup.client.checked_receipts(j, setup.profile)) == len(
+    assert len(setup.client.checked_receipts(j, setup.profile, setup.approval)) == len(
         setup.plan["phases"]
     )
     assert (setup.operation / "completion.json").exists()
@@ -175,6 +185,264 @@ def test_complete_phase_flow_joins_actual_producer_consumer_contract(setup):
         "already_complete"
     ]
     assert setup.effects == setup.plan["phases"]
+
+
+def test_lost_final_response_recovers_saved_completion_without_effects(setup):
+    setup.fail["drop_final"] = True
+    with pytest.raises(
+        setup.journal.JournalError, match="synthetic_lost_final_response"
+    ):
+        run(setup)
+    assert setup.journal.DeploymentJournal(setup.operation).status()["completed"]
+    assert not (setup.operation / "completion.json").exists()
+    assert not (setup.operation / "final-host-status.json").exists()
+    remote = setup.server / setup.protocol.canonical_sha256(setup.plan)
+    saved = setup.journal.read_record(remote / "final-host-status.json")
+    before = {path: path.read_bytes() for path in remote.rglob("*") if path.is_file()}
+    setup.commands.clear()
+    outcome = setup.client.execute(setup.operation, transport_factory=setup.Wire)
+    assert outcome["completed"] is True
+    assert outcome["completion_recovered"] is True
+    assert outcome["effects_performed"] is False
+    assert outcome["fresh_runtime_verified"] is False
+    assert outcome["saved_runtime_verified"] is True
+    assert setup.commands == [(True, "open"), (True, "completion"), (True, "close")]
+    assert setup.effects == setup.plan["phases"]
+    assert setup.verifications == ["runtime"]
+    assert before == {
+        path: path.read_bytes() for path in remote.rglob("*") if path.is_file()
+    }
+    completion = setup.journal.read_record(setup.operation / "completion.json")
+    assert completion["verified_at"] == saved["verification"]["verified_at"]
+    assert completion["host_status_sha256"] == setup.protocol.canonical_sha256(saved)
+    assert setup.client.execute(
+        setup.operation, transport_factory=lambda *a, **kw: pytest.fail("connected")
+    )["already_complete"]
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "absent_reply",
+        "partial_reply",
+        "invalid_json",
+        "receipt_mismatch",
+        "canonical_mismatch",
+        "early_timestamp",
+    ],
+)
+def test_lost_final_reply_refuses_missing_or_invalid_remote_completion(setup, damage):
+    setup.fail["drop_final"] = True
+    with pytest.raises(
+        setup.journal.JournalError, match="synthetic_lost_final_response"
+    ):
+        run(setup)
+    remote = setup.server / setup.protocol.canonical_sha256(setup.plan)
+    path = remote / "final-host-status.json"
+    if damage == "absent_reply":
+        # Also models a disconnect after canonical completion but before the reply
+        # record. Recovery must not retire a marker or infer an unsaved final reply.
+        assert (remote / "host/completion.json").exists()
+        path.unlink()
+    elif damage == "invalid_json":
+        path.write_text("{")
+    elif damage == "canonical_mismatch":
+        path = remote / "host/completion.json"
+        record = setup.journal.read_record(path)
+        record["baseline_sha256"] = "c" * 64
+        path.write_bytes(setup.protocol.encode_object(record))
+    else:
+        record = setup.journal.read_record(path)
+        if damage == "partial_reply":
+            record["verification"].pop("active_marker_retired")
+        elif damage == "receipt_mismatch":
+            record["receipts"].pop("build")
+        else:
+            record["verification"]["verified_at"] = setup.plan["created_at"]
+        path.write_bytes(setup.protocol.encode_object(record))
+    before = {path: path.read_bytes() for path in remote.rglob("*") if path.is_file()}
+    setup.commands.clear()
+    with pytest.raises(setup.journal.JournalError):
+        setup.client.execute(setup.operation, transport_factory=setup.Wire)
+    assert setup.commands == [(True, "open"), (True, "completion")]
+    assert before == {
+        path: path.read_bytes() for path in remote.rglob("*") if path.is_file()
+    }
+    assert setup.verifications == ["runtime"]
+    assert setup.effects == setup.plan["phases"]
+    assert not (setup.operation / "completion.json").exists()
+    assert not (setup.operation / "final-host-status.json").exists()
+
+
+def test_completion_recovery_receipt_mismatch_refuses_before_readback(setup):
+    setup.fail["drop_final"] = True
+    with pytest.raises(
+        setup.journal.JournalError, match="synthetic_lost_final_response"
+    ):
+        run(setup)
+    remote = setup.server / setup.protocol.canonical_sha256(setup.plan)
+    path = remote / "receipts/build.json"
+    record = setup.journal.read_record(path)
+    record["payload"]["images"]["api"]["image_inspect_sha256"] = "f" * 64
+    path.write_bytes(setup.protocol.encode_object(record))
+    setup.commands.clear()
+    with pytest.raises(
+        setup.journal.JournalError, match="host_client_receipt_mismatch"
+    ):
+        setup.client.execute(setup.operation, transport_factory=setup.Wire)
+    assert setup.commands == [(True, "open")]
+    assert setup.effects == setup.plan["phases"]
+    assert setup.verifications == ["runtime"]
+
+
+def test_completion_recovery_preserves_exclusive_local_publication(setup):
+    setup.fail["drop_final"] = True
+    with pytest.raises(
+        setup.journal.JournalError, match="synthetic_lost_final_response"
+    ):
+        run(setup)
+
+    class ConcurrentRecord(setup.Wire):
+        def request(self, message):
+            result = super().request(message)
+            if message["command"] == "completion":
+                setup.journal.exclusive_record(
+                    setup.operation / "completion.json", {"partial": True}
+                )
+            return result
+
+    with pytest.raises(setup.journal.JournalError, match="record_already_exists"):
+        setup.client.execute(setup.operation, transport_factory=ConcurrentRecord)
+    assert setup.journal.read_record(setup.operation / "completion.json") == {
+        "partial": True
+    }
+    with pytest.raises(setup.journal.JournalError):
+        setup.client.execute(
+            setup.operation, transport_factory=lambda *a, **kw: pytest.fail("connected")
+        )
+    assert setup.effects == setup.plan["phases"]
+
+
+@pytest.mark.parametrize(
+    "damage", ["baseline", "timestamp", "verification_schema", "receipt"]
+)
+def test_completion_recovery_validates_wire_reply_before_any_local_publication(
+    setup, damage
+):
+    setup.fail["drop_final"] = True
+    with pytest.raises(
+        setup.journal.JournalError, match="synthetic_lost_final_response"
+    ):
+        run(setup)
+
+    class CorruptReply(setup.Wire):
+        def request(self, message):
+            result = super().request(message)
+            if message["command"] == "completion":
+                if damage == "baseline":
+                    result["verification"]["baseline_sha256"] = "f" * 64
+                elif damage == "timestamp":
+                    result["verification"]["verified_at"] = setup.plan["created_at"]
+                elif damage == "verification_schema":
+                    result["verification"]["unknown"] = True
+                else:
+                    result["receipts"].pop("build")
+            return result
+
+    with pytest.raises(setup.journal.JournalError):
+        setup.client.execute(setup.operation, transport_factory=CorruptReply)
+    assert not (setup.operation / "completion.json").exists()
+    assert not (setup.operation / "final-host-status.json").exists()
+    assert setup.effects == setup.plan["phases"]
+
+
+def test_completion_recovery_rechecks_approval_before_connection(setup):
+    setup.fail["drop_final"] = True
+    with pytest.raises(
+        setup.journal.JournalError, match="synthetic_lost_final_response"
+    ):
+        run(setup)
+    path = setup.operation / "approval.json"
+    record = setup.journal.read_record(path)
+    record["profile_sha256"] = "f" * 64
+    path.write_bytes(setup.protocol.encode_object(record))
+    with pytest.raises(setup.journal.JournalError):
+        setup.client.execute(
+            setup.operation, transport_factory=lambda *a, **kw: pytest.fail("connected")
+        )
+    assert setup.effects == setup.plan["phases"]
+
+
+@pytest.mark.parametrize("location", ["local", "remote"])
+def test_completion_recovery_rechecks_approved_image_consumers(setup, location):
+    setup.fail["drop_final"] = True
+    with pytest.raises(
+        setup.journal.JournalError, match="synthetic_lost_final_response"
+    ):
+        run(setup)
+    directory = (
+        setup.operation
+        if location == "local"
+        else setup.server / setup.protocol.canonical_sha256(setup.plan)
+    )
+    path = directory / "receipts/switch_api.json"
+    receipt = setup.journal.read_record(path)
+    receipt["payload"]["consumers"]["matrix-alert-relay"] = {
+        "container_id": "5" * 64,
+        "image_id": receipt["payload"]["image_id"],
+        "ready": True,
+    }
+    path.write_bytes(setup.protocol.encode_object(receipt))
+    if location == "local":
+        result_path = directory / "switch_api.result.json"
+        result = setup.journal.read_record(result_path)
+        result["evidence_sha256"] = setup.protocol.canonical_sha256(receipt)
+        result_path.write_bytes(setup.protocol.encode_object(result))
+    setup.commands.clear()
+    with pytest.raises(setup.journal.JournalError, match="receipt_consumer_scope"):
+        setup.client.execute(setup.operation, transport_factory=setup.Wire)
+    assert setup.commands == ([] if location == "local" else [(True, "open")])
+    assert not (setup.operation / "completion.json").exists()
+    assert not (setup.operation / "final-host-status.json").exists()
+    assert setup.effects == setup.plan["phases"]
+
+
+def test_lost_final_reply_recovers_through_actual_readonly_bootstrap(
+    setup, monkeypatch
+):
+    setup.profile["transport"]["host_python"] = str(Path(sys.executable).resolve())
+    setup.approval["profile_sha256"] = setup.protocol.canonical_sha256(setup.profile)
+    setup.profile_path.write_bytes(setup.protocol.encode_object(setup.profile))
+    setup.approval_path.write_bytes(setup.protocol.encode_object(setup.approval))
+    setup.fail["drop_final"] = True
+    with pytest.raises(
+        setup.journal.JournalError, match="synthetic_lost_final_response"
+    ):
+        run(setup)
+    remote = setup.server / setup.protocol.canonical_sha256(setup.plan)
+    before = {path: path.read_bytes() for path in remote.rglob("*") if path.is_file()}
+    monkeypatch.setattr(
+        setup.client, "effect_guard", lambda *a: pytest.fail("effect guard")
+    )
+    monkeypatch.setattr(
+        setup.recovery,
+        "preflight_recovery",
+        lambda *a: pytest.fail("recovery preflight"),
+    )
+    # Proof retrieval remains usable after expiry without extending effect authority.
+    monkeypatch.setattr(
+        setup.client,
+        "now",
+        lambda: (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
+    )
+    outcome = setup.client.execute(setup.operation)
+    assert outcome["completion_recovered"] is True
+    assert outcome["fresh_runtime_verified"] is False
+    assert before == {
+        path: path.read_bytes() for path in remote.rglob("*") if path.is_file()
+    }
+    assert setup.effects == setup.plan["phases"]
+    assert setup.verifications == ["runtime"]
 
 
 @pytest.mark.parametrize(
@@ -247,8 +515,12 @@ def test_copied_plan_cannot_create_second_remote_namespace(setup, tmp_path):
     assert len([p for p in setup.server.iterdir() if p.is_dir()]) == 1
 
 
-def test_receipt_hash_tamper_refuses_before_connection(setup):
+@pytest.mark.parametrize("missing_completion", [False, True])
+def test_receipt_hash_tamper_refuses_before_connection(setup, missing_completion):
     assert run(setup)["completed"]
+    if missing_completion:
+        (setup.operation / "completion.json").unlink()
+        (setup.operation / "final-host-status.json").unlink()
     path = setup.operation / "receipts/build.json"
     record = json.loads(path.read_bytes())
     record["payload"]["images"]["api"]["image_inspect_sha256"] = "f" * 64
@@ -305,7 +577,19 @@ def test_offline_cli_refuses_effect_v1_before_opening_transport(setup):
     assert not list(setup.server.iterdir())
 
 
-@pytest.mark.parametrize("damage", ["missing", "partial", "changed_status"])
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "missing",
+        "partial",
+        "changed_status",
+        "missing_status",
+        "malformed_completion",
+        "malformed_status",
+        "dangling_completion",
+        "dangling_status",
+    ],
+)
 def test_completion_requires_full_fresh_evidence_join(setup, damage):
     assert run(setup)["completed"]
     completion = setup.operation / "completion.json"
@@ -315,6 +599,24 @@ def test_completion_requires_full_fresh_evidence_join(setup, damage):
         record = json.loads(completion.read_bytes())
         record.pop("verified_at")
         completion.write_bytes(setup.protocol.encode_object(record))
+    elif damage == "missing_status":
+        (setup.operation / "final-host-status.json").unlink()
+    elif damage.startswith("malformed"):
+        path = (
+            completion
+            if damage == "malformed_completion"
+            else setup.operation / "final-host-status.json"
+        )
+        path.write_text("{")
+    elif damage.startswith("dangling"):
+        completion.unlink()
+        (setup.operation / "final-host-status.json").unlink()
+        path = (
+            completion
+            if damage == "dangling_completion"
+            else setup.operation / "final-host-status.json"
+        )
+        path.symlink_to(setup.operation / "missing-evidence")
     else:
         path = setup.operation / "final-host-status.json"
         record = json.loads(path.read_bytes())

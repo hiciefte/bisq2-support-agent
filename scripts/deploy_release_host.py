@@ -95,6 +95,7 @@ class Owner:
                 phase,
                 record["intent_sha256"],
                 self.baseline["baseline_sha256"],
+                approval=self.approval,
             )
             result[phase] = record
         return result
@@ -203,6 +204,53 @@ class Owner:
             }
         return {"read_only": True, "phases": phases}
 
+    def _validate_completion(self, final: dict, receipts: dict) -> None:
+        private_directory(self.operation / "host")
+        canonical = read_record(self.operation / "host" / "completion.json")
+        require(
+            canonical
+            == {
+                "complete": True,
+                "fresh_runtime_verified": True,
+                "baseline_sha256": self.baseline["baseline_sha256"],
+            }
+            and canonical["complete"] is True
+            and canonical["fresh_runtime_verified"] is True,
+            "host_completion_binding",
+        )
+        verification = final.get("verification")
+        require(
+            set(final) == {"verification", "receipts", "host_status", "complete"}
+            and final["complete"] is True
+            and len(receipts) == len(self.plan["phases"])
+            and final["receipts"] == receipts
+            and isinstance(final["host_status"], dict)
+            and isinstance(verification, dict)
+            and verification.get("complete") is True
+            and verification.get("fresh_runtime_verified") is True
+            and verification.get("active_marker_retired") is True
+            and verification
+            == canonical
+            | {
+                "active_marker_retired": True,
+                "verified_at": verification.get("verified_at"),
+            },
+            "host_completion_evidence",
+        )
+        assert isinstance(verification, dict)
+        require(
+            timestamp(verification["verified_at"])
+            >= timestamp(receipts["resume_scheduler"]["finished_at"]),
+            "host_completion_time",
+        )
+
+    def _saved_completion(self) -> dict:
+        # This is saved evidence, not fresh health verification. Never construct
+        # the effect backend or retire a marker in a read-only session.
+        final = read_record(self.operation / "final-host-status.json")
+        self._validate_completion(final, self._receipts())
+        return final
+
     def dispatch(self, message: dict) -> dict:
         command = message.get("command")
         if command == "open":
@@ -214,20 +262,40 @@ class Owner:
                 self.host.close()
             self.closed = True
             return {"closed": True}
+        if command == "completion":
+            require(
+                self.read_only and set(message) == {"command"},
+                "host_completion_read_schema",
+            )
+            return self._saved_completion()
         if command == "status":
             require(set(message) == {"command"}, "host_status_schema")
             receipts = self._receipts()
-            verification: dict = (
-                self.host.verify_completion()
-                if self.host is not None and len(receipts) == len(self.plan["phases"])
-                else {}
+            completing = self.host is not None and len(receipts) == len(
+                self.plan["phases"]
             )
-            return {
+            completion_path = self.operation / "final-host-status.json"
+            if completing:
+                require(
+                    not (completion_path.exists() or completion_path.is_symlink()),
+                    "host_completion_already_saved",
+                )
+            verification: dict = {}
+            if completing:
+                assert self.host is not None
+                verification = self.host.verify_completion() | {"verified_at": now()}
+            result = {
                 "verification": verification,
                 "receipts": receipts,
                 "host_status": self._status(),
                 "complete": len(receipts) == len(self.plan["phases"]),
             }
+            if completing:
+                # The reply is recoverable only after final verification and marker
+                # retirement. A disconnect before this write remains unpromoted.
+                self._validate_completion(result, receipts)
+                exclusive_record(completion_path, result)
+            return result
         require(not self.read_only, "host_read_only")
         assert self.host is not None
         if command == "effect":
@@ -277,6 +345,15 @@ class Owner:
                 payload,
                 started,
             )
+            validate_phase_receipt(
+                receipt,
+                self.plan,
+                self.profile,
+                phase,
+                intent,
+                self.baseline["baseline_sha256"],
+                approval=self.approval,
+            )
             exclusive_record(self.operation / "receipts" / f"{phase}.json", receipt)
             return {"receipt": receipt}
         if command == "accept_restore":
@@ -296,6 +373,7 @@ class Owner:
                 phase,
                 receipt.get("intent_sha256"),
                 self.baseline["baseline_sha256"],
+                approval=self.approval,
             )
             backup = self._receipts()[phase.replace("_restore", "_backup")]["payload"]
             require(

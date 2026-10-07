@@ -358,13 +358,14 @@ def validate_approval(approval: dict, plan: dict, profile: dict) -> None:
             "approved_at",
             "deadline",
             "smoke_calls",
+            "image_consumers",
             "data_compatible_rollback",
             "policy",
         },
         "approval_schema",
     )
     require(
-        approval["schema"] == "deployment-approval-v1"
+        approval["schema"] == "deployment-approval-v2"
         and approval["plan_sha256"] == canonical_sha256(plan)
         and approval["profile_sha256"] == canonical_sha256(profile)
         and profile["name"] == plan["profile"],
@@ -392,6 +393,29 @@ def validate_approval(approval: dict, plan: dict, profile: dict) -> None:
         and approval["data_compatible_rollback"] is True
         and approval["policy"] == "private-disabled-channels",
         "approval_scope",
+    )
+
+    consumers = _keys(
+        approval["image_consumers"], set(plan["services"]), "approval_consumers"
+    )
+    for service, physical in consumers.items():
+        require(
+            physical
+            in (
+                [["api"], ["api", "matrix-alert-relay"]]
+                if service == "api"
+                else [["web"]]
+            ),
+            "approval_consumers",
+        )
+
+
+def validate_image_consumer_scope(payload: dict, approval: dict) -> None:
+    """Bind a structurally validated switch proof to its explicit approval."""
+    require(
+        set(payload["consumers"])
+        == set(approval["image_consumers"][payload["service"]]),
+        "receipt_consumer_scope",
     )
 
 
@@ -461,6 +485,7 @@ def _validate_payload(phase: str, payload: dict, plan: dict) -> None:
             payload,
             {
                 "service",
+                "consumers",
                 "container_id",
                 "image_id",
                 "build_id",
@@ -477,6 +502,31 @@ def _validate_payload(phase: str, payload: dict, plan: dict) -> None:
             "receipt_identity",
         )
         require(_build_id(payload["build_id"], plan), "receipt_build_id")
+        consumers = payload["consumers"]
+        require(
+            isinstance(consumers, dict)
+            and set(consumers)
+            in (
+                [{"api"}, {"api", "matrix-alert-relay"}]
+                if payload["service"] == "api"
+                else [{"web"}]
+            ),
+            "receipt_consumers",
+        )
+        for proof in consumers.values():
+            _keys(proof, {"container_id", "image_id", "ready"}, "receipt_consumers")
+            require(
+                _match(proof["container_id"], SHA256)
+                and proof["image_id"] == payload["image_id"]
+                and proof["ready"] is True,
+                "receipt_consumers",
+            )
+        require(
+            len({item["container_id"] for item in consumers.values()}) == len(consumers)
+            and consumers[payload["service"]]["container_id"]
+            == payload["container_id"],
+            "receipt_consumers",
+        )
         flags = ["ready", "nginx_routing_verified", "unrelated_preserved"]
     elif phase in {"smoke_standard", "smoke_live_mcp"}:
         _keys(payload, {"kind", "validated", "attempts"}, "receipt_payload")
@@ -624,6 +674,8 @@ def validate_phase_receipt(
     phase: str,
     intent_sha256: str,
     baseline_sha256: str | None = None,
+    *,
+    approval: dict | None = None,
 ) -> dict:
     validate_plan(plan)
     validate_profile(profile)
@@ -662,6 +714,9 @@ def validate_phase_receipt(
         "receipt_timestamp",
     )
     _validate_payload(phase, receipt["payload"], plan)
+    if approval is not None and phase.startswith("switch_"):
+        validate_approval(approval, plan, profile)
+        validate_image_consumer_scope(receipt["payload"], approval)
     if phase in {"prechange_restore", "postchange_restore"}:
         require(
             receipt["payload"]["local_runtime_image_id"]
