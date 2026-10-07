@@ -1,6 +1,11 @@
 #!/bin/bash
 # Common utilities and configuration for Bisq Support Assistant scripts
 
+# Exported Bash functions lose BASH_SOURCE in their receiving shell. Resolve
+# this checked-in helper while sourcing, and carry that exact path with them.
+_BISQ_LIFECYCLE_HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/lifecycle_lock.py"
+export _BISQ_LIFECYCLE_HELPER
+
 # Colors and formatting
 setup_colors() {
     RED='\033[0;31m'
@@ -89,6 +94,22 @@ check_docker_compose() {
     return 0
 }
 
+verify_inherited_production_lifecycle_lock() {
+    local install_dir="$1"
+    local descriptor="${BISQ_SUPPORT_LIFECYCLE_LOCK_FD:-}"
+
+    if [[ ! "$descriptor" =~ ^[0-9]+$ ]]; then
+        log_error "Inherited production lifecycle lock is invalid" >&2
+        return 1
+    fi
+    # Read-only proof of the actual flock. Never relock or unlock a borrowed FD,
+    # create/chmod its path, or treat a numeric open descriptor as ownership.
+    if ! python3 -I -B "${_BISQ_LIFECYCLE_HELPER:?}" "$install_dir" "$descriptor"; then
+        log_error "Inherited production lifecycle lock is invalid" >&2
+        return 1
+    fi
+}
+
 acquire_production_lifecycle_lock() {
     local install_dir="$1"
     local canonical_install_dir=""
@@ -104,12 +125,8 @@ acquire_production_lifecycle_lock() {
     fi
 
     if [ -n "${BISQ_SUPPORT_LIFECYCLE_LOCK_FD:-}" ]; then
-        if [[ "$BISQ_SUPPORT_LIFECYCLE_LOCK_FD" =~ ^[0-9]+$ ]] \
-            && [ -e "/dev/fd/$BISQ_SUPPORT_LIFECYCLE_LOCK_FD" ]; then
-            return 0
-        fi
-        log_error "Inherited production lifecycle lock is invalid" >&2
-        return 1
+        verify_inherited_production_lifecycle_lock "$install_dir"
+        return $?
     fi
     canonical_install_dir=$(cd "$install_dir" 2>/dev/null && pwd -P) || {
         log_error "Production installation directory is unavailable" >&2
@@ -159,6 +176,18 @@ acquire_production_lifecycle_lock() {
     IFS= read -r lock_state < "$lock_file" || true
     if [ "$lock_state" = blocked ]; then
         log_error "Production recovery is blocked; refusing a lifecycle change" >&2
+        flock -u "$BISQ_SUPPORT_LIFECYCLE_LOCK_FD" || true
+        exec 202>&-
+        unset BISQ_SUPPORT_LIFECYCLE_LOCK_FD
+        return 1
+    fi
+    # Keep a crashed deterministic deployment from being replaced by a new
+    # plan or an ordinary legacy updater. The same checked owner may reconnect.
+    if { [ -e "$control_dir/deployment-active.json" ] \
+            || [ -L "$control_dir/deployment-active.json" ]; } \
+        && ! python3 -I -B "${_BISQ_LIFECYCLE_HELPER:?}" \
+            --active-marker "$canonical_install_dir"; then
+        log_error "An incomplete deployment requires reconciliation" >&2
         flock -u "$BISQ_SUPPORT_LIFECYCLE_LOCK_FD" || true
         exec 202>&-
         unset BISQ_SUPPORT_LIFECYCLE_LOCK_FD
@@ -384,6 +413,7 @@ _persisted_compose_project() {
 _canonical_compose_container_ids() {
     local docker_dir="$1"
     local compose_file="${2:-docker-compose.yml}"
+    local scheduler_pause_mode="${3:-reject}"
     local canonical_docker_dir=""
     local compose_output=""
     local project_output=""
@@ -404,6 +434,12 @@ _canonical_compose_container_ids() {
     local service_names=""
     local sorted_services=""
     local previous_service=""
+    local scheduler_state=""
+
+    case "$scheduler_pause_mode" in
+        reject|deployment-owner) ;;
+        *) return 1;;
+    esac
 
     if [[ ! "${COMPOSE_PROJECT_NAME:-}" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
         log_error "Compose project must be pinned before inspecting the stack" >&2
@@ -465,6 +501,24 @@ _canonical_compose_container_ids() {
         case "$container_state" in
             created|exited|running)
                 ;;
+            paused)
+                # Only the checked-in deployment adapter opts in. A prior pause
+                # may predate this operation; the inherited owner lock proves
+                # coordination, while the host baseline preserves pause state.
+                if [ "$scheduler_pause_mode" != deployment-owner ] \
+                    || [ "$service_name" != scheduler ] \
+                    || ! verify_inherited_production_lifecycle_lock \
+                        "$canonical_docker_dir/.."; then
+                    log_error "Paused production service is not an owned scheduler" >&2
+                    return 1
+                fi
+                if ! scheduler_state=$(docker inspect --format \
+                    '{{.State.Paused}}|{{.State.Running}}' "$container_id") \
+                    || [ "$scheduler_state" != 'true|true' ]; then
+                    log_error "Paused production scheduler state is invalid" >&2
+                    return 1
+                fi
+                ;;
             *)
                 log_error "Production Compose container is not recoverable" >&2
                 return 1
@@ -488,6 +542,7 @@ pin_existing_compose_project() {
     local docker_dir="$1"
     local compose_file="${2:-docker-compose.yml}"
     local mode="${3:-existing}"
+    local scheduler_pause_mode="${4:-reject}"
     local resolved_project=""
     local persisted_project=""
 
@@ -503,7 +558,8 @@ pin_existing_compose_project() {
         return 1
     fi
     export COMPOSE_PROJECT_NAME="$resolved_project"
-    _canonical_compose_container_ids "$docker_dir" "$compose_file" >/dev/null
+    _canonical_compose_container_ids \
+        "$docker_dir" "$compose_file" "$scheduler_pause_mode" >/dev/null
 }
 
 pin_configured_or_existing_compose_project() {
@@ -1445,6 +1501,7 @@ export -f check_required_commands
 export -f check_root
 export -f check_docker_daemon
 export -f check_docker_compose
+export -f verify_inherited_production_lifecycle_lock
 export -f acquire_production_lifecycle_lock
 export -f _validate_compose_container_mode
 export -f _normalize_container_ids

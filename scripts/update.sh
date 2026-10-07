@@ -8,6 +8,10 @@ set -Eeuo pipefail
 
 # Source library functions
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+# The ordinary controller owns its own runtime and durable phase boundary.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]] && [[ "${1:-}" == plan || "${1:-}" == status || "${1:-}" == apply || "${1:-}" == continue || "${1:-}" == reconcile ]]; then
+    exec python3 -B "$SCRIPT_DIR/deploy_release.py" "$@"
+fi
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/common.sh"
 # shellcheck disable=SC1091

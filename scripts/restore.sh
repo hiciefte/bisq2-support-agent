@@ -11,6 +11,13 @@ BACKUP_FILE=""
 ENCRYPTION="auto"
 AGE_IDENTITY_FILE="${BACKUP_AGE_IDENTITY_FILE:-}"
 VERIFY_ONLY=false
+VERIFY_API_IMAGE=""
+VERIFY_QDRANT_IMAGE=""
+VERIFICATION_RECEIPT=""
+VERIFICATION_SUCCEEDED=false
+GPG_KEY_FILE=""
+PRIVATE_GNUPGHOME=""
+SCRATCH_TOKEN=""
 APPLY=false
 CONFIRMED=false
 CLEAR_RECOVERY_FAILURE=false
@@ -74,6 +81,12 @@ Selection (repeatable; default: all):
 Decryption:
   --encryption auto|age|gpg
   --identity FILE          age identity file (or BACKUP_AGE_IDENTITY_FILE)
+  --gpg-key-file FILE      Verify-only key imported into an isolated private keyring
+
+Isolated verification (no existing Compose services required):
+  --verify-api-image ID     Immutable sha256 API image containing verification tools
+  --verify-qdrant-image ID  Immutable sha256 Qdrant image for scratch restore
+  --verification-receipt FILE  Exclusive full-restore and cleanup success receipt
 
 The backup intentionally contains only the names from docker/.env. It never
 restores configuration values or encryption keys.
@@ -83,6 +96,16 @@ EOF
 parse_args() {
     while [ "$#" -gt 0 ]; do
         case "$1" in
+            --verify-api-image|--verify-qdrant-image|--verification-receipt|--gpg-key-file)
+                [ "$#" -ge 2 ] || return 2
+                case "$1" in
+                    --verify-api-image) VERIFY_API_IMAGE="$2" ;;
+                    --verify-qdrant-image) VERIFY_QDRANT_IMAGE="$2" ;;
+                    --verification-receipt) VERIFICATION_RECEIPT="$2" ;;
+                    --gpg-key-file) GPG_KEY_FILE="$2" ;;
+                esac
+                shift 2
+                ;;
             --backup)
                 [ "$#" -ge 2 ] || { log_error "--backup requires a value"; return 2; }
                 BACKUP_FILE="$2"
@@ -507,14 +530,31 @@ validate_configuration() {
         return 2
     fi
     validate_selection
+    if [ -n "$VERIFY_API_IMAGE$VERIFY_QDRANT_IMAGE$VERIFICATION_RECEIPT$GPG_KEY_FILE" ]; then
+        [ "$VERIFY_ONLY" = true ] && [ "$APPLY" = false ] || return 2
+    fi
+    if [ -n "$VERIFY_API_IMAGE$VERIFY_QDRANT_IMAGE" ]; then
+        [[ "$VERIFY_API_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]] &&
+            [[ "$VERIFY_QDRANT_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]] || return 2
+    fi
+    if [ -n "$VERIFICATION_RECEIPT" ]; then
+        [ "${#COMPONENTS[@]}" -eq 1 ] && [ "${COMPONENTS[0]}" = all ] &&
+            [ -z "$QDRANT_COLLECTION" ] && [ ! -e "$VERIFICATION_RECEIPT" ] &&
+            [ ! -L "$VERIFICATION_RECEIPT" ] || return 2
+    fi
+    if [ -n "$GPG_KEY_FILE" ]; then
+        [ -f "$GPG_KEY_FILE" ] && [ ! -L "$GPG_KEY_FILE" ] || return 2
+        check_required_commands gpgconf || return 1
+    fi
     detect_encryption
+    [ -z "$GPG_KEY_FILE" ] || [ "$ENCRYPTION" = gpg ] || return 2
     check_required_commands python3 mktemp rm mv mkdir chmod date flock || return 1
     [ -f "$DR_HELPER" ] || { log_error "Disaster-recovery helper is missing"; return 1; }
 
     if [ "$APPLY" = true ] || component_selected qdrant; then
         check_required_commands docker tar grep || return 1
         check_docker_daemon || return 1
-        check_docker_compose || return 1
+        if [ -z "$VERIFY_API_IMAGE" ]; then check_docker_compose || return 1; fi
     fi
     if [ "$APPLY" = true ]; then
         [ -d "$DATA_DIR" ] || { log_error "Application data directory is missing"; return 1; }
@@ -587,6 +627,7 @@ cleanup() {
     local preserve_work_dir=false
     local rollback_completed=false
     local services_restarted=false
+    trap - EXIT
     set +e
     if ! cleanup_scratch_qdrant; then
         independent_cleanup_failure=true
@@ -651,18 +692,64 @@ cleanup() {
     if [ "$preserve_work_dir" = false ] \
         && [ -n "$WORK_DIR" ] \
         && [ -d "$WORK_DIR" ]; then
-        rm -rf -- "$WORK_DIR"
+        if ! rm -rf -- "$WORK_DIR" || [ -e "$WORK_DIR" ]; then
+            independent_cleanup_failure=true
+            exit_code=1
+        fi
     elif [ "$preserve_work_dir" = true ]; then
         log_error "Private rollback material preserved at: $WORK_DIR"
     fi
+    if [ -n "$PRIVATE_GNUPGHOME" ]; then
+        if ! gpgconf --homedir "$PRIVATE_GNUPGHOME" --kill all || ! rm -rf -- "$PRIVATE_GNUPGHOME" || [ -e "$PRIVATE_GNUPGHOME" ]; then
+            independent_cleanup_failure=true
+            exit_code=1
+        fi
+    fi
     if [ -n "$LOCK_FD" ]; then
-        flock -u "$LOCK_FD"
+        if ! flock -u "$LOCK_FD"; then
+            independent_cleanup_failure=true
+            exit_code=1
+        fi
     fi
     if [ "$guard_release_recovered" = true ] \
         && [ "$independent_cleanup_failure" = false ]; then
         exit_code=0
     fi
+    if [ "$exit_code" -eq 0 ] && [ -n "$VERIFICATION_RECEIPT" ]; then
+        if [ "$VERIFICATION_SUCCEEDED" != true ] || ! write_verification_receipt; then exit_code=1; fi
+    fi
     exit "$exit_code"
+}
+
+write_verification_receipt() {
+    python3 - "$VERIFICATION_RECEIPT" "$BACKUP_FILE" <<'PYRECEIPT'
+import hashlib, json, os, pathlib, stat, sys
+path, backup = sys.argv[1:]
+fd = os.open(backup, os.O_RDONLY | os.O_NOFOLLOW)
+with os.fdopen(fd, 'rb') as f:
+    s = os.fstat(f.fileno()); assert stat.S_ISREG(s.st_mode) and s.st_size > 0
+    sha = hashlib.file_digest(f, 'sha256').hexdigest()
+record = {'schema': 'canonical-restore-v1', 'ciphertext_sha256': sha,
+          'ciphertext_bytes': s.st_size, 'components': ['all'],
+          'qdrant_restored': True, 'scratch_cleanup_verified': True}
+fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+with os.fdopen(fd, 'w') as f:
+    json.dump(record, f, sort_keys=True, separators=(',', ':')); f.write('\n')
+    f.flush(); os.fsync(f.fileno())
+fd = os.open(pathlib.Path(path).parent, os.O_RDONLY)
+try: os.fsync(fd)
+finally: os.close(fd)
+PYRECEIPT
+}
+
+import_verification_key() {
+    [ -n "$GPG_KEY_FILE" ] || return 0
+    # Key bytes never enter the source tree, archive, logs or server. In the
+    # isolated runtime /tmp is tmpfs and this owned keyring is removed on exit.
+    PRIVATE_GNUPGHOME="$(mktemp -d /tmp/bisq-verify-key.XXXXXXXX)" || return 1
+    chmod 700 "$PRIVATE_GNUPGHOME" || return 1
+    export GNUPGHOME="$PRIVATE_GNUPGHOME"
+    gpg --batch --quiet --import "$GPG_KEY_FILE" || return 1
 }
 
 decrypt_backup() {
@@ -798,6 +885,9 @@ image_id_for_service() {
 cleanup_scratch_qdrant() {
     local status=0
     if [ -n "$SCRATCH_QDRANT_CONTAINER" ]; then
+        if [ -n "$SCRATCH_TOKEN" ] && [ "$(docker inspect --format '{{index .Config.Labels "bisq.restore"}}' "$SCRATCH_QDRANT_CONTAINER" 2>/dev/null)" != "$SCRATCH_TOKEN" ]; then
+            return 1
+        fi
         if docker rm -f "$SCRATCH_QDRANT_CONTAINER" >/dev/null 2>&1; then
             SCRATCH_QDRANT_CONTAINER=""
         else
@@ -805,6 +895,9 @@ cleanup_scratch_qdrant() {
         fi
     fi
     if [ -n "$SCRATCH_QDRANT_VOLUME" ]; then
+        if [ -n "$SCRATCH_TOKEN" ] && [ "$(docker volume inspect --format '{{index .Labels "bisq.restore"}}' "$SCRATCH_QDRANT_VOLUME" 2>/dev/null)" != "$SCRATCH_TOKEN" ]; then
+            return 1
+        fi
         if docker volume rm "$SCRATCH_QDRANT_VOLUME" >/dev/null 2>&1; then
             SCRATCH_QDRANT_VOLUME=""
         else
@@ -812,6 +905,9 @@ cleanup_scratch_qdrant() {
         fi
     fi
     if [ -n "$SCRATCH_QDRANT_NETWORK" ]; then
+        if [ -n "$SCRATCH_TOKEN" ] && [ "$(docker network inspect --format '{{index .Labels "bisq.restore"}}' "$SCRATCH_QDRANT_NETWORK" 2>/dev/null)" != "$SCRATCH_TOKEN" ]; then
+            return 1
+        fi
         if docker network rm "$SCRATCH_QDRANT_NETWORK" >/dev/null 2>&1; then
             SCRATCH_QDRANT_NETWORK=""
         else
@@ -824,7 +920,8 @@ cleanup_scratch_qdrant() {
 run_scratch_qdrant_helper() {
     local api_image="$1"
     shift
-    docker run --rm -i \
+    docker run --rm --pull never -i \
+        --label "bisq.restore=$SCRATCH_TOKEN" \
         --network "$SCRATCH_QDRANT_NETWORK" \
         --read-only \
         --tmpfs /tmp:rw,nosuid,nodev,size=256m \
@@ -847,18 +944,34 @@ verify_qdrant_in_scratch() {
     local suffix
     component_selected qdrant || return 0
 
-    api_image="$(image_id_for_service api)"
-    qdrant_image="$(image_id_for_service qdrant)"
-    suffix="$$-$RANDOM"
+    if [ -n "$VERIFY_API_IMAGE" ]; then
+        api_image="$VERIFY_API_IMAGE"
+        qdrant_image="$VERIFY_QDRANT_IMAGE"
+    else
+        api_image="$(image_id_for_service api)"
+        qdrant_image="$(image_id_for_service qdrant)"
+    fi
+    suffix="$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
+    SCRATCH_TOKEN="$suffix"
     SCRATCH_QDRANT_CONTAINER="bisq-support-qdrant-verify-$suffix"
     SCRATCH_QDRANT_NETWORK="bisq-support-qdrant-verify-$suffix"
     SCRATCH_QDRANT_VOLUME="bisq-support-qdrant-verify-$suffix"
 
+    if [ -n "$VERIFICATION_RECEIPT" ]; then
+        python3 - "$VERIFICATION_RECEIPT.resources.json" "$SCRATCH_TOKEN" "$SCRATCH_QDRANT_CONTAINER" <<'PYRESOURCES'
+import json, os, sys
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+with os.fdopen(fd, 'w') as f:
+    json.dump({'token': sys.argv[2], 'container': sys.argv[3], 'network': sys.argv[3], 'volume': sys.argv[3]}, f)
+    f.flush(); os.fsync(f.fileno())
+PYRESOURCES
+    fi
     log_info "Restoring Qdrant snapshots into an isolated scratch service"
-    docker network create --internal "$SCRATCH_QDRANT_NETWORK" >/dev/null
-    docker volume create "$SCRATCH_QDRANT_VOLUME" >/dev/null
-    docker run --detach \
+    docker network create --internal --label "bisq.restore=$SCRATCH_TOKEN" "$SCRATCH_QDRANT_NETWORK" >/dev/null
+    docker volume create --label "bisq.restore=$SCRATCH_TOKEN" "$SCRATCH_QDRANT_VOLUME" >/dev/null
+    docker run --detach --pull never \
         --name "$SCRATCH_QDRANT_CONTAINER" \
+        --label "bisq.restore=$SCRATCH_TOKEN" \
         --network "$SCRATCH_QDRANT_NETWORK" \
         --network-alias qdrant-scratch \
         --cap-drop ALL \
@@ -1167,7 +1280,7 @@ main() {
         pin_existing_compose_project \
             "$DOCKER_DIR" "$COMPOSE_FILE" existing || return 1
         validate_api_data_mount
-    elif component_selected qdrant; then
+    elif component_selected qdrant && [ -z "$VERIFY_API_IMAGE" ]; then
         pin_existing_compose_project \
             "$DOCKER_DIR" "$COMPOSE_FILE" existing || return 1
     fi
@@ -1175,11 +1288,13 @@ main() {
     local snapshot_root="$WORK_DIR/snapshot"
     local scratch_root="$WORK_DIR/verification"
     mkdir -p "$snapshot_root" "$scratch_root"
+    import_verification_key
     decrypt_backup "$snapshot_root"
     verify_snapshot "$snapshot_root" "$scratch_root"
     verify_qdrant_in_scratch "$snapshot_root"
 
     if [ "$VERIFY_ONLY" = true ]; then
+        VERIFICATION_SUCCEEDED=true
         log_success "Backup verified in scratch storage; no live data changed"
         return 0
     fi

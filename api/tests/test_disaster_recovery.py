@@ -1215,6 +1215,11 @@ def test_backup_quiesce_always_records_services_for_restart(tmp_path: Path) -> N
             f"""
             set -e
             source "{BACKUP_SCRIPT}"
+            prepare_writer_metadata() {{ :; }}
+            observe_paused_scheduler() {{ :; }}
+            capture_writer_identity() {{ :; }}
+            verify_writer_identity() {{ :; }}
+            verify_writer_running() {{ :; }}
             service_is_running() {{ return 0; }}
             compose() {{ printf '%s\n' "$*" >> "{command_log}"; }}
             quiesce_services
@@ -1252,6 +1257,11 @@ def test_backup_quiesce_skips_undefined_legacy_matrix_relay(
             f"""
             set -e
             source "{BACKUP_SCRIPT}"
+            prepare_writer_metadata() {{ :; }}
+            observe_paused_scheduler() {{ :; }}
+            capture_writer_identity() {{ :; }}
+            verify_writer_identity() {{ :; }}
+            verify_writer_running() {{ :; }}
             compose() {{
                 if [ "$1 $2 $3" = "ps --status running" ]; then
                     printf '%s\n' scheduler api alertmanager grafana prometheus bisq2-api
@@ -1366,7 +1376,9 @@ def test_qdrant_verification_uses_isolated_scratch_service(tmp_path: Path) -> No
             container_id_for_service() {{ printf '%s-id\n' "$1"; }}
             docker() {{
                 printf '%s\n' "$*" >> "{command_log}"
-                if [ "$1" = inspect ]; then printf '%s-image\n' "$4"; fi
+                if [[ "$*" == *bisq.restore* ]] && [[ "$*" == *inspect* ]]; then
+                    printf '%s\n' "$SCRATCH_TOKEN"
+                elif [ "$1" = inspect ]; then printf '%s-image\n' "$4"; fi
             }}
             verify_qdrant_in_scratch "{snapshot_root}"
             """,
