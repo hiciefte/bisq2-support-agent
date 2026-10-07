@@ -280,7 +280,10 @@ def bindings(
         assert profile_path is not None and approval_path is not None
         profile, approval = read_record(profile_path), read_record(approval_path)
         validate_approval(approval, journal.plan, profile)
-        require(journal.plan["schema"] == "deployment-plan-v2", "effect_plan_version")
+        require(
+            journal.plan["schema"] in {"deployment-plan-v2", "deployment-plan-v3"},
+            "effect_plan_version",
+        )
         # Interrupted snapshot publication is preserved; a repeat apply never overwrites it.
         exclusive_record(journal.root / "profile.json", profile)
         exclusive_record(journal.root / "approval.json", approval)

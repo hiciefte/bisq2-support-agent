@@ -125,7 +125,8 @@ class DeploymentJournal:
         )
         self.plan = read_record(self.root / "plan.json")
         require(
-            self.plan.get("schema") in {"deployment-plan-v1", "deployment-plan-v2"},
+            self.plan.get("schema")
+            in {"deployment-plan-v1", "deployment-plan-v2", "deployment-plan-v3"},
             "plan_schema",
         )
         require(
