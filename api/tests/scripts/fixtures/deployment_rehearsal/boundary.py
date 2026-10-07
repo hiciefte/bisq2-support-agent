@@ -66,6 +66,8 @@ def docker():
                     for key, content in labels.items()
                 }
                 fields["{{.State.Status}}"] = value["State"]["Status"]
+                fields["{{.State.Paused}}"] = str(value["State"]["Paused"]).lower()
+                fields["{{.State.Running}}"] = str(value["State"]["Running"]).lower()
                 emit("|".join(fields[field] for field in template.split("|")))
             elif '"com.docker.compose.project"' in template:
                 emit("fixture")
@@ -85,6 +87,7 @@ def docker():
         values = inspected(args)
         assert len(values) == 1
         values[0]["State"]["Paused"] = args[0] == "pause"
+        values[0]["State"]["Status"] = "paused" if args[0] == "pause" else "running"
         emit(values[0]["Id"])
     elif args[0] == "cp":
         assert args[-1] == "-" and args[-2].endswith(":/etc/crontabs/root")

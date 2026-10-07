@@ -920,8 +920,15 @@ main() {
     capture_backup_target_identity
 
     acquire_recovery_lock
+    local scheduler_pause_mode=reject
+    # A controller backup borrows the verified owner lock and exact active-plan
+    # marker. Standalone backups retain the ordinary paused-service refusal.
+    if [ "$LOCK_FD_BORROWED" = true ] \
+        && [ -f "$RECOVERY_CONTROL_DIR/deployment-active.json" ]; then
+        scheduler_pause_mode=deployment-owner
+    fi
     pin_existing_compose_project \
-        "$DOCKER_DIR" "$COMPOSE_FILE" existing || return 1
+        "$DOCKER_DIR" "$COMPOSE_FILE" existing "$scheduler_pause_mode" || return 1
     trap cleanup EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM

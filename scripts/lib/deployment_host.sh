@@ -31,7 +31,8 @@ COMPOSE_FILE=docker-compose.yml
 source_deploy_paths >&2 || true
 test "${BISQ_SUPPORT_INSTALL_DIR:-$install}" = "$install"
 export COMPOSE_PROJECT_NAME="$project"
-pin_existing_compose_project "$DOCKER_DIR" "$COMPOSE_FILE" existing >&2
+pin_existing_compose_project \
+    "$DOCKER_DIR" "$COMPOSE_FILE" existing deployment-owner >&2
 
 case "$action" in
     config)

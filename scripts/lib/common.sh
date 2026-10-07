@@ -413,6 +413,7 @@ _persisted_compose_project() {
 _canonical_compose_container_ids() {
     local docker_dir="$1"
     local compose_file="${2:-docker-compose.yml}"
+    local scheduler_pause_mode="${3:-reject}"
     local canonical_docker_dir=""
     local compose_output=""
     local project_output=""
@@ -433,6 +434,12 @@ _canonical_compose_container_ids() {
     local service_names=""
     local sorted_services=""
     local previous_service=""
+    local scheduler_state=""
+
+    case "$scheduler_pause_mode" in
+        reject|deployment-owner) ;;
+        *) return 1;;
+    esac
 
     if [[ ! "${COMPOSE_PROJECT_NAME:-}" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
         log_error "Compose project must be pinned before inspecting the stack" >&2
@@ -494,6 +501,24 @@ _canonical_compose_container_ids() {
         case "$container_state" in
             created|exited|running)
                 ;;
+            paused)
+                # Only the checked-in deployment adapter opts in. A prior pause
+                # may predate this operation; the inherited owner lock proves
+                # coordination, while the host baseline preserves pause state.
+                if [ "$scheduler_pause_mode" != deployment-owner ] \
+                    || [ "$service_name" != scheduler ] \
+                    || ! verify_inherited_production_lifecycle_lock \
+                        "$canonical_docker_dir/.."; then
+                    log_error "Paused production service is not an owned scheduler" >&2
+                    return 1
+                fi
+                if ! scheduler_state=$(docker inspect --format \
+                    '{{.State.Paused}}|{{.State.Running}}' "$container_id") \
+                    || [ "$scheduler_state" != 'true|true' ]; then
+                    log_error "Paused production scheduler state is invalid" >&2
+                    return 1
+                fi
+                ;;
             *)
                 log_error "Production Compose container is not recoverable" >&2
                 return 1
@@ -517,6 +542,7 @@ pin_existing_compose_project() {
     local docker_dir="$1"
     local compose_file="${2:-docker-compose.yml}"
     local mode="${3:-existing}"
+    local scheduler_pause_mode="${4:-reject}"
     local resolved_project=""
     local persisted_project=""
 
@@ -532,7 +558,8 @@ pin_existing_compose_project() {
         return 1
     fi
     export COMPOSE_PROJECT_NAME="$resolved_project"
-    _canonical_compose_container_ids "$docker_dir" "$compose_file" >/dev/null
+    _canonical_compose_container_ids \
+        "$docker_dir" "$compose_file" "$scheduler_pause_mode" >/dev/null
 }
 
 pin_configured_or_existing_compose_project() {
