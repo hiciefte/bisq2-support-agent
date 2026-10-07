@@ -237,7 +237,10 @@ class DeploymentHost:
             operation == Path(self.host["operation_root"]) / canonical_sha256(plan),
             "host_operation_root",
         )
-        require(plan["schema"] == "deployment-plan-v2", "host_plan_version")
+        require(
+            plan["schema"] in {"deployment-plan-v2", "deployment-plan-v3"},
+            "host_plan_version",
+        )
         for path in (operation, self.install, self.candidate):
             require(
                 path.is_absolute()
@@ -355,7 +358,7 @@ class DeploymentHost:
         )
 
     def _source(self, published=False):
-        from deploy_release import changed_paths, classify_services
+        from deploy_release import changed_paths, classify_services, tooling_hashes
 
         source = self.plan["source"]
         for path, prefix in (
@@ -386,7 +389,22 @@ class DeploymentHost:
         require(
             digest(encode(paths)) == source["changed_paths_sha256"], "host_source_diff"
         )
-        require(classify_services(paths) == self.plan["services"], "host_source_scope")
+        tooling = self.plan["schema"] == "deployment-plan-v3"
+        require(
+            classify_services(paths, include_deployment_tooling=tooling)
+            == self.plan["services"],
+            "host_source_scope",
+        )
+        if tooling:
+            require(
+                tooling_hashes(self.candidate, source["candidate_commit"], paths)
+                == self.plan["tooling_sha256"],
+                "host_source_tooling",
+            )
+            require(
+                self.approval["tooling_sha256"] == self.plan["tooling_sha256"],
+                "approval_tooling",
+            )
         self._git(
             self.candidate,
             "merge-base",

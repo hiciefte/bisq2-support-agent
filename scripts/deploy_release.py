@@ -26,7 +26,7 @@ from lib.deployment_journal import (
     require,
     timestamp,
 )
-from lib.deployment_protocol import phases_for, validate_plan
+from lib.deployment_protocol import DEPLOYMENT_TOOLING, phases_for, validate_plan
 
 
 def full_commit(value: object) -> bool:
@@ -116,10 +116,14 @@ def changed_paths(repository: Path, previous: str, candidate: str) -> list[str]:
     return sorted(paths)
 
 
-def classify_services(paths: list[str]) -> list[str]:
+def classify_services(
+    paths: list[str], *, include_deployment_tooling: bool = False
+) -> list[str]:
     """A strict source-only subset of update.sh's selective rebuild rules."""
     selected = set()
     for path in paths:
+        if include_deployment_tooling and path in DEPLOYMENT_TOOLING:
+            continue
         if path.startswith(
             ("docs/", "api/tests/", "web/tests/", "web/e2e/")
         ) or path in {
@@ -166,6 +170,32 @@ def classify_services(paths: list[str]) -> list[str]:
             raise JournalError("unsupported_change_scope")
     require(bool(selected), "no_service_source_changes")
     return sorted(selected)
+
+
+def tooling_hashes(
+    repository: Path, candidate: str, paths: list[str]
+) -> dict[str, str]:
+    """Pin candidate blobs for every changed path in the fixed tooling capability."""
+    result = {}
+    for path in paths:
+        if path not in DEPLOYMENT_TOOLING:
+            continue
+        entry = local_git(repository, "ls-tree", "-z", candidate, "--", path)
+        require(
+            bool(
+                re.fullmatch(
+                    rb"100(?:644|755) blob [0-9a-f]{40}\t"
+                    + re.escape(path.encode())
+                    + rb"\0",
+                    entry,
+                )
+            ),
+            "unsupported_tooling_entry",
+        )
+        blob = entry.split(b" ", 2)[2].split(b"\t", 1)[0].decode()
+        result[path] = digest(local_git(repository, "cat-file", "blob", blob))
+    require(bool(result), "no_deployment_tooling_changes")
+    return result
 
 
 def save_plan(operation: Path, repository: Path, plan: dict) -> None:
@@ -234,10 +264,19 @@ def prepare(args: argparse.Namespace) -> dict:
     paths = changed_paths(repository, args.previous, args.commit)
     source["changed_paths_sha256"] = digest(encode(paths))
     services = sorted(args.services.split(","))
-    require(services == classify_services(paths), "service_selection_mismatch")
+    include_tooling = getattr(args, "include_deployment_tooling", False)
+    require(
+        services
+        == classify_services(paths, include_deployment_tooling=include_tooling),
+        "service_selection_mismatch",
+    )
     plan = {
-        "schema": "deployment-plan-v2",
-        "kind": "selective-api-web-v1",
+        "schema": "deployment-plan-v3" if include_tooling else "deployment-plan-v2",
+        "kind": (
+            "selective-api-web-with-tooling-v1"
+            if include_tooling
+            else "selective-api-web-v1"
+        ),
         "created_at": created_at,
         "deadline": args.deadline,
         "profile": args.profile,
@@ -245,6 +284,8 @@ def prepare(args: argparse.Namespace) -> dict:
         "services": services,
         "phases": phases_for(services),
     }
+    if include_tooling:
+        plan["tooling_sha256"] = tooling_hashes(repository, args.commit, paths)
     validate_plan(plan)
     save_plan(args.operation, repository, plan)
     return inspect_status(args.operation)
@@ -255,7 +296,8 @@ def inspect_status(operation: Path) -> dict:
     validate_plan(journal.plan)
     return {
         "schema": "deployment-status-v1",
-        "execution_supported": journal.plan["schema"] == "deployment-plan-v2",
+        "execution_supported": journal.plan["schema"]
+        in {"deployment-plan-v2", "deployment-plan-v3"},
         "runtime_binding": "not_assessed",
         "deadline_expired": timestamp(now()) >= timestamp(journal.plan["deadline"]),
         "journal": journal.status(),
@@ -275,6 +317,11 @@ def main() -> int:
     plan.add_argument("--commit", required=True)
     plan.add_argument("--previous", required=True)
     plan.add_argument("--services", required=True, help="api, web, or api,web")
+    plan.add_argument(
+        "--include-deployment-tooling",
+        action="store_true",
+        help="Include only the fixed deployment tooling capability with exact blob pins",
+    )
     plan.add_argument(
         "--profile", required=True, help="Protected profile name, never secret contents"
     )

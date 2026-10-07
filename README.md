@@ -219,6 +219,10 @@ The selective `plan`, `apply`, `continue`, `reconcile` and `status` subcommands
 provide a durable source-only API/web release workflow. Planning and status are
 offline; apply holds one host lifecycle lock through backup transfer, isolated
 restore verification and service switching.
+Reviewed controller updates can accompany an API/web release through the
+explicit `--include-deployment-tooling` planning option. It binds the complete
+allowlisted tooling delta and its hashes; arbitrary operational changes remain
+unsupported.
 Apply executes the supported release phases using an explicitly approved,
 hash-bound profile. See the [deployment workflow](docs/runbooks/deployment-workflow.md)
 for configuration, recovery boundaries and current validation limits.

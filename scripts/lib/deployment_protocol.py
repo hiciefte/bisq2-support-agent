@@ -20,6 +20,28 @@ SLUG = r"[a-z][a-z0-9_-]{0,63}"
 COMMIT = r"[0-9a-f]{40}"
 SHA256 = r"[0-9a-f]{64}"
 IMAGE = r"sha256:[0-9a-f]{64}"
+# Only this reviewed deployment capability may accompany API/web source work.
+# Other operational scripts retain the ordinary classifier's refusal.
+DEPLOYMENT_TOOLING = frozenset(
+    {
+        "scripts/backup.sh",
+        "scripts/deploy_release.py",
+        "scripts/deploy_release_host.py",
+        "scripts/lib/common.sh",
+        "scripts/lib/deployment_bootstrap.py",
+        "scripts/lib/deployment_client.py",
+        "scripts/lib/deployment_host.py",
+        "scripts/lib/deployment_host.sh",
+        "scripts/lib/deployment_journal.py",
+        "scripts/lib/deployment_protocol.py",
+        "scripts/lib/deployment_recovery.py",
+        "scripts/lib/docker_identity.py",
+        "scripts/lib/git-utils.sh",
+        "scripts/lib/lifecycle_lock.py",
+        "scripts/restore.sh",
+        "scripts/update.sh",
+    }
+)
 # These sets are the actual public helpers consumed by the fixed backends.
 HOST_HELPERS = frozenset(
     {
@@ -136,6 +158,7 @@ def phases_for(services: list[str], *, publish_source: bool = True) -> list[str]
 
 
 def validate_plan(plan: dict) -> None:
+    tooling = isinstance(plan, dict) and plan.get("schema") == "deployment-plan-v3"
     _keys(
         plan,
         {
@@ -147,12 +170,16 @@ def validate_plan(plan: dict) -> None:
             "source",
             "services",
             "phases",
-        },
+        }
+        | ({"tooling_sha256"} if tooling else set()),
         "release_plan_schema",
     )
     require(
-        plan["schema"] in ["deployment-plan-v1", "deployment-plan-v2"]
-        and plan["kind"] == "selective-api-web-v1",
+        (tooling and plan["kind"] == "selective-api-web-with-tooling-v1")
+        or (
+            plan["schema"] in ["deployment-plan-v1", "deployment-plan-v2"]
+            and plan["kind"] == "selective-api-web-v1"
+        ),
         "release_plan_schema",
     )
     require(
@@ -163,7 +190,7 @@ def validate_plan(plan: dict) -> None:
     require(
         plan["phases"]
         == phases_for(
-            plan["services"], publish_source=plan["schema"] == "deployment-plan-v2"
+            plan["services"], publish_source=plan["schema"] != "deployment-plan-v1"
         ),
         "release_phases",
     )
@@ -187,6 +214,18 @@ def validate_plan(plan: dict) -> None:
         and source["candidate_commit"] != source["previous_commit"]
         and _match(source["changed_paths_sha256"], SHA256),
         "release_source",
+    )
+    if tooling:
+        validate_tooling_sha256(plan["tooling_sha256"])
+
+
+def validate_tooling_sha256(tooling: object) -> None:
+    require(
+        isinstance(tooling, dict)
+        and bool(tooling)
+        and set(tooling) <= DEPLOYMENT_TOOLING
+        and all(_match(value, SHA256) for value in tooling.values()),
+        "release_tooling",
     )
 
 
@@ -347,6 +386,7 @@ def _validate_recovery(recovery: dict) -> None:
 def validate_approval(approval: dict, plan: dict, profile: dict) -> None:
     validate_plan(plan)
     validate_profile(profile)
+    tooling = plan["schema"] == "deployment-plan-v3"
     _keys(
         approval,
         {
@@ -361,16 +401,22 @@ def validate_approval(approval: dict, plan: dict, profile: dict) -> None:
             "image_consumers",
             "data_compatible_rollback",
             "policy",
-        },
+        }
+        | ({"tooling_sha256"} if tooling else set()),
         "approval_schema",
     )
     require(
-        approval["schema"] == "deployment-approval-v2"
+        approval["schema"]
+        == ("deployment-approval-v3" if tooling else "deployment-approval-v2")
         and approval["plan_sha256"] == canonical_sha256(plan)
         and approval["profile_sha256"] == canonical_sha256(profile)
         and profile["name"] == plan["profile"],
         "approval_binding",
     )
+    if tooling:
+        require(
+            approval["tooling_sha256"] == plan["tooling_sha256"], "approval_tooling"
+        )
     require(
         isinstance(approval["operator"], str)
         and 0 < len(approval["operator"].strip()) <= 128
@@ -428,7 +474,10 @@ def effect_guard(
 ) -> float:
     """Recheck the immutable binding and time window immediately before an effect."""
     validate_approval(approval, plan, profile)
-    require(plan["schema"] == "deployment-plan-v2", "effect_plan_version")
+    require(
+        plan["schema"] in {"deployment-plan-v2", "deployment-plan-v3"},
+        "effect_plan_version",
+    )
     require(phase in plan["phases"], "unknown_phase")
     instant = timestamp(current_time or now())
     require(

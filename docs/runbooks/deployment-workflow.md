@@ -39,15 +39,47 @@ on failure and cannot be overwritten. Inside the source checkout, outputs are
 restricted to ignored `.agent-artifacts/` or `failed_updates/` directories.
 
 The planner accepts a conservative subset of selective API/web source changes.
-It refuses migrations, runtime data, catalogues, Compose, operational scripts,
-unknown paths and mismatched services. Dependency changes can be planned; live
-compatibility still requires the reviewed release checks. Unknown changes are
-not guessed into a deployment capability.
+By default it refuses operational scripts. It always refuses migrations, runtime
+data, catalogues, Compose, unknown paths and mismatched services. Dependency
+changes can be planned; live compatibility still requires the reviewed release
+checks. Unknown changes are not guessed into a deployment capability.
 
-New plans use `deployment-plan-v2`. The source commit/tree pins and exact phase
+Ordinary plans use `deployment-plan-v2`. The source commit/tree pins and exact phase
 sequence include source publication after postchange restore verification.
 Existing v1 plans remain readable for status but cannot authorize effects;
 prepare and approve a new v2 plan rather than modifying an old journal.
+
+### Releases that update the deployment tooling
+
+For a reviewed release that also changes the controller, add
+`--include-deployment-tooling` to the `plan` command. This creates a
+`deployment-plan-v3` with the distinct
+`selective-api-web-with-tooling-v1` capability. Its `tooling_sha256` map names
+every changed file in the fixed `DEPLOYMENT_TOOLING` allowlist in
+`scripts/lib/deployment_protocol.py`, with hashes derived from the candidate's
+committed Git blobs. Only these deployment entrypoints and libraries are
+supported; the option does not admit arbitrary scripts or remove paths from the
+source diff. Deleted tooling files and symlinks are refused.
+
+The host independently derives the complete changed tooling set and hashes
+before effects and again when verifying source publication. Missing, extra or
+wrong pins refuse the release. A v3 plan requires a `deployment-approval-v3`
+record with an identical `tooling_sha256` map; an ordinary v2 approval cannot
+authorize it. Review the complete tooling diff before granting that capability.
+Existing plans and attempted operations must never be upgraded in place.
+
+This mode still requires a real API or web source change. Tooling-only releases
+are not supported. For a tooling and web dependency release with no API source
+change, select only `web`: API tests do not select an API restart, and the plan
+contains no API smoke calls. All backup, restore, scheduler preservation,
+deadline, recovery and once-only execution rules remain unchanged.
+
+For first use, stage the entire exact candidate as a clean, separate checkout
+and bind it in the protected profile. The fixed bootstrap can execute its
+hash-checked helpers before that revision is installed. The controller publishes
+the source only after postchange restore verification. Do not copy helpers into
+the live installation, advance its source manually, filter its diff or repeat
+the historical pre-quality-gate transition to bypass commissioning.
 
 ## Protected profile and explicit approval
 
@@ -70,7 +102,8 @@ Its private `deployment-profile-v1` record binds:
 - Bounded phase and readiness timeouts. Profiles do not contain configuration,
   credential or key contents, arbitrary environment overrides, or image tags.
 
-The external `deployment-approval-v2` record binds canonical plan/profile
+The external `deployment-approval-v2` record (v3 for the explicit tooling
+capability above) binds canonical plan/profile
 SHA-256 hashes, the exact ordered phase scope, operator, approval time and UTC
 deadline. It explicitly allows the standard and live-MCP smoke calls for an API
 release, data-compatible availability rollback, and private disabled channels.
@@ -86,7 +119,8 @@ API and relay switch together and each must pass readiness. A known failed
 switch restores both to their original image together; unrelated services remain
 unchanged. A deployment without the relay can explicitly bind only `api`.
 Version-1 approvals do not authorize this expanded contract. Prepare a new
-version-2 approval for a new operation; never rewrite an attempted journal.
+version-2 approval, or version 3 for the tooling capability, for a new operation;
+never rewrite an attempted journal.
 
 Both the client and host check the current approval window before effects.
 Read-only status and reconciliation remain available after expiry. Completion
