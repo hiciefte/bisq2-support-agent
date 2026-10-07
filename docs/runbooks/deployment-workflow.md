@@ -147,6 +147,12 @@ container must be running, unpaused, not restarting, with a positive PID.
 Application readiness is a separate check. Identity hashes preserve all Config
 and mount content while ignoring object-key and outer mount-list ordering.
 
+Service replacement compares unique environment names and values without relying
+on Docker's list order; duplicate or malformed entries refuse the switch. The
+existing build-ID allowance is separate. Compose builder metadata may differ only
+when the saved build evidence proves it belongs to the exact candidate image.
+These replacement rules do not relax existing-container identity hashes.
+
 Failed captures, partial ciphertext and diagnostics remain available for
 reconciliation. They are not successful backups. Cleanup errors propagate; an
 uncertain writer resume is not retried by an exit trap. Full Docker configuration
@@ -154,8 +160,10 @@ can contain secrets and stays private, outside the archive payload.
 
 On Linux, backup and update share the canonical lifecycle lock. A backup may
 borrow an inherited descriptor only after checking its inode and actual
-exclusive lock. It never unlocks its parent. An already-paused scheduler is
-preserved, not claimed or resumed. Scheduler pause ownership differs from lock
+exclusive lock. It never unlocks its parent. The controller and its bound
+borrowed backups can inventory an already-paused scheduler; its original pause
+is preserved, not claimed or resumed. Ordinary callers and other paused services
+retain the refusal. Scheduler pause ownership differs from lock
 ownership; neither permits recreation or execution of held jobs.
 
 ## Acceptance before production

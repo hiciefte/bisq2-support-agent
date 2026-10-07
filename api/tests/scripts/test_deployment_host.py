@@ -222,6 +222,137 @@ def test_replacement_rejects_runtime_drift_or_third_image(host, module, field):
         host._replacement("api", current, host.baseline["containers"]["api"]["Image"])
 
 
+def test_replacement_environment_order_and_build_id_only_may_change(host, module):
+    host.baseline["containers"]["api"]["Config"]["Env"] += ["TOKEN=a=b", "EMPTY="]
+    current = copy.deepcopy(host.baseline["containers"]["api"])
+    current["Config"]["Env"] = [
+        "DATA_DIR=/data",
+        "BUILD_ID=build-aaaaaaa",
+        "EMPTY=",
+        "TOKEN=a=b",
+    ]
+    host._replacement("api", current, current["Image"])
+    current["Config"]["Env"][0] = "DATA_DIR=/different"
+    with pytest.raises(module.JournalError, match="host_replacement_configuration"):
+        host._replacement("api", current, current["Image"])
+
+
+@pytest.mark.parametrize("side", ["original", "replacement"])
+@pytest.mark.parametrize(
+    "entries",
+    [
+        ["BUILD_ID=build-aaaaaaa", "BUILD_ID=build-bbbbbbb", "DATA_DIR=/data"],
+        ["BUILD_ID=build-aaaaaaa", "DATA_DIR=/data", "DATA_DIR=/data"],
+        ["BUILD_ID=build-aaaaaaa", "DATA_DIR"],
+        ["BUILD_ID=build-aaaaaaa", "=/data"],
+        ["BUILD_ID=build-aaaaaaa", "DATA_DIR=/data\x00"],
+        ["BUILD_ID=build-aaaaaaa", None],
+        {"BUILD_ID": "build-aaaaaaa", "DATA_DIR": "/data"},
+    ],
+)
+def test_replacement_environment_is_validated_before_normalizing_build_id(
+    host, module, side, entries
+):
+    current = copy.deepcopy(host.baseline["containers"]["api"])
+    target = host.baseline["containers"]["api"] if side == "original" else current
+    target["Config"]["Env"] = entries
+    with pytest.raises(module.JournalError, match="host_replacement_environment"):
+        host._replacement("api", current, current["Image"])
+
+
+def recorded_builder_image(host, module, protocol, monkeypatch, *, image_labels=None):
+    builder = "com.docker.compose.image.builder"
+    image = {
+        "Id": "sha256:" + "8" * 64,
+        "Config": {
+            "Labels": {builder: "classic"} if image_labels is None else image_labels
+        },
+    }
+    built = payload_for("build")
+    built["images"]["api"]["image_inspect_sha256"] = module.digest(module.encode(image))
+    monkeypatch.setattr(host, "_build", lambda: built)
+    result = host.effect("build", "f" * 64)
+    save_receipt(host, module, protocol, "build", result)
+    module.private_bytes(
+        host.root / "build_api.image.private.json", module.encode(image)
+    )
+    current = copy.deepcopy(host.baseline["containers"]["api"])
+    current["Image"] = image["Id"]
+    current["Config"]["Labels"][builder] = "classic"
+    return current, image
+
+
+def test_replacement_builder_metadata_joins_saved_image_and_build_receipt(
+    host, module, protocol, monkeypatch
+):
+    current, _ = recorded_builder_image(host, module, protocol, monkeypatch)
+    host._replacement("api", current, current["Image"])
+    # No general image-label waiver accompanies the single proven builder key.
+    current["Config"]["Labels"]["fixture.new.label"] = "unapproved"
+    with pytest.raises(module.JournalError, match="host_replacement_configuration"):
+        host._replacement("api", current, current["Image"])
+
+
+@pytest.mark.parametrize(
+    "change", ["hash", "id", "service", "receipt", "intent", "label"]
+)
+def test_replacement_builder_rejects_unbound_or_forged_metadata(
+    host, module, protocol, monkeypatch, change
+):
+    current, image = recorded_builder_image(host, module, protocol, monkeypatch)
+    if change in {"hash", "id"}:
+        if change == "hash":
+            image["Config"]["Labels"]["fixture.tamper"] = "changed"
+        else:
+            image["Id"] = "sha256:" + "9" * 64
+        (host.root / "build_api.image.private.json").write_bytes(module.encode(image))
+    elif change == "service":
+        module.private_bytes(
+            host.root / "build_web.image.private.json", module.encode(image)
+        )
+        current = copy.deepcopy(host.baseline["containers"]["web"])
+        current["Image"] = image["Id"]
+        current["Config"]["Labels"]["com.docker.compose.image.builder"] = "classic"
+    elif change == "receipt":
+        path = host.operation / "receipts/build.json"
+        receipt = module.read_record(path)
+        receipt["payload"]["images"]["api"]["image_inspect_sha256"] = "e" * 64
+        path.write_bytes(module.encode(receipt))
+    elif change == "intent":
+        path = host.root / "build.intent.json"
+        intent = module.read_record(path)
+        intent["client_intent_sha256"] = "e" * 64
+        path.write_bytes(module.encode(intent))
+    else:
+        current["Config"]["Labels"]["com.docker.compose.image.builder"] = "forged"
+    with pytest.raises(module.JournalError, match="host_builder_"):
+        host._replacement(
+            "web" if change == "service" else "api", current, current["Image"]
+        )
+
+
+def test_replacement_builder_requires_label_in_recorded_image(
+    host, module, protocol, monkeypatch
+):
+    current, _ = recorded_builder_image(
+        host, module, protocol, monkeypatch, image_labels={}
+    )
+    with pytest.raises(module.JournalError, match="host_builder_image_label"):
+        host._replacement("api", current, current["Image"])
+
+
+def test_original_image_recovery_preserves_original_builder_label(host, module):
+    builder = "com.docker.compose.image.builder"
+    original = host.baseline["containers"]["api"]
+    original["Config"]["Labels"][builder] = "original-builder"
+    current = copy.deepcopy(original)
+    current["Config"]["Env"].reverse()
+    host._replacement("api", current, original["Image"])
+    current["Config"]["Labels"][builder] = "classic"
+    with pytest.raises(module.JournalError, match="host_builder_image"):
+        host._replacement("api", current, original["Image"])
+
+
 def test_failed_smoke_is_never_replayed(host, module, monkeypatch):
     monkeypatch.setattr(host, "_prefix", lambda _phase: None)
 
@@ -316,7 +447,13 @@ def test_complete_real_host_phase_sequence_with_fixture_commands(
 ):
     state = host.fixture_state
     built = {
-        s: {"Id": "sha256:" + d * 64, "Config": {"Env": ["BUILD_ID=build-aaaaaaa"]}}
+        s: {
+            "Id": "sha256:" + d * 64,
+            "Config": {
+                "Env": ["BUILD_ID=build-aaaaaaa"],
+                "Labels": {"com.docker.compose.image.builder": "classic"},
+            },
+        }
         for s, d in (("api", "a"), ("web", "b"))
     }
     commands = []
@@ -332,6 +469,10 @@ def test_complete_real_host_phase_sequence_with_fixture_commands(
             replacement["Config"]["Image"] = replacement["Image"]
             replacement["Config"]["Hostname"] = replacement["Id"][:12]
             replacement["Config"]["Env"][0] = "BUILD_ID=build-aaaaaaa"
+            replacement["Config"]["Env"].reverse()
+            replacement["Config"]["Labels"][
+                "com.docker.compose.image.builder"
+            ] = "classic"
             state[service] = replacement
         return base_shell(action, *args, **kwargs)
 
@@ -385,10 +526,34 @@ def test_complete_real_host_phase_sequence_with_fixture_commands(
     assert len([c for c in commands if c[:2] == ["docker", "unpause"]]) == 1
 
 
-def failed_switch(host, module, protocol, monkeypatch, status="failed"):
+def failed_switch(
+    host, module, protocol, monkeypatch, status="failed", *, builder_metadata=False
+):
     phase = "switch_api"
+    image = {
+        "Id": "sha256:" + "a" * 64,
+        "Config": {
+            "Labels": (
+                {"com.docker.compose.image.builder": "classic"}
+                if builder_metadata
+                else {}
+            )
+        },
+    }
+    built = payload_for("build")
+    built["images"]["api"].update(
+        image_id=image["Id"], image_inspect_sha256=module.digest(module.encode(image))
+    )
+    monkeypatch.setattr(host, "_build", lambda: built)
+    host.effect("build", "f" * 64)
     for prior in host.plan["phases"][: host.plan["phases"].index(phase)]:
-        save_receipt(host, module, protocol, prior, payload_for(prior))
+        save_receipt(
+            host,
+            module,
+            protocol,
+            prior,
+            built if prior == "build" else payload_for(prior),
+        )
     intent = {
         "phase": phase,
         "client_intent_sha256": "f" * 64,
@@ -406,26 +571,37 @@ def failed_switch(host, module, protocol, monkeypatch, status="failed"):
     )
     module.private_bytes(
         host.root / "build_api.image.private.json",
-        module.encode({"Id": "sha256:" + "a" * 64}),
+        module.encode(image),
     )
     host.fixture_state["api"]["Image"] = "sha256:" + "a" * 64
     host.fixture_state["api"]["Config"]["Image"] = "sha256:" + "a" * 64
+    host.fixture_state["api"]["Config"]["Env"].reverse()
+    if builder_metadata:
+        host.fixture_state["api"]["Config"]["Labels"][
+            "com.docker.compose.image.builder"
+        ] = "classic"
     host.fixture_state["scheduler"]["State"]["Paused"] = True
     host.pause_expected = True
     monkeypatch.setattr(host, "_image", lambda ref: {"Id": ref})
     return phase
 
 
+@pytest.mark.parametrize("builder_metadata", [False, True])
 def test_known_failed_switch_restores_only_original_image_and_retains_failure(
-    host, module, protocol, monkeypatch
+    host, module, protocol, monkeypatch, builder_metadata
 ):
-    phase = failed_switch(host, module, protocol, monkeypatch)
+    phase = failed_switch(
+        host, module, protocol, monkeypatch, builder_metadata=builder_metadata
+    )
 
     def shell(action, overlay, service, **kwargs):
         assert action == "switch" and service == "api"
         saved = module.private_json(overlay)
         assert saved["services"][service]["image"] == "sha256:" + "1" * 64
         host.fixture_state[service]["Image"] = saved["services"][service]["image"]
+        host.fixture_state[service]["Config"]["Labels"].pop(
+            "com.docker.compose.image.builder", None
+        )
 
     monkeypatch.setattr(host, "_shell", shell)
     monkeypatch.setattr(host, "_configuration", lambda: None)
@@ -441,6 +617,33 @@ def test_known_failed_switch_restores_only_original_image_and_retains_failure(
     assert host.fixture_state["scheduler"]["State"]["Paused"] is True
     with pytest.raises(module.JournalError, match="record_already_exists"):
         host.restore_availability(phase)
+
+
+def test_original_image_recovery_rejects_candidate_builder_before_readiness(
+    host, module, protocol, monkeypatch
+):
+    phase = failed_switch(host, module, protocol, monkeypatch, builder_metadata=True)
+
+    def shell(action, overlay, service, **kwargs):
+        host.fixture_state[service]["Image"] = host.baseline["containers"][service][
+            "Image"
+        ]
+
+    def unexpected_readiness(*args):
+        pytest.fail("Unproven rollback metadata must be refused before readiness")
+
+    monkeypatch.setattr(host, "_shell", shell)
+    monkeypatch.setattr(host, "_configuration", lambda: None)
+    monkeypatch.setattr(host, "_ready", unexpected_readiness)
+    with pytest.raises(module.JournalError, match="host_builder_image"):
+        host.restore_availability(phase)
+    assert (
+        module.read_record(host.root / "availability-recovery.result.json")["status"]
+        == "failed"
+    )
+    assert (
+        module.read_record(host.root / "switch_api.result.json")["status"] == "failed"
+    )
 
 
 def test_uncertain_switch_is_never_restored_automatically(

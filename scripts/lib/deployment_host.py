@@ -700,14 +700,67 @@ class DeploymentHost:
         old, new = json.loads(json.dumps(before["Config"])), json.loads(
             json.dumps(current["Config"])
         )
+        builder_label = "com.docker.compose.image.builder"
+        if old["Labels"].get(builder_label) != new["Labels"].get(builder_label):
+            # Compose may inherit build metadata from the new immutable image.
+            # Join it to this service's completed build, never waive labels from
+            # an arbitrary image file or while restoring the original image.
+            from .deployment_protocol import validate_phase_receipt
+
+            require(expected_image != before["Image"], "host_builder_image")
+            intent = read_record(self.root / "build.intent.json")
+            outcome = read_record(self.root / "build.result.json")
+            require(
+                intent["baseline_sha256"] == self.baseline_sha256
+                and outcome["status"] == "succeeded"
+                and outcome["intent_sha256"] == digest(encode(intent)),
+                "host_builder_build_join",
+            )
+            payload = validate_phase_receipt(
+                read_record(self.operation / "receipts/build.json"),
+                self.plan,
+                self.profile,
+                "build",
+                intent["client_intent_sha256"],
+                self.baseline_sha256,
+            )
+            require(payload == outcome["payload"], "host_builder_receipt_join")
+            proof = payload["images"][service]
+            saved = private_json(self.root / f"build_{service}.image.private.json")
+            require(
+                proof["image_id"] == expected_image == saved["Id"]
+                and proof["image_inspect_sha256"] == digest(encode(saved)),
+                "host_builder_image_proof",
+            )
+            labels = saved.get("Config", {}).get("Labels")
+            require(
+                isinstance(labels, dict)
+                and isinstance(labels.get(builder_label), str)
+                and labels[builder_label] == new["Labels"].get(builder_label),
+                "host_builder_image_label",
+            )
+            old["Labels"].pop(builder_label, None)
+            new["Labels"].pop(builder_label, None)
         for config, container in ((old, before), (new, current)):
             config.pop("Image", None)
             if config.get("Hostname") == container["Id"][:12]:
                 config["Hostname"] = "<docker-generated>"
-            config["Env"] = [
-                "BUILD_ID=<image-build>" if value.startswith("BUILD_ID=") else value
-                for value in config["Env"]
-            ]
+            require(isinstance(config["Env"], list), "host_replacement_environment")
+            environment = {}
+            for entry in config["Env"]:
+                require(
+                    isinstance(entry, str) and "\x00" not in entry,
+                    "host_replacement_environment",
+                )
+                name, separator, value = entry.partition("=")
+                require(
+                    bool(name) and bool(separator) and name not in environment,
+                    "host_replacement_environment",
+                )
+                environment[name] = value
+            if "BUILD_ID" in environment:
+                environment["BUILD_ID"] = "<image-build>"
+            config["Env"] = environment
             for label in (
                 "com.docker.compose.config-hash",
                 "com.docker.compose.image",
