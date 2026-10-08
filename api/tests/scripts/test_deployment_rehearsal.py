@@ -513,6 +513,39 @@ def run_case(source, root, scenario):
 
 
 class ExternalBoundaryRegression(unittest.TestCase):
+    def test_web_root_boundary_matches_fixed_readiness_endpoint(self):
+        with tempfile.TemporaryDirectory() as parent:
+            root = Path(parent)
+            (root / "bin").mkdir()
+            shutil.copyfile(FIXTURES / "boundary.py", root / "bin/boundary.py")
+            (root / "bin/curl").symlink_to("boundary.py")
+            web = container("web", root / "install", "build-01234567")
+            private_record(
+                root / "boundary-state.json",
+                {
+                    "calls": [],
+                    "containers": {"web": web},
+                    "build_ids": {web["Image"]: "build-01234567"},
+                    "provider_calls": [],
+                },
+            )
+            for url, accepted in (
+                ("http://127.0.0.1:8000/", True),
+                ("http://127.0.0.1:8000/login", False),
+                ("http://127.0.0.1:8001/", False),
+            ):
+                result = subprocess.run(
+                    [sys.executable, str(root / "bin/curl"), "-fsS", url],
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(result.returncode == 0, accepted)
+                if accepted:
+                    self.assertIn("build-01234567", result.stdout)
+            state = json.loads((root / "boundary-state.json").read_text())
+            self.assertEqual(len(state["calls"]), 3)
+            self.assertEqual(state["provider_calls"], [])
+
     def test_identity_template_respects_requested_fields(self):
         with tempfile.TemporaryDirectory() as parent:
             root = Path(parent)

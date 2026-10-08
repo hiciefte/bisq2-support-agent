@@ -140,7 +140,19 @@ def host(tmp_path, monkeypatch, module, protocol, records, request):
     monkeypatch.setattr(
         obj, "_scheduler_jobs", lambda _scheduler: {"fixture": "held-cron"}
     )
-    monkeypatch.setattr(obj, "_run", lambda *_args, **_kwargs: b"build-ccccccc\n")
+
+    def route(argv, *_args, **_kwargs):
+        if "cat" in argv:
+            return b"build-ccccccc\n"
+        if argv[-1].endswith("/health/ready"):
+            return b'{"status":"ready"}'
+        if argv[-1].endswith("/health"):
+            return b'{"status":"healthy","build_id":"build-ccccccc"}'
+        if argv[-1] == profile["host"]["nginx_url"].rstrip("/") + "/":
+            return b"fixture build-ccccccc"
+        raise AssertionError(argv)
+
+    monkeypatch.setattr(obj, "_run", route)
     obj.preflight()
     obj.fixture_state, obj.fixture_calls = state, calls
     return obj
@@ -514,7 +526,7 @@ def install_phase_command_models(host, module, monkeypatch):
                 "BUILD_ID"
             ]
             return json.dumps({"build_id": build}).encode()
-        elif argv[-1].endswith("/login"):
+        elif argv[-1] == host.host["nginx_url"].rstrip("/") + "/":
             return b"fixture build-aaaaaaa"
         return b""
 
@@ -1450,3 +1462,105 @@ def test_api_and_relay_still_require_explicit_shared_image_reference(
     with pytest.raises(module.JournalError, match="host_consumer_image"):
         host.preflight()
     assert not (host.root / "baseline.private.json").exists()
+
+
+@pytest.mark.parametrize("host", ["web-only"], indirect=True)
+@pytest.mark.parametrize(
+    "fault,code",
+    [
+        ("api_direct_build", "host_api_readiness"),
+        ("api_routed_short", "host_nginx_api_build"),
+        ("api_routed_stale", "host_nginx_api_build"),
+        ("web_stale", "host_nginx_web_build"),
+        ("web_404", "baseline_web_404"),
+    ],
+)
+def test_fresh_route_refusal_precedes_baseline_or_any_release_effect(
+    host, module, monkeypatch, fault, code
+):
+    baseline = host.root / "baseline.private.json"
+    baseline.unlink()
+    previous = host._run
+    commands = []
+
+    def route(argv, *args, **kwargs):
+        commands.append(argv)
+        assert not baseline.exists()
+        if (
+            fault == "api_direct_build"
+            and argv[0] == "docker"
+            and argv[-1].endswith("/health")
+        ):
+            return b'{"status":"healthy"}'
+        if argv[0] == "curl" and argv[-1].endswith("/api/health"):
+            if fault == "api_routed_short":
+                # Actual preserved production observation: successful HTTP,
+                # healthy status, but no evidence of the API build identity.
+                return b'{"status":"healthy"}'
+            if fault == "api_routed_stale":
+                return b'{"build_id":"build-aaaaaaa"}'
+        if argv[0] == "curl" and argv[-1].endswith("/"):
+            if fault == "web_stale":
+                return b"fixture build-aaaaaaa"
+            if fault == "web_404":
+                raise module.HostCommandError("baseline_web_404")
+        return previous(argv, *args, **kwargs)
+
+    monkeypatch.setattr(host, "_run", route)
+    with pytest.raises(module.JournalError, match=code):
+        host.preflight()
+    assert not baseline.exists()
+    assert not list(host.root.glob("*.intent.json"))
+    assert not host.active_marker.exists()
+    assert not any(
+        command[-2:] == ["nginx", "-t"]
+        or command[-3:] == ["nginx", "-s", "reload"]
+        or command[:2] in (["docker", "pause"], ["docker", "unpause"])
+        for command in commands
+    )
+    assert not any(action in {"build", "switch"} for action, _ in host.fixture_calls)
+
+
+@pytest.mark.parametrize("host", ["web-only"], indirect=True)
+def test_actual_root_baseline_routes_pass_before_save_without_reload(host, monkeypatch):
+    assert (ROOT / "web/src/app/page.tsx").is_file()
+    assert not (ROOT / "web/src/app/login/page.tsx").exists()
+    baseline = host.root / "baseline.private.json"
+    baseline.unlink()
+    previous = host._run
+    routed = []
+
+    def route(argv, *args, **kwargs):
+        assert not baseline.exists()
+        if argv[0] == "curl":
+            routed.append(argv[-1])
+            assert "-fsS" in argv
+        return previous(argv, *args, **kwargs)
+
+    monkeypatch.setattr(host, "_run", route)
+    result = host.preflight()
+    base = host.host["nginx_url"].rstrip("/")
+    assert routed == [base + "/api/health", base + "/"]
+    assert baseline.exists() and result["baseline_sha256"] == host.baseline_sha256
+
+
+@pytest.mark.parametrize("host", ["web-only"], indirect=True)
+def test_bad_route_does_not_block_readonly_preservation_or_rewrite_saved_baseline(
+    host, module, monkeypatch
+):
+    baseline = host.root / "baseline.private.json"
+    original = baseline.read_bytes()
+    previous = host._run
+
+    def route(argv, *args, **kwargs):
+        if argv[0] == "curl" and argv[-1].endswith("/api/health"):
+            return b'{"status":"healthy"}'
+        return previous(argv, *args, **kwargs)
+
+    monkeypatch.setattr(host, "_run", route)
+    with pytest.raises(module.JournalError, match="host_nginx_api_build"):
+        host.preflight()
+    # The generic read-only observation remains independent of route admission.
+    assert host.verify_preservation()["preserved"] is True
+    assert baseline.read_bytes() == original
+    assert not list(host.root.glob("*.intent.json"))

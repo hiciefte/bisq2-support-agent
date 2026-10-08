@@ -130,6 +130,9 @@ def run(fixture, body: str, **overrides: str) -> subprocess.CompletedProcess[str
                     printf 'start\\n' >> "$FIXTURE_ROOT/actions"
                     if [ "${{INTERRUPT_START:-0}}" = 1 ]; then kill -TERM $$; fi
                     [ "${{START_FAIL:-0}}" != 1 ] ;;
+                'run --rm --no-deps -T '*" api -I -B -c "*)
+                    printf 'probe\\n' >> "$FIXTURE_ROOT/helper-probes"
+                    [ "${{HELPER_PROBE_FAIL:-0}}" != 1 ] ;;
                 'run --rm --no-deps -T '*) tar -czf - -T /dev/null ;;
                 *) return 99 ;;
             esac
@@ -144,6 +147,61 @@ def run(fixture, body: str, **overrides: str) -> subprocess.CompletedProcess[str
 def actions(fixture) -> list[str]:
     path = fixture[0] / "actions"
     return path.read_text().splitlines() if path.exists() else []
+
+
+def test_private_public_helper_copy_is_readable_without_exposing_snapshot(fixture):
+    root, _ = fixture
+    helper = root / "private-helper.py"
+    helper.write_text("print('public source')\n")
+    helper.chmod(0o700)
+    snapshot = root / "staging/snapshot.data"
+    snapshot.chmod(0o600)
+    result = run(
+        fixture,
+        'umask 077; DR_HELPER="$FIXTURE_ROOT/private-helper.py"; '
+        "prepare_container_helper",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    copied = root / "staging.public-helper/disaster_recovery.py"
+    assert copied.read_bytes() == helper.read_bytes()
+    assert copied.stat().st_mode & 0o777 == 0o444
+    assert copied.parent.stat().st_mode & 0o777 == 0o700
+    assert helper.stat().st_mode & 0o777 == 0o700
+    assert snapshot.stat().st_mode & 0o777 == 0o600
+    assert (root / "helper-probes").read_text() == "probe\n"
+    assert actions(fixture) == []
+
+
+def test_public_helper_probe_refusal_prevents_writer_stop(fixture):
+    root, _ = fixture
+    helper = root / "helper.py"
+    helper.write_text("pass\n")
+    result = run(
+        fixture,
+        'trap cleanup EXIT; DR_HELPER="$FIXTURE_ROOT/helper.py"; '
+        "prepare_container_helper; quiesce_services",
+        HELPER_PROBE_FAIL="1",
+    )
+    assert result.returncode != 0
+    assert actions(fixture) == []
+    assert (root / "staging.public-helper/disaster_recovery.py").is_file()
+    assert (
+        "resume_state=not_attempted"
+        in (root / "staging/backup-failure.state").read_text()
+    )
+
+
+def test_public_helper_symlink_is_refused_before_container_probe(fixture):
+    root, _ = fixture
+    (root / "helper.py").write_text("pass\n")
+    (root / "helper-link.py").symlink_to(root / "helper.py")
+    result = run(
+        fixture,
+        'DR_HELPER="$FIXTURE_ROOT/helper-link.py"; prepare_container_helper',
+    )
+    assert result.returncode != 0
+    assert not (root / "helper-probes").exists()
+    assert actions(fixture) == []
 
 
 def identities(fixture, values) -> None:
@@ -602,4 +660,5 @@ def test_main_entrypoint_borrows_lock_and_preserves_paused_scheduler(fixture):
     assert (root / "verify-calls").read_text() == "verified\n"
     assert len(list(target.glob("bisq-support-backup-*.tar.gz.age"))) == 1
     assert list(root.glob("bisq-support-backup.*")) == []
+    assert (root / "helper-probes").read_text() == "probe\n"
     assert json.loads((root / "scheduler-state.json").read_text())["Paused"]
