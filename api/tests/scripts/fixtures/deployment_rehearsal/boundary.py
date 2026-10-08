@@ -245,7 +245,7 @@ def curl():
         print("200")
     elif url.endswith("/api/health"):
         emit({"build_id": state["build_ids"][state["containers"]["api"]["Image"]]})
-    elif url.endswith("/login"):
+    elif url == "http://127.0.0.1:8000/":
         emit(
             "<html>"
             + state["build_ids"][state["containers"]["web"]["Image"]]

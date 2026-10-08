@@ -1044,7 +1044,8 @@ class DeploymentHost:
         require(set(config["services"]) == set(containers), "host_compose_topology")
         self._disabled(containers)
         path = self.root / "baseline.private.json"
-        if path.exists():
+        baseline_exists = path.exists()
+        if baseline_exists:
             self.baseline = private_json(path)
             self.baseline_sha256 = digest(path.read_bytes())
             effects = self._state()
@@ -1125,20 +1126,33 @@ class DeploymentHost:
                 )
                 self.baseline["old_build_ids"][service] = previous_build
             self._preserved(containers)
-            private_bytes(path, encode(self.baseline))
         require(
             self.baseline["compose_sha256"] == digest(encode(config))
             and self.baseline["env_sha256"]
             == digest((self.install / "docker/.env").read_bytes()),
             "host_configuration_changed",
         )
-        self.baseline_sha256 = digest(path.read_bytes())
         require(
             self._preserved_data(containers) == self.baseline["protected_data"]
             and self._scheduler_jobs(containers["scheduler"])
             == self.baseline["scheduler_jobs"],
             "host_preservation_baseline_changed",
         )
+        if not effects:
+            # Establish the actual preserved routes before the first release
+            # effect; container health alone cannot prove the proxy destination.
+            self._api_ready(containers, effects)
+            if "web" in self.plan["services"]:
+                self._ready(
+                    "web",
+                    containers,
+                    self.baseline["containers"]["web"]["Image"],
+                    self.baseline["old_build_ids"]["web"],
+                    reload_nginx=False,
+                )
+        if not baseline_exists:
+            private_bytes(path, encode(self.baseline))
+        self.baseline_sha256 = digest(path.read_bytes())
         return {
             "baseline_sha256": self.baseline_sha256,
             "build_id": self.baseline["build_id"],
@@ -1362,7 +1376,7 @@ class DeploymentHost:
                     "5",
                     "--max-time",
                     "15",
-                    url + "/login",
+                    url + "/",
                 ],
                 "route",
             )

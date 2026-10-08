@@ -20,6 +20,8 @@ DOCKER_DIR=""
 DATA_DIR=""
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
 DR_HELPER=""
+CONTAINER_DR_HELPER=""
+CONTAINER_HELPER_DIR=""
 STAGING_DIR=""
 PARTIAL_OUTPUT=""
 COMPLETED_OUTPUT_NAME=""
@@ -162,6 +164,47 @@ prepare_writer_metadata() {
     # archive. Keep private evidence beside (not inside) the snapshot payload.
     WRITER_METADATA_DIR="$STAGING_DIR.writer-identities"
     (umask 077; mkdir -m 700 -- "$WRITER_METADATA_DIR") || return 1
+}
+
+prepare_container_helper() {
+    # Candidate checkout modes may be private (for example, root 0700 under
+    # umask 077). Docker mounts this public source file directly, so give the
+    # selected non-root backup user a readable copy without changing the source
+    # checkout or exposing any snapshot/configuration bytes.
+    [ -n "$STAGING_DIR" ] && [ -d "$STAGING_DIR" ] && [ ! -L "$STAGING_DIR" ] \
+        && [ -z "$CONTAINER_HELPER_DIR" ] || return 1
+    CONTAINER_HELPER_DIR="$STAGING_DIR.public-helper"
+    mkdir -m 700 -- "$CONTAINER_HELPER_DIR" || return 1
+    CONTAINER_DR_HELPER="$CONTAINER_HELPER_DIR/disaster_recovery.py"
+    python3 - "$DR_HELPER" "$CONTAINER_DR_HELPER" <<'PY' || return 1
+import os
+import pathlib
+import stat
+import sys
+
+source, destination = map(pathlib.Path, sys.argv[1:])
+fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
+with os.fdopen(fd, 'rb') as stream:
+    if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+        raise ValueError('Public backup helper is not a regular file')
+    content = stream.read()
+fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o444)
+with os.fdopen(fd, 'wb') as stream:
+    stream.write(content)
+    stream.flush()
+    os.fchmod(stream.fileno(), 0o444)
+    os.fsync(stream.fileno())
+if destination.read_bytes() != content or source.read_bytes() != content:
+    raise ValueError('Public backup helper changed during preparation')
+PY
+    # Only read/compile public source. Do not import the application, contact
+    # Qdrant/providers or stop writers until this exact bind/user is readable.
+    compose run --rm --no-deps -T \
+        --user "${APP_UID:-1001}:${APP_GID:-1001}" \
+        --volume "$CONTAINER_DR_HELPER:/app/app/scripts/disaster_recovery.py:ro" \
+        --entrypoint python api -I -B -c \
+        'from pathlib import Path; p=Path("/app/app/scripts/disaster_recovery.py"); compile(p.read_bytes(), str(p), "exec")' \
+        >/dev/null || { log_error "Public backup helper is unreadable under the selected API user"; return 1; }
 }
 
 capture_writer_identity() {
@@ -411,6 +454,17 @@ cleanup() {
             fi
         else
             log_error "Private writer metadata retained at $WRITER_METADATA_DIR"
+        fi
+    fi
+    if [ -n "$CONTAINER_HELPER_DIR" ] && [ -d "$CONTAINER_HELPER_DIR" ]; then
+        if [ "$exit_code" -eq 0 ]; then
+            rm -rf -- "$CONTAINER_HELPER_DIR"
+            cleanup_status=$?
+            if [ "$cleanup_status" -ne 0 ]; then
+                exit_code="$cleanup_status"
+            fi
+        else
+            log_error "Private public-helper staging retained for reconciliation"
         fi
     fi
     # Never remove a partial ciphertext after failure. Its off-host target may
@@ -978,12 +1032,13 @@ main() {
     STAGING_DIR="$(mktemp -d "${TMPDIR:-/tmp}/bisq-support-backup.XXXXXXXX")"
     mkdir -p "$STAGING_DIR/components/qdrant" "$STAGING_DIR/components/volumes" "$STAGING_DIR/manifest"
 
+    prepare_container_helper
     quiesce_services
 
     log_info "Creating Qdrant collection snapshots"
     compose run --rm --no-deps -T \
         --user "${APP_UID:-1001}:${APP_GID:-1001}" \
-        --volume "$DR_HELPER:/app/app/scripts/disaster_recovery.py:ro" \
+        --volume "$CONTAINER_DR_HELPER:/app/app/scripts/disaster_recovery.py:ro" \
         --entrypoint python api \
         -m app.scripts.disaster_recovery qdrant-export \
         > "$STAGING_DIR/components/qdrant/qdrant-snapshots.tar.gz"

@@ -175,7 +175,10 @@ def test_staged_recovery_uses_helper_from_reviewed_script_source(
 def test_staged_backup_mounts_reviewed_helper_into_api_image() -> None:
     backup = BACKUP_SCRIPT.read_text(encoding="utf-8")
 
-    assert '--volume "$DR_HELPER:/app/app/scripts/disaster_recovery.py:ro"' in backup
+    assert (
+        '--volume "$CONTAINER_DR_HELPER:/app/app/scripts/disaster_recovery.py:ro"'
+        in backup
+    )
 
 
 def test_staged_restore_mounts_reviewed_helper_for_all_qdrant_operations() -> None:
