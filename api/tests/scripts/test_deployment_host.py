@@ -63,7 +63,14 @@ def container(service, digit, install):
 @pytest.fixture
 def host(tmp_path, monkeypatch, module, protocol, records, request):
     plan, profile, approval = copy.deepcopy(records)
-    coupled = getattr(request, "param", False)
+    selection = getattr(request, "param", False)
+    coupled = selection is True
+    if selection == "web-only":
+        plan["services"] = ["web"]
+        plan["phases"] = protocol.phases_for(["web"])
+        approval["phases"] = plan["phases"]
+        approval["smoke_calls"] = []
+        approval["image_consumers"] = {"web": ["web"]}
     if coupled:
         approval["image_consumers"]["api"].append("matrix-alert-relay")
     instant = datetime.now(timezone.utc)
@@ -503,7 +510,10 @@ def install_phase_command_models(host, module, monkeypatch):
         elif argv[-1].endswith("/ready"):
             return b'{"status":"ready"}'
         elif argv[-1].endswith("/health"):
-            return b'{"build_id":"build-aaaaaaa"}'
+            build = dict(item.split("=", 1) for item in state["api"]["Config"]["Env"])[
+                "BUILD_ID"
+            ]
+            return json.dumps({"build_id": build}).encode()
         elif argv[-1].endswith("/login"):
             return b"fixture build-aaaaaaa"
         return b""
@@ -523,7 +533,7 @@ def install_phase_command_models(host, module, monkeypatch):
     return commands
 
 
-@pytest.mark.parametrize("host", [False, True], indirect=True)
+@pytest.mark.parametrize("host", [False, True, "web-only"], indirect=True)
 def test_complete_real_host_phase_sequence_with_fixture_commands(
     host, module, protocol, monkeypatch
 ):
@@ -547,19 +557,28 @@ def test_complete_real_host_phase_sequence_with_fixture_commands(
     # All builds precede the first switch; no API/web broad Compose invocation.
     actions = [name for name, _args in host.fixture_calls]
     assert actions.index("build") < actions.index("switch")
-    assert actions.count("build") == 2 and actions.count("switch") == 2
+    assert actions.count("build") == len(host.plan["services"])
+    assert actions.count("switch") == len(host.plan["services"])
     assert len([c for c in commands if c[:2] == ["docker", "unpause"]]) == 1
-    proof = module.read_record(host.operation / "receipts/switch_api.json")["payload"]
-    assert set(proof["consumers"]) == set(host._consumers("api"))
-    assert all(
-        state[name]["Image"] == state["api"]["Image"] for name in host._consumers("api")
-    )
-    api_switch = [args for action, args in host.fixture_calls if action == "switch"][0]
-    assert list(api_switch[1:]) == host._consumers("api")
+    if "api" in host.plan["services"]:
+        proof = module.read_record(host.operation / "receipts/switch_api.json")[
+            "payload"
+        ]
+        assert set(proof["consumers"]) == set(host._consumers("api"))
+        assert all(
+            state[name]["Image"] == state["api"]["Image"]
+            for name in host._consumers("api")
+        )
+        api_switch = [
+            args for action, args in host.fixture_calls if action == "switch"
+        ][0]
+        assert list(api_switch[1:]) == host._consumers("api")
     # A new lock owner's reconnect must reload every physical snapshot.
     host.expected.clear()
     host.preflight()
-    assert set(host.expected) == set(host._consumers("api") + ["web"])
+    assert set(host.expected) == set(
+        name for service in host.plan["services"] for name in host._consumers(service)
+    )
     host.verify_completion()
     if "matrix-alert-relay" in state:
         state["matrix-alert-relay"]["Mounts"][0]["RW"] = False
@@ -1147,3 +1166,155 @@ run_docker_compose() { printf '%s\\n' "$@"; }
     ]:
         result = subprocess.run(prefix + group, capture_output=True)
         assert result.returncode != 0 and not result.stdout
+
+
+@pytest.mark.parametrize("host", ["web-only"], indirect=True)
+def test_capture_resume_changed_api_ip_refreshes_proxy_once(
+    host, module, protocol, monkeypatch
+):
+    commands = install_phase_command_models(host, module, monkeypatch)
+    for phase in ("build", "pause_scheduler"):
+        save_receipt(host, module, protocol, phase, host.effect(phase, "f" * 64))
+    api = host.fixture_state["api"]
+    original = module.immutable(api)
+    api["NetworkSettings"] = {"Networks": {"fixture": {"IPAddress": "192.0.2.22"}}}
+    assert module.immutable(api) == original
+    assert host.baseline["old_build_ids"]["api"] == "build-ccccccc"
+    base = host._run
+    stale = [True]
+    observed_routes = []
+
+    def run(argv, label, *args, **kwargs):
+        if argv[-1].endswith("/api/health"):
+            observed_routes.append(argv)
+            if stale[0]:
+                stale[0] = False
+                raise module.HostCommandError("old_worker_upstream_unavailable")
+        return base(argv, label, *args, **kwargs)
+
+    monkeypatch.setattr(host, "_run", run)
+    host.verify_backup_resumption("prechange_backup", "f" * 64, module.now())
+    reloads = [c for c in commands if c[-3:] == ["nginx", "-s", "reload"]]
+    config_checks = [c for c in commands if c[-2:] == ["nginx", "-t"]]
+    assert len(reloads) == len(config_checks) == 1
+    assert len(observed_routes) == 2
+    assert commands.index(config_checks[0]) < commands.index(reloads[0])
+    assert host.fixture_state["scheduler"]["State"]["Paused"] is True
+    with pytest.raises(module.JournalError, match="record_already_exists"):
+        host.verify_backup_resumption("prechange_backup", "f" * 64, module.now())
+    assert len([c for c in commands if c[-3:] == ["nginx", "-s", "reload"]]) == 1
+
+
+@pytest.mark.parametrize("host", ["web-only"], indirect=True)
+@pytest.mark.parametrize("fault", ["config", "reload", "route"])
+def test_capture_route_failure_keeps_scheduler_held_and_reload_once(
+    host, module, protocol, monkeypatch, fault
+):
+    commands = install_phase_command_models(host, module, monkeypatch)
+    for phase in ("build", "pause_scheduler"):
+        save_receipt(host, module, protocol, phase, host.effect(phase, "f" * 64))
+    base = host._run
+    clock = iter([0, 0, 100])
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(clock))
+
+    def run(argv, label, *args, **kwargs):
+        bad = (
+            (fault == "config" and argv[-2:] == ["nginx", "-t"])
+            or (fault == "reload" and argv[-3:] == ["nginx", "-s", "reload"])
+            or (fault == "route" and argv[-1].endswith("/api/health"))
+        )
+        if bad:
+            commands.append(argv)
+            raise module.HostCommandError("route_fault", uncertain=fault == "reload")
+        return base(argv, label, *args, **kwargs)
+
+    monkeypatch.setattr(host, "_run", run)
+    with pytest.raises(module.JournalError):
+        host.verify_backup_resumption("prechange_backup", "f" * 64, module.now())
+    outcome = module.read_record(
+        host.root / "backup-routes/prechange_backup.result.json"
+    )
+    assert outcome["status"] == ("uncertain" if fault == "reload" else "failed")
+    assert host.fixture_state["scheduler"]["State"]["Paused"] is True
+    assert not (host.operation / "receipts/prechange_backup.json").exists()
+    assert len([c for c in commands if c[-3:] == ["nginx", "-s", "reload"]]) == (
+        0 if fault == "config" else 1
+    )
+
+
+@pytest.mark.parametrize("host", ["web-only"], indirect=True)
+@pytest.mark.parametrize("stage", ["resume", "completion"])
+def test_web_only_api_route_failure_blocks_resume_or_final_completion(
+    host, module, protocol, monkeypatch, stage
+):
+    commands = install_phase_command_models(host, module, monkeypatch)
+    for phase in host.plan["phases"]:
+        if stage == "resume" and phase == "resume_scheduler":
+            break
+        payload = (
+            payload_for(phase)
+            if phase.endswith(("_backup", "_restore"))
+            else host.effect(phase, "f" * 64)
+        )
+        save_receipt(host, module, protocol, phase, payload)
+    base = host._run
+
+    def run(argv, label, *args, **kwargs):
+        if argv[-1].endswith("/api/health"):
+            commands.append(argv)
+            return b'{"build_id":"build-deadbee"}'
+        return base(argv, label, *args, **kwargs)
+
+    monkeypatch.setattr(host, "_run", run)
+    before = len(commands)
+    with pytest.raises(module.JournalError, match="host_nginx_api_build"):
+        if stage == "resume":
+            host.effect("resume_scheduler", "f" * 64)
+        else:
+            host.verify_completion()
+    assert not any(
+        c[-3:] == ["nginx", "-s", "reload"] or c[:2] == ["docker", "unpause"]
+        for c in commands[before:]
+    )
+    assert not (host.root / "completion.json").exists()
+    assert host.active_marker.exists()
+    assert host.fixture_state["scheduler"]["State"]["Paused"] is (stage == "resume")
+
+
+@pytest.mark.parametrize("host", ["web-only"], indirect=True)
+def test_backup_route_deadline_uses_capture_start_without_double_subtraction(
+    host, module, monkeypatch
+):
+    instant = datetime.now(timezone.utc)
+    started = (instant - timedelta(seconds=10)).isoformat()
+    host.approval["deadline"] = (instant + timedelta(seconds=20)).isoformat()
+    host.pause_expected = True
+    host.fixture_state["scheduler"]["State"]["Paused"] = True
+    monkeypatch.setattr(host, "_prefix", lambda _phase: None)
+    observed = []
+    monkeypatch.setattr(
+        host, "_api_ready", lambda *_args, **_kwargs: observed.append(host.effect_until)
+    )
+    host.verify_backup_resumption("prechange_backup", "f" * 64, started)
+    assert observed == [module.timestamp(host.approval["deadline"])]
+    assert host.effect_until is None
+
+
+@pytest.mark.parametrize("body", [b"[]", b"null", b'"invalid"'])
+def test_final_api_route_rejects_nonobject_without_reload(
+    host, module, monkeypatch, body
+):
+    calls = []
+    monkeypatch.setattr(
+        host, "_run", lambda argv, *_args, **_kwargs: calls.append(argv) or body
+    )
+    with pytest.raises(module.JournalError, match="host_nginx_api_build"):
+        host._api_route("build-ccccccc")
+    assert len(calls) == 1
+    assert calls[0][0] == "curl"
+
+
+def test_nginx_master_restart_cannot_hide_as_same_container(host, module):
+    host.fixture_state["nginx"]["State"]["Pid"] += 1
+    with pytest.raises(module.JournalError, match="host_nginx_process_changed"):
+        host.verify_preservation()
