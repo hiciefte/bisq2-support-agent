@@ -100,7 +100,11 @@ def docker():
         sys.stdout.buffer.write(output.getvalue())
     elif args[0] == "exec":
         value = inspected(args)[0]
-        if args[2:] == ["nginx", "-s", "reload"]:
+        if args[2:] == ["nginx", "-t"]:
+            assert value["Config"]["Labels"]["com.docker.compose.service"] == "nginx"
+            state["nginx_config_checks"] = state.get("nginx_config_checks", 0) + 1
+            emit("synthetic nginx configuration valid")
+        elif args[2:] == ["nginx", "-s", "reload"]:
             state["nginx_reloads"] += 1
         elif args[-1] == "/app/.next/BUILD_ID":
             emit(state["build_ids"][value["Image"]])

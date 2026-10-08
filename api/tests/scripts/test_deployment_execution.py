@@ -65,6 +65,7 @@ def setup(tmp_path, monkeypatch):
     journal.exclusive_record(approval_path, approval)
     effects = []
     verifications = []
+    route_verifications = []
     fail = {"phase": None, "drop": False, "drop_final": False}
     commands = []
 
@@ -96,6 +97,11 @@ def setup(tmp_path, monkeypatch):
 
         def verify_preservation(self):
             return {"preserved": True}
+
+        def verify_backup_resumption(self, phase, intent, started):
+            route_verifications.append(phase)
+            if fail.get("route"):
+                raise journal.JournalError("synthetic_api_route_failed")
 
         def verify_completion(self):
             verifications.append("runtime")
@@ -713,3 +719,19 @@ def test_readonly_status_observes_capture_intent_without_promoting_success(setup
     (attempt / "canonical-backup.json").write_text("{}")
     status = owner._status()["phases"]["prechange_backup"]
     assert status == {"intent_present": True, "result_present": False}
+
+
+def test_capture_route_failure_has_no_success_receipt_or_capture_replay(setup):
+    setup.fail["route"] = True
+    with pytest.raises(
+        setup.journal.JournalError, match="phase_requires_reconciliation"
+    ):
+        run(setup)
+    remote = setup.server / setup.protocol.canonical_sha256(setup.plan)
+    assert not (remote / "receipts/prechange_backup.json").exists()
+    assert setup.effects == ["build", "pause_scheduler", "prechange_backup"]
+    assert setup.route_verifications == ["prechange_backup"]
+    with pytest.raises(setup.journal.JournalError, match="reconciliation_required"):
+        setup.client.execute(setup.operation, transport_factory=setup.Wire)
+    assert setup.effects.count("prechange_backup") == 1
+    assert "resume_scheduler" not in setup.effects

@@ -16,6 +16,7 @@ import sqlite3
 import stat
 import subprocess
 import tarfile
+import time
 import uuid
 from contextlib import closing
 from datetime import datetime, timedelta
@@ -815,6 +816,87 @@ class DeploymentHost:
         )
         return {"baseline_sha256": self.baseline_sha256, "preserved": True}
 
+    def _api_ready(self, current, effects, *, reload_nginx=False):
+        if "switch_api" in effects:
+            expected = effects["build"]["images"]["api"]
+            image, build = expected["image_id"], expected["build_id"]
+        else:
+            image = self.baseline["containers"]["api"]["Image"]
+            build = self.baseline["old_build_ids"]["api"]
+        self._ready(
+            "api",
+            current,
+            image,
+            build,
+            reload_nginx=reload_nginx,
+            wait_for_route=reload_nginx,
+        )
+
+    def verify_backup_resumption(self, phase, intent_sha256, started):
+        from .deployment_protocol import effect_guard
+
+        seconds = effect_guard(
+            self.plan, self.profile, self.approval, phase, current_time=started
+        )
+        require(phase.endswith("_backup"), "host_backup_phase")
+        require(is_digest(intent_sha256), "host_intent_digest")
+        self.effect_until = timestamp(started) + timedelta(seconds=seconds)
+        try:
+            self._verify_backup_resumption(phase, intent_sha256, started)
+        finally:
+            self.effect_until = None
+
+    def _verify_backup_resumption(self, phase, intent_sha256, started):
+        self.verify_preservation()
+        effects = self._state()
+        self._prefix(phase)
+        require(self.pause_expected, "host_scheduler_not_paused")
+        intent = {
+            "phase": phase,
+            "client_intent_sha256": intent_sha256,
+            "baseline_sha256": self.baseline_sha256,
+            "started_at": started,
+        }
+        directory = self.root / "backup-routes"
+        directory.mkdir(mode=0o700, exist_ok=True)
+        require(
+            not directory.is_symlink()
+            and stat.S_IMODE(directory.stat().st_mode) == 0o700
+            and directory.stat().st_uid == os.geteuid(),
+            "host_route_directory",
+        )
+        intent_path = directory / f"{phase}.intent.json"
+        result_path = directory / f"{phase}.result.json"
+        exclusive_record(intent_path, intent)
+        try:
+            # Canonical capture has resumed the same writers, whose endpoints can
+            # change without a CID/config change. Refresh the preserved proxy once;
+            # only read-only observations may repeat while old workers drain.
+            self._api_ready(self._inspect(), effects, reload_nginx=True)
+            self.verify_preservation()
+        except Exception as error:
+            exclusive_record(
+                result_path,
+                {
+                    "intent_sha256": digest(encode(intent)),
+                    "status": (
+                        "uncertain"
+                        if isinstance(error, HostCommandError) and error.uncertain
+                        else "failed"
+                    ),
+                    "finished_at": now(),
+                },
+            )
+            raise
+        exclusive_record(
+            result_path,
+            {
+                "intent_sha256": digest(encode(intent)),
+                "status": "succeeded",
+                "finished_at": now(),
+            },
+        )
+
     def verify_completion(self):
         self.verify_preservation()
         effects = self._state()
@@ -830,6 +912,8 @@ class DeploymentHost:
                     built["build_id"],
                     reload_nginx=False,
                 )
+        if "api" not in self.plan["services"]:
+            self._api_ready(current, effects)
         self._preserved(self._inspect())
         result = {
             "complete": True,
@@ -861,6 +945,11 @@ class DeploymentHost:
                 immutable(containers[service]) == immutable(expected),
                 "host_service_identity_changed",
             )
+            if service == "nginx":
+                require(
+                    process_identity(containers[service]) == process_identity(before),
+                    "host_nginx_process_changed",
+                )
             if service == "scheduler":
                 require(
                     process_identity(containers[service]) == process_identity(before),
@@ -989,7 +1078,7 @@ class DeploymentHost:
                 "protected_data": self._preserved_data(containers),
                 "scheduler_jobs": self._scheduler_jobs(containers["scheduler"]),
             }
-            for service in self.plan["services"]:
+            for service in sorted(set(self.plan["services"]) | {"api"}):
                 if service == "api":
                     values = dict(
                         item.split("=", 1)
@@ -1153,7 +1242,14 @@ class DeploymentHost:
         }
 
     def _ready(
-        self, service, current, expected_image, expected_build, *, reload_nginx=True
+        self,
+        service,
+        current,
+        expected_image,
+        expected_build,
+        *,
+        reload_nginx=True,
+        wait_for_route=False,
     ):
         require(current[service]["Image"] == expected_image, "host_running_image")
         self._shell(
@@ -1229,28 +1325,13 @@ class DeploymentHost:
             require(actual == expected_build, "host_web_build_id")
         nginx = current["nginx"]["Id"]
         if reload_nginx:
+            self._run(["docker", "exec", nginx, "nginx", "-t"], "nginx-config")
             self._run(
                 ["docker", "exec", nginx, "nginx", "-s", "reload"], "nginx-reload"
             )
         url = self.host["nginx_url"].rstrip("/")
         if service == "api":
-            routed = json.loads(
-                self._run(
-                    [
-                        "curl",
-                        "-fsS",
-                        "--retry",
-                        "0",
-                        "--connect-timeout",
-                        "5",
-                        "--max-time",
-                        "15",
-                        url + "/api/health",
-                    ],
-                    "route",
-                )
-            )
-            require(routed.get("build_id") == expected_build, "host_nginx_api_build")
+            self._api_route(expected_build, wait=wait_for_route)
         else:
             page = self._run(
                 [
@@ -1267,6 +1348,43 @@ class DeploymentHost:
                 "route",
             )
             require(expected_build.encode() in page, "host_nginx_web_build")
+
+    def _api_route(self, expected_build, *, wait=False):
+        until = time.monotonic() + self.host["readiness_timeout_seconds"]
+        while True:
+            remaining = until - time.monotonic()
+            require(remaining > 0, "host_nginx_api_route_unavailable")
+            try:
+                routed = json.loads(
+                    self._run(
+                        [
+                            "curl",
+                            "-fsS",
+                            "--retry",
+                            "0",
+                            "--connect-timeout",
+                            "5",
+                            "--max-time",
+                            "15",
+                            self.host["nginx_url"].rstrip("/") + "/api/health",
+                        ],
+                        "route",
+                        min(15, max(1, int(remaining))),
+                    )
+                )
+                if (
+                    isinstance(routed, dict)
+                    and routed.get("build_id") == expected_build
+                ):
+                    return
+                require(wait, "host_nginx_api_build")
+            except (HostCommandError, json.JSONDecodeError, UnicodeError):
+                if not wait:
+                    raise
+            require(wait, "host_nginx_api_route_unavailable")
+            remaining = until - time.monotonic()
+            require(remaining > 0, "host_nginx_api_route_unavailable")
+            time.sleep(min(0.2, remaining))
 
     def _switch(self, service, effects):
         require(
@@ -1486,6 +1604,7 @@ class DeploymentHost:
         require(
             current["scheduler"]["State"]["Paused"] is True, "host_scheduler_not_paused"
         )
+        self._api_ready(current, effects)
         if effects["pause_scheduler"]["paused_by_session"]:
             self._run(["docker", "unpause", before["Id"]], "unpause", 30)
         current = self._inspect()

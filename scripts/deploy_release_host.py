@@ -323,7 +323,7 @@ class Owner:
                     "deadline": self.approval["deadline"],
                 }
                 payload = capture_backup(self.profile, attempt, binding)
-                self.host.verify_preservation()
+                self.host.verify_backup_resumption(phase, intent, started)
             else:
                 try:
                     payload = self.host.effect(phase, intent)

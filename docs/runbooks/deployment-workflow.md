@@ -175,13 +175,29 @@ The supported sequence is:
 1. Verify the exact source, quality gate, fresh identities and preserved state;
    build immutable images while current services remain available.
 2. Pause the same scheduler only if this operation owns that change. Capture an
-   encrypted prechange backup, promptly resume its writers, transfer ciphertext
-   and verify a full isolated restore before switching services.
+   encrypted prechange backup, promptly resume its writers and verify API routing,
+   then transfer ciphertext and verify a full isolated restore before switching
+   services.
 3. Switch only selected API/web services to the recorded image IDs; verify actual
    readiness and proxy routing. Run each authorized API smoke once.
 4. Capture, transfer and fully restore-verify the postchange backup. Publish the
    pinned source and restore the scheduler's original pause state, preserving
    its process and held-job configuration.
+
+After each canonical capture resumes its writers, the controller validates the
+existing Nginx configuration and reloads it once to refresh upstream addresses.
+A writer can receive a different Docker address while keeping its container ID.
+The controller requires direct API readiness and the expected API build through
+`/api/health` before publishing the backup phase receipt. Route observations may
+repeat within the phase's remaining readiness budget while Nginx workers drain;
+the capture and reload are never retried. The Nginx container, configuration and
+master process remain preserved; workers may change during reload.
+
+API routing is checked again before releasing the scheduler and during final
+completion, including web-only releases that retain the original API image and
+build. These last checks do not reload Nginx or call a model. A failed route check
+cannot produce a successful completion; a failed post-capture check retains the
+capture evidence and scheduler hold for reconciliation.
 
 Success receipts bind plan/profile/intent and the fresh baseline hashes. Their
 phase-specific payloads carry immutable identities and required preservation,
