@@ -1318,3 +1318,135 @@ def test_nginx_master_restart_cannot_hide_as_same_container(host, module):
     host.fixture_state["nginx"]["State"]["Pid"] += 1
     with pytest.raises(module.JournalError, match="host_nginx_process_changed"):
         host.verify_preservation()
+
+
+def tracked_build_only_web_config(host):
+    import yaml
+
+    config = json.loads(host._shell("config"))
+    web = yaml.safe_load((ROOT / "docker/docker-compose.yml").read_text())["services"][
+        "web"
+    ]
+    assert "image" not in web and web["build"]["dockerfile"] == "docker/web/Dockerfile"
+    # `compose config` resolves the tracked relative context; it keeps image absent.
+    web["build"]["context"] = str(host.install)
+    config["services"]["web"] = web
+    return config
+
+
+def reset_preflight_config(host, module, monkeypatch, config):
+    (host.root / "baseline.private.json").unlink()
+    host.baseline = host.baseline_sha256 = None
+    original_shell = host._shell
+    monkeypatch.setattr(
+        host,
+        "_shell",
+        lambda action, *args, **kw: (
+            module.encode(config)
+            if action == "config"
+            else original_shell(action, *args, **kw)
+        ),
+    )
+
+
+@pytest.mark.parametrize("host", ["web-only"], indirect=True)
+def test_tracked_build_only_web_completes_immutable_switch_and_reconnect(
+    host, module, protocol, monkeypatch
+):
+    config = tracked_build_only_web_config(host)
+    reset_preflight_config(host, module, monkeypatch, config)
+    host.preflight()
+    baseline = (host.root / "baseline.private.json").read_bytes()
+    host.preflight()
+    assert (host.root / "baseline.private.json").read_bytes() == baseline
+    commands = install_phase_command_models(host, module, monkeypatch)
+    for phase in host.plan["phases"]:
+        payload = (
+            payload_for(phase)
+            if phase.endswith(("_backup", "_restore"))
+            else host.effect(phase, "f" * 64)
+        )
+        save_receipt(host, module, protocol, phase, payload)
+    assert host.verify_completion()["fresh_runtime_verified"]
+    for operation in ["build_web", "switch_web"]:
+        overlay = module.read_record(host.root / (operation + ".compose.json"))
+        assert set(overlay["services"]) == {"web"}
+        assert overlay["services"]["web"]["pull_policy"] == "never"
+    assert (
+        module.read_record(host.root / "switch_web.compose.json")["services"]["web"][
+            "image"
+        ]
+        == host.fixture_state["web"]["Image"]
+    )
+    assert host.fixture_state["api"]["Id"] == "1" * 64
+    assert not any(c[:2] == ["docker", "run"] and "smoke" in str(c) for c in commands)
+    host.expected.clear()
+    host.preflight()
+    assert set(host.expected) == {"web"}
+    host.verify_completion()
+
+
+@pytest.mark.parametrize("host", ["web-only"], indirect=True)
+@pytest.mark.parametrize(
+    "fault", ["shared_immutable", "explicit_reference", "container_reference"]
+)
+def test_build_only_web_unknown_consumers_refuse_before_baseline_or_effect(
+    host, module, monkeypatch, fault
+):
+    config = tracked_build_only_web_config(host)
+    if fault == "shared_immutable":
+        host.fixture_state["nginx"]["Image"] = host.fixture_state["web"]["Image"]
+    elif fault == "explicit_reference":
+        config["services"]["nginx"]["image"] = host.fixture_state["web"]["Config"][
+            "Image"
+        ]
+    else:
+        host.fixture_state["nginx"]["Config"]["Image"] = host.fixture_state["web"][
+            "Config"
+        ]["Image"]
+    reset_preflight_config(host, module, monkeypatch, config)
+    with pytest.raises(module.JournalError, match="host_unknown_image_consumer"):
+        host.preflight()
+    assert not (host.root / "baseline.private.json").exists()
+    assert not list(host.root.glob("*.intent.json"))
+
+
+@pytest.mark.parametrize("host", ["web-only"], indirect=True)
+@pytest.mark.parametrize("value", [None, "", " ", [], {}])
+def test_explicit_invalid_web_image_cannot_masquerade_as_omission(
+    host, module, monkeypatch, value
+):
+    config = tracked_build_only_web_config(host)
+    config["services"]["web"]["image"] = value
+    reset_preflight_config(host, module, monkeypatch, config)
+    with pytest.raises(module.JournalError, match="host_consumer_image"):
+        host.preflight()
+    assert not (host.root / "baseline.private.json").exists()
+
+
+@pytest.mark.parametrize("host", ["web-only"], indirect=True)
+@pytest.mark.parametrize(
+    "build", [None, "..", {}, {"context": None}, {"context": ""}, {"context": " "}]
+)
+def test_omitted_web_image_requires_normalized_nonempty_build_context(
+    host, module, monkeypatch, build
+):
+    config = tracked_build_only_web_config(host)
+    config["services"]["web"]["build"] = build
+    reset_preflight_config(host, module, monkeypatch, config)
+    with pytest.raises(module.JournalError, match="host_consumer_image"):
+        host.preflight()
+    assert not (host.root / "baseline.private.json").exists()
+
+
+@pytest.mark.parametrize("host", [False, True], indirect=True)
+def test_api_and_relay_still_require_explicit_shared_image_reference(
+    host, module, monkeypatch
+):
+    config = json.loads(host._shell("config"))
+    del config["services"]["api"]["image"]
+    config["services"]["api"]["build"] = {"context": str(host.install)}
+    reset_preflight_config(host, module, monkeypatch, config)
+    with pytest.raises(module.JournalError, match="host_consumer_image"):
+        host.preflight()
+    assert not (host.root / "baseline.private.json").exists()

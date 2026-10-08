@@ -990,14 +990,29 @@ class DeploymentHost:
             if service == "api" and "matrix-alert-relay" in services:
                 expected.append("matrix-alert-relay")
             require(self._consumers(service) == expected, "host_consumer_scope")
-            reference = services[service].get("image")
+            configuration = services[service]
+            build_only_web = service == "web" and "image" not in configuration
+            if build_only_web:
+                build = configuration.get("build")
+                require(
+                    isinstance(build, dict)
+                    and isinstance(build.get("context"), str)
+                    and bool(build["context"].strip()),
+                    "host_consumer_image",
+                )
+                # Compose does not materialize an image reference for build-only
+                # web. Use the existing container's reference, never guess a tag.
+                reference = containers[service]["Config"].get("Image")
+            else:
+                reference = configuration.get("image")
             require(
-                isinstance(reference, str) and bool(reference), "host_consumer_image"
+                isinstance(reference, str) and bool(reference.strip()),
+                "host_consumer_image",
             )
             image = containers[service]["Image"]
             require(
                 all(
-                    services[name].get("image") == reference
+                    (build_only_web or services[name].get("image") == reference)
                     and containers[name]["Image"] == image
                     for name in expected
                 ),
@@ -1009,6 +1024,10 @@ class DeploymentHost:
                     for name, configuration in services.items()
                     if configuration.get("image") == reference
                     or containers[name]["Image"] == image
+                    or (
+                        build_only_web
+                        and containers[name]["Config"].get("Image") == reference
+                    )
                 }
                 == set(expected),
                 "host_unknown_image_consumer",
