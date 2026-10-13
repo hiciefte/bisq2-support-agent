@@ -41,8 +41,6 @@ def test_support_guide_links_are_typed_and_section_bound():
 
 
 def test_internal_guide_and_code_links_stay_staff_only():
-    from app.services.public_knowledge_service import support_guide_url
-
     guide = StaffEvidence(
         id="public-doc",
         title="Guide",
@@ -53,8 +51,9 @@ def test_internal_guide_and_code_links_stay_staff_only():
     result = PublicContextService(llm_output()).preview(
         request(audience="staff_only", evidence=[guide])
     )
-    assert support_guide_url("synthetic-guide", internal=True) in result.rendered_note
-    assert "Internal support guide" in result.rendered_note
+    assert "Guide" not in result.rendered_note
+    assert "/admin/" not in result.rendered_note
+    assert "](" not in result.rendered_note
     with pytest.raises(ValidationError):
         request(evidence=[guide])
     code = StaffEvidence(
@@ -625,3 +624,249 @@ def test_release_note_citation_keeps_official_product_version_and_url():
     ):
         with pytest.raises(ValidationError):
             PublicEvidence(**{**evidence.model_dump(), "url": url})
+
+
+def test_compiled_guide_links_only_existing_eligible_public_references():
+    from app.channels.plugins.support_markdown import BISQ2_FAQ_ONION_BASE_URL
+    from app.services.public_knowledge_service import support_guide_url
+
+    wiki = "https://bisq.wiki/Restoring_your_wallet_from_seed"
+    faq = BISQ2_FAQ_ONION_BASE_URL.rstrip("/") + "/faq/how-to-request-help-42"
+    guide = StaffEvidence(
+        id="public-doc",
+        title="Recovery [guide]",
+        content="Compiled guidance remains internal evidence.",
+        kind="llm_wiki",
+        source_refs=[
+            wiki,
+            wiki,
+            faq,
+            "wiki:Support",
+            "faq:42",
+            "llm_wiki:other",
+            support_guide_url("synthetic-guide", internal=True),
+            support_guide_url("synthetic-guide") + "#canonical-support-answer",
+            "https://matrix.to/#/private-room/private-event",
+            "https://bitcoin.org/en/developer-guide",
+            "https://bisq.wiki.attacker.example/Support",
+            "https://user@bisq.wiki/Support",
+            "javascript:alert(1)",
+            "https://bisq.wiki/Support%0a@room",
+        ],
+        provenance={
+            "page_id": "synthetic-guide",
+            "status": "reviewed",
+            "reference_scope": "page_level_not_claim_level",
+        },
+    )
+    result = PublicContextService(llm_output()).preview(
+        request(audience="staff_only", evidence=[guide])
+    )
+    assert result.decision.source_ids == ["public-doc"]
+    assert "Further reading:" in result.rendered_note
+    assert "Recovery" not in result.rendered_note
+    assert "reviewed" not in result.rendered_note
+    assert result.rendered_note.count(f"]({wiki})") == 1
+    assert f"]({faq})" in result.rendered_note
+    for excluded in (
+        "/admin/",
+        "/knowledge/",
+        "matrix.to",
+        "bitcoin.org",
+        "attacker.example",
+        "user@",
+        "javascript:",
+        "%0a",
+        "wiki:Support",
+        "llm_wiki:other",
+    ):
+        assert excluded not in result.rendered_note
+    assert guide.url is None
+    assert guide.provenance["reference_scope"] == "page_level_not_claim_level"
+    with pytest.raises(ValidationError, match="staff-only"):
+        request(evidence=[guide])
+
+
+def test_staff_draft_prompt_is_user_facing_with_shared_public_reply_format():
+    public_llm = llm_output()
+    staff_llm = llm_output()
+    public = PublicContextService(public_llm).preview(request())
+    staff = PublicContextService(staff_llm).preview(request(audience="staff_only"))
+    assert staff.rendered_note == public.rendered_note
+    prompt = staff_llm.invoke.call_args.kwargs["system_content"]
+    assert "Address the original user directly" in prompt
+    assert "do not write instructions to staff" in prompt
+    assert "Cite the internal page" not in prompt
+    assert "Further reading, not claim-level citations" in prompt
+    for safeguard in (
+        "at most 55 words",
+        "Choose silence",
+        "preserve those relevant to each claim",
+        "No links, markdown, mentions",
+        "Never assume a prerequisite",
+    ):
+        assert safeguard in prompt
+
+
+def test_actual_reputation_guide_prefers_two_distinct_human_reading_links():
+    from pathlib import Path
+
+    import yaml
+    from app.channels.plugins.support_markdown import build_matrix_message_content
+
+    page = (
+        Path(__file__).parents[3]
+        / "data/knowledge/llm_wiki/pages/bisq2-reputation-basics.md"
+    )
+    metadata = yaml.safe_load(page.read_text().split("---", 2)[1])
+    refs = metadata["source_refs"]
+    assert len(refs) == 6
+    assert refs[0].startswith("https://github.com/")
+    guide = StaffEvidence(
+        id="public-doc",
+        title="Internal reputation guide",
+        content="Reviewed guidance.",
+        kind="llm_wiki",
+        source_refs=refs + refs[:1],
+        provenance={"status": "reviewed"},
+    )
+    result = PublicContextService(llm_output()).preview(
+        request(audience="staff_only", evidence=[guide])
+    )
+    html = build_matrix_message_content(result.rendered_note)["formatted_body"]
+    assert html.count("<a href=") == 2
+    assert 'href="https://bisq.wiki/Reputation"' in html
+    assert 'href="https://bisq.wiki/Bisq_Easy"' in html
+    assert ">Reputation</a>" in html and ">Bisq Easy</a>" in html
+    assert "github.com" not in html
+    assert "Internal reputation guide" not in html
+
+
+@pytest.mark.parametrize(
+    "kind,text",
+    [
+        (
+            "code_fact",
+            "The Bisq 2 source release documents this entry point; your installed release remains unconfirmed.",
+        ),
+        (
+            "live_tool",
+            "At 12:00 UTC, one Bisq 1 monitor reported no alert; this does not establish your connection health or Bisq 2 network status.",
+        ),
+    ],
+)
+def test_staff_proposed_reply_retains_user_useful_scope_without_internal_trace(
+    kind, text
+):
+    evidence = StaffEvidence(
+        id="public-doc",
+        title="Internal debug trace",
+        content="Scoped supplied evidence.",
+        kind=kind,
+        provenance={"applies_to_versions": ["2.1.9"]} if kind == "code_fact" else {},
+    )
+    llm = llm_output(text=text)
+    result = PublicContextService(llm).preview(
+        request(audience="staff_only", evidence=[evidence])
+    )
+    assert result.decision.text == text
+    assert len(text.split()) <= 55
+    assert "Internal debug trace" not in result.rendered_note
+    prompt = llm.invoke.call_args.kwargs["system_content"]
+    assert "not proof of the user's release or cause" in prompt
+    assert "timestamped observations from the configured node" in prompt
+    assert "Preserve unavailable, stale and partial coverage" in prompt
+    if kind == "code_fact":
+        assert "Source release: 2\\.1\\.9" in result.rendered_note
+
+
+def test_compiled_further_reading_limit_is_shared_across_selected_guides():
+    guides = [
+        StaffEvidence(
+            id="first",
+            title="Private first",
+            content="Guidance.",
+            kind="llm_wiki",
+            source_refs=["https://bisq.wiki/Reputation", "https://bisq.wiki/Bisq_Easy"],
+        ),
+        StaffEvidence(
+            id="second",
+            title="Private second",
+            content="Guidance.",
+            kind="llm_wiki",
+            source_refs=["https://bisq.wiki/Reputation", "https://bisq.wiki/Backup"],
+        ),
+    ]
+    result = PublicContextService(llm_output(source_ids=["first", "second"])).preview(
+        request(audience="staff_only", evidence=guides)
+    )
+    assert result.rendered_note.count("](") == 2
+    assert result.rendered_note.count("](https://bisq.wiki/Reputation)") == 1
+    assert "Backup" not in result.rendered_note
+    assert "Private" not in result.rendered_note
+
+
+@pytest.mark.parametrize(
+    "encoded_control", ["%E2%80%AE", "%E2%81%A6", "%E2%80%8B", "%7F"]
+)
+def test_guide_reference_caption_rejects_decoded_unicode_controls(encoded_control):
+    from app.channels.plugins.support_markdown import build_matrix_message_content
+
+    unsafe = "https://bisq.wiki/Support" + encoded_control + "evil"
+    guide = StaffEvidence(
+        id="public-doc",
+        title="Internal guide",
+        content="Guidance.",
+        kind="llm_wiki",
+        source_refs=[unsafe, "https://bisq.wiki/Support"],
+    )
+    result = PublicContextService(llm_output()).preview(
+        request(audience="staff_only", evidence=[guide])
+    )
+    assert unsafe not in result.rendered_note
+    assert "evil" not in result.rendered_note
+    html = build_matrix_message_content(result.rendered_note)["formatted_body"]
+    assert html.count("<a href=") == 1
+    assert 'href="https://bisq.wiki/Support"' in html
+    assert ">Support</a>" in html
+
+
+@pytest.mark.parametrize(
+    "selected_ids", [["code-guide", "wiki-guide"], ["wiki-guide", "code-guide"]]
+)
+def test_compiled_human_reading_preference_spans_all_selected_guides(selected_ids):
+    from app.channels.plugins.support_markdown import build_matrix_message_content
+
+    guides = [
+        StaffEvidence(
+            id="code-guide",
+            title="Internal source guide",
+            content="Guidance.",
+            kind="llm_wiki",
+            source_refs=[
+                "https://github.com/bisq-network/bisq/blob/main/README.md",
+                "https://github.com/bisq-network/bisq2/blob/main/README.md",
+            ],
+        ),
+        StaffEvidence(
+            id="wiki-guide",
+            title="Internal documentation guide",
+            content="Guidance.",
+            kind="llm_wiki",
+            source_refs=[
+                "https://bisq.wiki/Reputation",
+                "https://bisq.wiki/Bisq_Easy",
+                "https://bisq.wiki/Reputation",
+            ],
+        ),
+    ]
+    result = PublicContextService(llm_output(source_ids=selected_ids)).preview(
+        request(audience="staff_only", evidence=guides)
+    )
+    html = build_matrix_message_content(result.rendered_note)["formatted_body"]
+    assert result.rendered_note.count("Further reading:") == 1
+    assert html.count("<a href=") == 2
+    assert 'href="https://bisq.wiki/Reputation"' in html
+    assert 'href="https://bisq.wiki/Bisq_Easy"' in html
+    assert "github.com" not in html
+    assert "Internal" not in html

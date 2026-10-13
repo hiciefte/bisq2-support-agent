@@ -412,7 +412,8 @@ async def test_code_grounding_is_supplied_before_context_generation(runtime_case
     assert calls == ["grounding", "generation"]
     assert case.sources[0]["type"] == "code_fact"
     assert case.sources[0]["audience"] == "staff_only"
-    assert "Staff code evidence" in case.ai_draft_answer
+    assert "Staff code evidence" not in case.ai_draft_answer
+    assert "Source release: 2\\.1\\.13" in case.ai_draft_answer
     assert "Service.java" not in case.ai_draft_answer
     assert (
         case.channel_metadata["staff_grounding_brief"]["evidence"][0]["id"]
