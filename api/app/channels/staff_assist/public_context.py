@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from typing import Any, Literal
 from urllib.parse import quote, unquote, urlparse
 
@@ -182,6 +183,43 @@ def _is_support_guide_url(value: str) -> bool:
     )
 
 
+def _guide_reference_links(refs: list[str]) -> list[str]:
+    """Link eligible existing bibliography, without asserting claim-level support."""
+    eligible = []
+    for ref in refs:
+        try:
+            if any(unicodedata.category(char) in {"Cc", "Cf"} for char in unquote(ref)):
+                continue
+            PublicEvidence.public_bisq_source(ref)
+            # A compiled page is not an original public reference, even when
+            # its selected sections have separate publication approval.
+            if _is_support_guide_url(ref):
+                continue
+        except ValueError:
+            continue
+        if ref not in eligible:
+            eligible.append(ref)
+    # Human documentation precedes source-code provenance in a short reply.
+    eligible.sort(key=lambda ref: urlparse(ref).hostname == "github.com")
+    links = []
+    for ref in eligible[:2]:
+        parsed = urlparse(ref)
+        caption = (
+            "GitHub source"
+            if parsed.hostname == "github.com"
+            else unquote(parsed.path.rstrip("/").rsplit("/", 1)[-1])
+            .replace("_", " ")
+            .replace("-", " ")[:100]
+            or parsed.hostname
+        )
+        links.append(
+            f"[{_markdown_literal(caption)}]("
+            + quote(ref, safe=":/?#[]@!$&'()*+,;=%")
+            + ")"
+        )
+    return links
+
+
 def _code_inspection_links(refs: list[str]) -> list[str]:
     from app.services.rag.source_refs import parse_code_source_ref
 
@@ -225,26 +263,27 @@ class StaffEvidence(_StrictModel):
 
 ContextEvidence = PublicEvidence | StaffEvidence
 
-STAFF_CONTEXT_PROMPT = (
-    PUBLIC_CONTEXT_PROMPT.replace("for a public Bisq", "for a staff-only Bisq")
-    .replace(
-        "Use only supplied public evidence for facts, and return its IDs in source_ids.\n"
-        "Do not treat a prior AI answer as evidence. Do not use private code facts.",
-        "Use only supplied evidence for facts, and return its IDs in source_ids. "
-        "Reviewed internal LLM-wiki guidance is usable staff evidence; it is not a "
-        "public webpage. Its page-level references do not establish that every claim "
-        "appears in each original source. Cite the internal page for compiled claims, "
-        "and cite an original public source only when its supplied content supports "
-        "the claim. Code facts are staff investigation evidence with explicit source "
-        "release scope, not proof of the user's release or cause. Live tool results "
-        "are timestamped observations from the configured node, not whole-network "
-        "truth. Preserve unavailable, stale and partial coverage. Do not treat a prior "
-        "AI answer as evidence.",
-    )
-    .replace(
-        "the renderer adds the\nAI label and verified public links.",
-        "the renderer adds the\nAI label, public links and labeled internal provenance.",
-    )
+STAFF_CONTEXT_PROMPT = PUBLIC_CONTEXT_PROMPT.replace(
+    "You prepare a short AI context note for a public Bisq\n"
+    "support conversation with human support staff. You assist the existing discussion.",
+    "Draft the exact user-facing reply proposed for the public Bisq support "
+    "conversation. Address the original user directly. Staff will review this "
+    "same reply body; do not write instructions to staff or describe an internal "
+    "investigation, guide title, review status or evidence pipeline.",
+).replace(
+    "Use only supplied public evidence for facts, and return its IDs in source_ids.\n"
+    "Do not treat a prior AI answer as evidence. Do not use private code facts.",
+    "Use only supplied evidence for facts, and return its IDs in source_ids. "
+    "Reviewed internal LLM-wiki guidance is usable staff evidence; it is not a "
+    "public webpage. Its page-level references do not establish that every claim "
+    "appears in each original source. Return the compiled guide's evidence ID; "
+    "the renderer may list its eligible public references as Further reading, "
+    "not claim-level citations. Cite an original public source only when its "
+    "supplied content supports the claim. Code facts have explicit source "
+    "release scope, not proof of the user's release or cause. Live tool results "
+    "are timestamped observations from the configured node, not whole-network "
+    "truth. Preserve unavailable, stale and partial coverage. Do not treat a prior "
+    "AI answer as evidence.",
 )
 
 
@@ -463,6 +502,14 @@ class PublicContextService:
                 )
             diagnostic = "rendering_failed"
             links = []
+            guide_links = _guide_reference_links(
+                [
+                    ref
+                    for key in decision.source_ids
+                    if sources[key].kind == "llm_wiki" and not sources[key].url
+                    for ref in sources[key].source_refs
+                ]
+            )
             for key in decision.source_ids:
                 source = sources[key]
                 title = _markdown_literal(" ".join(source.title.split()))
@@ -477,51 +524,31 @@ class PublicContextService:
                     elif source.kind == "release_note":
                         citation = "Release notes: " + citation
                 else:
-                    labels = {
-                        "llm_wiki": "Internal support guide",
-                        "code_fact": "Staff code evidence",
-                        "live_tool": "Live tool observation",
-                    }
-                    citation = f"{labels[source.kind]}: {title}"
-                    if source.kind == "llm_wiki" and request.audience == "staff_only":
-                        from app.services.public_knowledge_service import (
-                            support_guide_url,
-                        )
-
-                        page_id = source.provenance.get("page_id")
-                        try:
-                            internal_url = (
-                                support_guide_url(page_id, internal=True)
-                                if isinstance(page_id, str)
-                                else None
-                            )
-                        except ValueError:
-                            internal_url = None
-                        if internal_url:
-                            citation = (
-                                f"Internal support guide: [{title}]({internal_url})"
-                            )
-                    status = source.provenance.get("status")
-                    if source.kind == "llm_wiki" and status in {"reviewed", "active"}:
-                        citation += f" ({status})"
+                    # Internal IDs, titles and debug provenance stay in stored
+                    # evidence; useful source-release qualifications remain.
+                    references = []
+                    if source.kind == "code_fact":
+                        references = _code_inspection_links(source.source_refs)
+                    citation = (
+                        "Further reading: " + " · ".join(references)
+                        if references
+                        else ""
+                    )
                     if source.kind == "code_fact":
                         releases = source.provenance.get("applies_to_versions") or []
-                        if releases:
-                            citation += (
-                                " (source release: "
-                                + _markdown_literal(
-                                    ", ".join(str(release) for release in releases)
-                                )
-                                + ")"
+                        scope = (
+                            "Source release: "
+                            + _markdown_literal(
+                                ", ".join(str(release) for release in releases)
                             )
-                        else:
-                            citation += " (source release unconfirmed)"
-                        if request.audience == "staff_only":
-                            code_links = _code_inspection_links(source.source_refs)
-                            if code_links:
-                                citation += " · " + " · ".join(code_links)
-                if citation not in links:
+                            if releases
+                            else "Source release unconfirmed"
+                        )
+                        citation = scope + (" · " + citation if citation else "")
+                if citation and citation not in links:
                     links.append(citation)
+            if guide_links:
+                links.append("Further reading: " + " · ".join(guide_links))
             # Only deterministic citations are Markdown; model prose stays literal.
             paragraph = " ".join(text.split())
             plain_text = _markdown_literal(paragraph)

@@ -178,11 +178,8 @@ async def test_mixed_public_and_compiled_evidence_keeps_internal_page_unlinked()
     )
     llm = answer([internal.id])
     preview = PublicContextService(llm).preview(request)
-    assert "Internal support guide: [Support](" in preview.rendered_note
-    assert (
-        "/admin/knowledge-updates/pages/reviewed-playbook) (reviewed)"
-        in preview.rendered_note
-    )
+    assert "Internal support guide" not in preview.rendered_note
+    assert "/admin/" not in preview.rendered_note
     assert "https://" not in preview.rendered_note
     assert "wiki:Support" not in preview.rendered_note
     assert "page-level references" in llm.invoke.call_args.kwargs["system_content"]
@@ -243,7 +240,7 @@ async def test_reviewed_external_primary_provenance_is_internal_evidence_not_pub
         )
     )
     assert ref not in preview.rendered_note
-    assert "Internal support guide" in preview.rendered_note
+    assert "Internal support guide" not in preview.rendered_note
 
 
 @pytest.mark.asyncio
@@ -391,7 +388,8 @@ async def test_wrong_release_code_is_excluded_and_matching_code_retains_scope():
             audience="staff_only",
         )
     )
-    assert "source release: 2\\.1\\.9" in preview.rendered_note
+    assert "Source release: 2\\.1\\.9" in preview.rendered_note
+    assert json.loads(evidence.content)["source_releases"] == ["2.1.9"]
 
 
 @pytest.mark.asyncio
@@ -723,3 +721,28 @@ async def test_linked_guide_survives_evidence_cap_without_duplicate_faq_or_guide
     assert sum(source.kind == "faq" for source in result.evidence) == 1
     assert len({source.id for source in result.evidence}) == 8
     assert result.evidence == again.evidence
+
+
+@pytest.mark.asyncio
+async def test_current_compiled_public_refs_render_as_further_reading_not_new_evidence():
+    wiki = "https://bisq.wiki/Restoring_your_wallet_from_seed"
+    current = compiled(source_refs=[wiki])
+    stale = compiled(source_refs=["https://bisq.wiki/Stale_reference"])
+    result = await compiled_resolver(current).resolve(
+        question="Support?", documents=[stale]
+    )
+    assert [source.kind for source in result.evidence] == ["llm_wiki"]
+    source = result.evidence[0]
+    assert source.source_refs == [wiki]
+    assert source.provenance["reference_scope"] == "page_level_not_claim_level"
+    preview = PublicContextService(answer([source.id])).preview(
+        PublicContextRequest(
+            question="Support?", evidence=result.evidence, audience="staff_only"
+        )
+    )
+    assert "Further reading:" in preview.rendered_note
+    assert f"]({wiki})" in preview.rendered_note
+    assert "/admin/" not in preview.rendered_note
+    assert "Stale_reference" not in preview.rendered_note
+    assert "Internal support guide" not in preview.rendered_note
+    assert preview.decision.source_ids == [source.id]
