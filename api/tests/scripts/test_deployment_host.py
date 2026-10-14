@@ -64,7 +64,7 @@ def container(service, digit, install):
 def host(tmp_path, monkeypatch, module, protocol, records, request):
     plan, profile, approval = copy.deepcopy(records)
     selection = getattr(request, "param", False)
-    coupled = selection is True
+    coupled = selection is True or selection == "distinct-relay"
     if selection == "web-only":
         plan["services"] = ["web"]
         plan["phases"] = protocol.phases_for(["web"])
@@ -108,7 +108,10 @@ def host(tmp_path, monkeypatch, module, protocol, records, request):
     }
     if coupled:
         state["matrix-alert-relay"] = container("matrix-alert-relay", "5", install)
-        state["matrix-alert-relay"]["Image"] = state["api"]["Image"]
+        if selection != "distinct-relay":
+            state["matrix-alert-relay"]["Image"] = state["api"]["Image"]
+        else:
+            state["matrix-alert-relay"]["Config"]["Env"][0] = "BUILD_ID=build-ddddddd"
     calls = []
 
     def shell(action, *args, **kwargs):
@@ -153,6 +156,12 @@ def host(tmp_path, monkeypatch, module, protocol, records, request):
         raise AssertionError(argv)
 
     monkeypatch.setattr(obj, "_run", route)
+
+    def original_image(reference):
+        calls.append(("image", (reference,)))
+        return {"Id": reference}
+
+    monkeypatch.setattr(obj, "_image", original_image)
     obj.preflight()
     obj.fixture_state, obj.fixture_calls = state, calls
     return obj
@@ -545,7 +554,9 @@ def install_phase_command_models(host, module, monkeypatch):
     return commands
 
 
-@pytest.mark.parametrize("host", [False, True, "web-only"], indirect=True)
+@pytest.mark.parametrize(
+    "host", [False, True, "distinct-relay", "web-only"], indirect=True
+)
 def test_complete_real_host_phase_sequence_with_fixture_commands(
     host, module, protocol, monkeypatch
 ):
@@ -982,7 +993,7 @@ def test_context_drain_proof_refuses_malformed_or_unknown_metadata(
 
 @pytest.mark.parametrize("host", [False, True], indirect=True)
 @pytest.mark.parametrize(
-    "fault", ["scope", "runtime", "config", "unknown_runtime", "unknown_config"]
+    "fault", ["scope", "config", "unknown_runtime", "unknown_config"]
 )
 def test_image_consumer_preflight_refuses_ambiguous_topology_before_effects(
     host, module, monkeypatch, fault
@@ -994,7 +1005,7 @@ def test_image_consumer_preflight_refuses_ambiguous_topology_before_effects(
             ["api"] if "matrix-alert-relay" in state else ["api", "matrix-alert-relay"]
         )
         code = "host_consumer_scope"
-    elif fault in {"runtime", "config"}:
+    elif fault == "config":
         if "matrix-alert-relay" not in state:
             state["matrix-alert-relay"] = container(
                 "matrix-alert-relay", "5", host.install
@@ -1004,10 +1015,7 @@ def test_image_consumer_preflight_refuses_ambiguous_topology_before_effects(
                 config["services"]["api"]
             )
             host.approval["image_consumers"]["api"].append("matrix-alert-relay")
-        if fault == "runtime":
-            state["matrix-alert-relay"]["Image"] = "sha256:" + "9" * 64
-        else:
-            config["services"]["matrix-alert-relay"]["image"] = "another-image"
+        config["services"]["matrix-alert-relay"]["image"] = "another-image"
         code = "host_consumer_image"
     else:
         if fault == "unknown_runtime":
@@ -1078,7 +1086,7 @@ def test_relay_failure_prevents_switch_success_and_smokes(
     assert not (host.root / "switch_matrix-alert-relay.container.private.json").exists()
 
 
-@pytest.mark.parametrize("host", [True], indirect=True)
+@pytest.mark.parametrize("host", [True, "distinct-relay"], indirect=True)
 @pytest.mark.parametrize(
     "changed", [["api"], ["matrix-alert-relay"], ["api", "matrix-alert-relay"]]
 )
@@ -1112,8 +1120,8 @@ def test_known_failed_coupled_switch_restores_both_even_after_partial_recreate(
     assert ready == ["api", "matrix-alert-relay"]
     assert set(result["consumers"]) == set(ready)
     assert all(
-        item["image_id"] == "sha256:" + "1" * 64
-        for item in result["consumers"].values()
+        item["image_id"] == host.baseline["containers"][name]["Image"]
+        for name, item in result["consumers"].items()
     )
     assert result["rollout_complete"] is False
     assert host.fixture_state["scheduler"]["State"]["Paused"] is True
@@ -1564,3 +1572,81 @@ def test_bad_route_does_not_block_readonly_preservation_or_rewrite_saved_baselin
     assert host.verify_preservation()["preserved"] is True
     assert baseline.read_bytes() == original
     assert not list(host.root.glob("*.intent.json"))
+
+
+@pytest.mark.parametrize("host", ["distinct-relay"], indirect=True)
+def test_explicit_api_relay_preflight_preserves_and_inspects_both_original_images(
+    host, module
+):
+    api, relay = (
+        host.baseline["containers"][name] for name in ("api", "matrix-alert-relay")
+    )
+    assert api["Image"] != relay["Image"]
+    assert api["Config"]["Env"] != relay["Config"]["Env"]
+    images = [args[0] for action, args in host.fixture_calls if action == "image"]
+    assert images == sorted([api["Image"], relay["Image"]])
+    baseline = (host.root / "baseline.private.json").read_bytes()
+    host.preflight()
+    assert (host.root / "baseline.private.json").read_bytes() == baseline
+    assert not list(host.root.glob("*.intent.json"))
+
+
+@pytest.mark.parametrize("host", ["distinct-relay"], indirect=True)
+@pytest.mark.parametrize(
+    "sharing", ["api_image", "relay_image", "compose_ref", "runtime_ref"]
+)
+def test_distinct_api_relay_unknown_consumer_refuses_before_baseline(
+    host, module, monkeypatch, sharing
+):
+    config = json.loads(host._shell("config"))
+    if sharing.endswith("image"):
+        name = "api" if sharing == "api_image" else "matrix-alert-relay"
+        host.fixture_state["nginx"]["Image"] = host.fixture_state[name]["Image"]
+        assert (
+            config["services"]["nginx"]["image"] != config["services"]["api"]["image"]
+        )
+        assert (
+            host.fixture_state["nginx"]["Config"]["Image"]
+            != config["services"]["api"]["image"]
+        )
+    elif sharing == "compose_ref":
+        config["services"]["nginx"]["image"] = config["services"]["api"]["image"]
+    else:
+        host.fixture_state["nginx"]["Config"]["Image"] = config["services"]["api"][
+            "image"
+        ]
+    reset_preflight_config(host, module, monkeypatch, config)
+    with pytest.raises(module.JournalError, match="host_unknown_image_consumer"):
+        host.preflight()
+    assert not (host.root / "baseline.private.json").exists()
+    assert not list(host.root.glob("*.intent.json"))
+
+
+@pytest.mark.parametrize("host", ["distinct-relay"], indirect=True)
+@pytest.mark.parametrize("consumer", ["api", "matrix-alert-relay"])
+@pytest.mark.parametrize("fault", ["missing", "wrong_identity"])
+def test_distinct_api_relay_missing_original_image_refuses_before_baseline(
+    host, module, monkeypatch, consumer, fault
+):
+    config = json.loads(host._shell("config"))
+    reset_preflight_config(host, module, monkeypatch, config)
+    target = host.fixture_state[consumer]["Image"]
+    inspected = []
+
+    def image(reference):
+        inspected.append(reference)
+        if reference == target:
+            if fault == "missing":
+                raise module.HostCommandError("fixture_image_missing")
+            return {"Id": "sha256:" + "9" * 64}
+        return {"Id": reference}
+
+    monkeypatch.setattr(host, "_image", image)
+    with pytest.raises(
+        module.JournalError, match="fixture_image_missing|host_original_image_identity"
+    ):
+        host.preflight()
+    assert target in inspected
+    assert not (host.root / "baseline.private.json").exists()
+    assert not list(host.root.glob("*.intent.json"))
+    assert not any(action in {"build", "switch"} for action, _ in host.fixture_calls)

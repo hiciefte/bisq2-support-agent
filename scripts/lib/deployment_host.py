@@ -1009,11 +1009,10 @@ class DeploymentHost:
                 isinstance(reference, str) and bool(reference.strip()),
                 "host_consumer_image",
             )
-            image = containers[service]["Image"]
+            images = {containers[name]["Image"] for name in expected}
             require(
                 all(
-                    (build_only_web or services[name].get("image") == reference)
-                    and containers[name]["Image"] == image
+                    build_only_web or services[name].get("image") == reference
                     for name in expected
                 ),
                 "host_consumer_image",
@@ -1023,11 +1022,8 @@ class DeploymentHost:
                     name
                     for name, configuration in services.items()
                     if configuration.get("image") == reference
-                    or containers[name]["Image"] == image
-                    or (
-                        build_only_web
-                        and containers[name]["Config"].get("Image") == reference
-                    )
+                    or containers[name]["Image"] in images
+                    or containers[name]["Config"].get("Image") == reference
                 }
                 == set(expected),
                 "host_unknown_image_consumer",
@@ -1078,6 +1074,18 @@ class DeploymentHost:
         else:
             require(not effects, "host_baseline_missing")
             self._consumer_topology(config, containers)
+            if "api" in self.plan[
+                "services"
+            ] and "matrix-alert-relay" in self._consumers("api"):
+                # A shared Compose reference may have been recreated at different
+                # releases. Each immutable original must exist for exact rollback.
+                for image in sorted(
+                    {containers[name]["Image"] for name in self._consumers("api")}
+                ):
+                    require(
+                        self._image(image)["Id"] == image,
+                        "host_original_image_identity",
+                    )
             build_id = self._shell("build-id", self.candidate).decode().strip()
             require(
                 bool(re.fullmatch(r"build-[0-9a-f]{7,40}", build_id))
