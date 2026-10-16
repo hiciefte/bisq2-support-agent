@@ -28,9 +28,14 @@ from app.channels.security import PIIDetector
 from app.channels.staff import resolve_channel_staff_resolver
 from app.channels.staff_assist.context_incidents import (
     ContextIncidentStore,
+    answer_fragment,
     context_only,
-    incident_texts,
+    diagnostic_link,
+    helper_question,
+    incident_question,
     new_issue,
+    quoted_question,
+    speaker_labels,
 )
 from app.channels.staff_assist.context_trial import (
     ContextTrial,
@@ -310,6 +315,7 @@ class MatrixContextRuntime:
             incoming, self._trial.trial_id if self._trial else None
         )
         if case_id is not None:
+            activated = False
             if not duplicate:
                 # Order: intake lock, per-case delivery lock, then DB write.
                 # The final publication decision and transport own this same
@@ -318,7 +324,7 @@ class MatrixContextRuntime:
                 # in-flight result and is retained for review, never replayed.
                 lock = await service._acquire_delivery_lock(case_id)
                 try:
-                    await incidents.append(
+                    activated = await incidents.append(
                         case_id,
                         incoming,
                         question,
@@ -326,6 +332,10 @@ class MatrixContextRuntime:
                     )
                 finally:
                     await service._release_delivery_lock(case_id, lock)
+            if activated:
+                await self._start_case(
+                    incoming, channel, case_id, question, policy_service
+                )
             return False
         # Detached edits, counts, offers and acknowledgments are not incidents.
         # Non-question inputs still reach this path so they can enrich a known
@@ -347,6 +357,13 @@ class MatrixContextRuntime:
             )
             if not new_issue(question)
             else None
+        )
+        candidate_ids = await incidents.candidate_links(
+            incoming, self._trial.trial_id if self._trial else None
+        )
+        unresolved_quote = quoted_question(question) is not None
+        provisional = (
+            helper_question(question) or bool(candidate_ids) or unresolved_quote
         )
         case = await service.create_escalation(
             EscalationCreate(
@@ -371,6 +388,19 @@ class MatrixContextRuntime:
                     "model_call_status": "not_started",
                     "incident_messages": [incidents.message(incoming, question)],
                     "incident_frozen": False,
+                    "conversation_membership": (
+                        "provisional" if provisional else "confirmed"
+                    ),
+                    **(
+                        {"conversation_requester_id": incoming.user.user_id}
+                        if not provisional
+                        else {}
+                    ),
+                    **(
+                        {"candidate_conversation_ids": candidate_ids}
+                        if candidate_ids
+                        else {}
+                    ),
                     **(
                         {"incident_unresolved_relation": unresolved_relation}
                         if unresolved_relation
@@ -385,35 +415,73 @@ class MatrixContextRuntime:
             )
         )
         store = ContextReviewStore(service.repository.db_path)
+        await store.update(case.id, conversation_id=str(case.id))
+        for candidate_id in candidate_ids:
+            candidate = await service.repository.get_by_id(candidate_id)
+            if candidate is not None:
+                pending = (candidate.channel_metadata or {}).get(
+                    "conversation_pending_candidate_ids", []
+                )
+                await store.update(
+                    candidate_id,
+                    conversation_pending_candidate_ids=list(
+                        dict.fromkeys([*pending, case.id])
+                    ),
+                )
         if unresolved_relation:
             await store.update(
                 case.id, status="deferred", reason="incident_relation_unresolved"
             )
             return False
-        if not await store.reserve(case.id):
-            return False
-        reason = await self._trial_reason()
-        if reason:
-            await store.update(case.id, status="deferred", reason=reason)
-            return False
-        self._schedule_expiry()
-        if self._closed:
-            await store.update(case.id, status="deferred", reason="runtime_stopped")
-            return False
-        if len(self._tasks) >= 100:
+        if provisional:
             await store.update(
-                case.id, status="needs_human", reason="context_capacity_reached"
+                case.id,
+                status="deferred",
+                reason=(
+                    "conversation_membership_unresolved"
+                    if candidate_ids or unresolved_quote
+                    else "conversation_helper_only"
+                ),
             )
             return False
+        await self._start_case(incoming, channel, case.id, question, policy_service)
+        return False
+
+    async def _start_case(
+        self,
+        incoming: Any,
+        channel: Any,
+        case_id: int,
+        question: str,
+        policy_service: Any,
+    ) -> None:
+        service = self.runtime.resolve_optional("escalation_service")
+        store = ContextReviewStore(service.repository.db_path)
+        if not await self._case_is_open(case_id):
+            return
+        if not await store.reserve(case_id):
+            return
+        reason = await self._trial_reason()
+        if reason:
+            await store.update(case_id, status="deferred", reason=reason)
+            return
+        self._schedule_expiry()
+        if self._closed:
+            await store.update(case_id, status="deferred", reason="runtime_stopped")
+            return
+        if len(self._tasks) >= 100:
+            await store.update(
+                case_id, status="needs_human", reason="context_capacity_reached"
+            )
+            return
         task = asyncio.create_task(
-            self._run_case(incoming, channel, case.id, store, question, policy_service)
+            self._run_case(incoming, channel, case_id, store, question, policy_service)
         )
         self._tasks.add(task)
-        self._active_cases.add(case.id)
+        self._active_cases.add(case_id)
         task.add_done_callback(self._tasks.discard)
-        task.add_done_callback(lambda _: self._active_cases.discard(case.id))
+        task.add_done_callback(lambda _: self._active_cases.discard(case_id))
         # Persisted work is queued, not a delivered customer response.
-        return False
 
     async def _run_case(
         self,
@@ -449,13 +517,50 @@ class MatrixContextRuntime:
                 )
                 return
             if messages:
-                anchor = messages[-1]
+                service = self.runtime.resolve_optional("escalation_service")
+                case = await service.repository.get_by_id(case_id)
+                requester = (case.channel_metadata or {}).get(
+                    "conversation_requester_id", case.user_id
+                )
+                anchor = next(
+                    (
+                        message
+                        for message in reversed(messages)
+                        if message.get("sender_id", case.user_id) == requester
+                    ),
+                    messages[-1],
+                )
+                relations = {
+                    key: anchor[key]
+                    for key in (
+                        "reply_to_event_id",
+                        "thread_root_event_id",
+                        "replaces_event_id",
+                    )
+                    if anchor.get(key)
+                }
+                source_metadata = {
+                    key: value
+                    for key, value in incoming.channel_metadata.items()
+                    if key
+                    not in {
+                        "reply_to_event_id",
+                        "thread_root_event_id",
+                        "replaces_event_id",
+                    }
+                }
                 incoming = incoming.model_copy(
                     update={
                         "message_id": anchor["event_id"],
                         "question": anchor["text"],
+                        "user": incoming.user.model_copy(
+                            update={"user_id": anchor.get("sender_id", case.user_id)}
+                        ),
                         "channel_metadata": {
-                            **incoming.channel_metadata,
+                            **source_metadata,
+                            **relations,
+                            "incident_original_owner": case.user_id,
+                            "conversation_requester_id": requester,
                             "incident_source_ids": [
                                 message["event_id"] for message in messages
                             ],
@@ -727,7 +832,13 @@ class MatrixContextRuntime:
             return False
         # Refresh after model work. Source edits/redactions and intervening staff
         # participation suppress publication; the durable review remains available.
-        _, reason = await self._read_source(incoming)
+        current_snapshot, reason = await self._read_source(incoming)
+        if (
+            not reason
+            and _digest([m.model_dump() for m in current_snapshot])
+            != versions["source_context_version"]
+        ):
+            reason = "source_context_changed"
         if (
             reason
             or not is_staff_context_enabled(policy_service, "matrix")
@@ -741,9 +852,32 @@ class MatrixContextRuntime:
         source_event_id = (getattr(current_case, "channel_metadata", None) or {}).get(
             "source_event_id", incoming.message_id
         )
+        captured = incoming.channel_metadata.get("incident_context", [])
+        multiple_speakers = (
+            len(
+                {
+                    message.get("sender_id", incoming.user.user_id)
+                    for message in captured
+                }
+            )
+            > 1
+        )
+        root_question = (
+            incident_question(
+                captured,
+                focal_sender=incoming.channel_metadata.get(
+                    "conversation_requester_id", incoming.user.user_id
+                ),
+                legacy_sender=incoming.channel_metadata.get(
+                    "incident_original_owner", incoming.user.user_id
+                ),
+            )
+            if multiple_speakers
+            else question
+        )
         root = (
             f"Support question · staff review #{case_id}\n\n"
-            + _markdown_literal(question)
+            + _markdown_literal(root_question)
             + "\n\nSource: "
             + matrix_link(room_id, source_event_id)
             + "\n\nAI context is in this thread. Review in Admin; approval stays internal."
@@ -788,7 +922,13 @@ class MatrixContextRuntime:
                 staff_root_event_id=root_id,
                 staff_thread_url=matrix_link(staff_room, root_id),
             )
-            _, reason = await self._read_source(incoming)
+            current_snapshot, reason = await self._read_source(incoming)
+            if (
+                not reason
+                and _digest([m.model_dump() for m in current_snapshot])
+                != versions["source_context_version"]
+            ):
+                reason = "source_context_changed"
             if reason or not await self._case_is_open(case_id):
                 await store.update(
                     case_id, status="deferred", reason=reason or "review_changed"
@@ -1040,11 +1180,28 @@ class MatrixContextRuntime:
             ):
                 return [], "source_stale"
             if (
-                getattr(observed, "sender", incoming.user.user_id)
-                != incoming.user.user_id
+                getattr(observed, "sender", None)
+                != message.get(
+                    "sender_id",
+                    incoming.channel_metadata.get(
+                        "incident_original_owner", incoming.user.user_id
+                    ),
+                )
                 or sanitize_question(context_text(observed)) != message["text"]
             ):
                 return [], "source_changed_or_redacted"
+            if "sender_id" in message:
+                saved_relations = {
+                    key: message[key]
+                    for key in (
+                        "reply_to_event_id",
+                        "thread_root_event_id",
+                        "replaces_event_id",
+                    )
+                    if message.get(key)
+                }
+                if context_relationships(observed) != saved_relations:
+                    return [], "source_relationship_changed"
         # Matrix returns preceding events newest first. Check the complete
         # bounded window before selecting a smaller chronological prompt history.
         for item in before + after:
@@ -1066,11 +1223,188 @@ class MatrixContextRuntime:
                 and getattr(item, "event_id", None) not in incident_ids
             ):
                 return [], "source_context_changed"
-        # Only the incident owner's captured messages enter model context.
-        # Unrelated room participants are never presented as this user's facts.
-        messages = [
-            RoomMessage(role="user", content=text)
-            for text in incident_texts(saved)[:-1]
-            if not context_only(text)
-        ]
-        return messages[-10:], None
+        return self._source_discussion(incoming, event, before, after, saved, resolver)
+
+    def _source_discussion(
+        self,
+        incoming: Any,
+        event: Any,
+        before: list[Any],
+        after: list[Any],
+        saved: list[dict[str, Any]],
+        resolver: Any,
+    ) -> tuple[list[RoomMessage], str | None]:
+        """Bound possibly unrelated surrounding discussion without assigning ownership."""
+        owner = incoming.user.user_id
+        client = self.runtime.resolve_optional("matrix_client")
+        anchor_time = event.server_timestamp / 1000
+        now = datetime.now(timezone.utc).timestamp()
+        timeline = list(reversed(before)) + [event] + after
+        visible = {getattr(item, "event_id", None): item for item in timeline}
+        prior_ids = {getattr(item, "event_id", None) for item in before}
+        replaced_ids = {item.get("replaces_event_id") for item in saved}
+        invalidated_ids = replaced_ids | {
+            context_relationships(item).get("replaces_event_id")
+            or getattr(item, "redacts", None)
+            or (getattr(item, "source", None) or {}).get("redacts")
+            for item in timeline
+        }
+        captured = {
+            item["event_id"]: (
+                item.get(
+                    "sender_id",
+                    incoming.channel_metadata.get("incident_original_owner", owner),
+                ),
+                item["text"],
+            )
+            for item in saved
+            if item["event_id"] not in replaced_ids
+            and item["event_id"] != incoming.message_id
+            and not context_only(item["text"])
+        }
+        relations = context_relationships(event)
+        reply_target = relations.get(
+            "reply_to_event_id"
+        ) or incoming.channel_metadata.get("reply_to_event_id")
+        native_root = (
+            relations.get("thread_root_event_id")
+            or incoming.channel_metadata.get("thread_root_event_id")
+            or reply_target
+        )
+        scoped_ids = {incoming.message_id, *captured}
+        if native_root:
+            scoped_ids.add(native_root)
+            # Follow only explicit edges within the already bounded server read.
+            for _ in timeline:
+                previous_size = len(scoped_ids)
+                for item in timeline:
+                    relation = context_relationships(item)
+                    target = relation.get("thread_root_event_id") or relation.get(
+                        "reply_to_event_id"
+                    )
+                    if target in scoped_ids:
+                        scoped_ids.add(getattr(item, "event_id", None))
+                if len(scoped_ids) == previous_size:
+                    break
+
+        candidates: dict[str, tuple[str, str]] = {}
+        for item in timeline:
+            event_id = getattr(item, "event_id", None)
+            if not event_id or event_id == incoming.message_id:
+                continue
+            if event_id in captured:
+                # Verified member history is required even outside the optional
+                # neighborhood window; never trade it for nearby room chatter.
+                candidates[event_id] = captured[event_id]
+                continue
+            sender = getattr(item, "sender", None)
+            observed = (getattr(item, "server_timestamp", 0) or 0) / 1000
+            relation = context_relationships(item)
+            content = (getattr(item, "source", None) or {}).get("content", {})
+            if (
+                not sender
+                or sender == getattr(client, "user_id", None)
+                or not 0 <= now - observed <= 3600
+                or abs(anchor_time - observed) > 900
+                or (
+                    self._trial
+                    and not self._trial.start_at.timestamp()
+                    <= observed
+                    < self._trial.end_at.timestamp()
+                )
+                or relation.get("replaces_event_id")
+                or event_id in invalidated_ids
+                or content.get("msgtype", "m.text") != "m.text"
+                or (native_root and event_id not in scoped_ids)
+                or (
+                    not native_root
+                    and (
+                        relation.get("thread_root_event_id")
+                        or relation.get("reply_to_event_id")
+                    )
+                    not in (None, *scoped_ids)
+                )
+            ):
+                continue
+            text = sanitize_question(context_text(item))
+            if text and not context_only(text):
+                candidates[event_id] = (sender, text)
+
+        required = set(captured)
+        # An unrelated neighboring message cannot resolve an answer fragment.
+        # Without an explicit relation, only one specific diagnostic antecedent
+        # is sufficient for admission; semantic uncertainty stays with humans.
+        answer_like = answer_fragment(incoming.question)
+        if (
+            answer_like
+            and not context_only(incoming.question)
+            and not new_issue(incoming.question)
+        ):
+            # Thread membership and the immediate question being answered are
+            # different edges. A dependent reply needs its actual antecedent;
+            # a self-contained update does not depend on a thread's ACK fallback.
+            if reply_target:
+                if reply_target not in candidates or reply_target not in prior_ids:
+                    return [], "source_followup_antecedent_unavailable"
+                required.add(reply_target)
+            # Durable conversation membership has already been established and
+            # every captured sender/message verified. Other members' statements
+            # stay attributed to them; membership does not imply a shared owner.
+            member_context = set(captured) & prior_ids if not native_root else set()
+            antecedents = member_context or {
+                event_id
+                for event_id, (_, text) in candidates.items()
+                if event_id in prior_ids
+                and (
+                    (native_root and event_id == (reply_target or native_root))
+                    or (not native_root and diagnostic_link(incoming.question, text))
+                )
+            }
+            if not antecedents or (not member_context and len(antecedents) != 1):
+                return [], "source_followup_antecedent_unavailable"
+            required.update(antecedents)
+        if (
+            len(required) > 10
+            or sum(len(candidates[key][1]) for key in required) > 4000
+        ):
+            return [], "source_discussion_capacity_reached"
+        selected = set(required)
+        chars = sum(len(candidates[key][1]) for key in selected)
+        for event_id in sorted(
+            candidates,
+            key=lambda key: abs(visible[key].server_timestamp / 1000 - anchor_time),
+        ):
+            if event_id in selected:
+                continue
+            length = len(candidates[event_id][1])
+            if len(selected) < 10 and chars + length <= 4000:
+                selected.add(event_id)
+                chars += length
+        speakers = speaker_labels(
+            saved,
+            focal_sender=owner,
+            legacy_sender=incoming.channel_metadata.get(
+                "incident_original_owner", owner
+            ),
+        )
+        messages = []
+        for event_id in dict.fromkeys(
+            getattr(item, "event_id", None) for item in timeline
+        ):
+            if event_id not in selected:
+                continue
+            sender, text = candidates[event_id]
+            if sender not in speakers:
+                speakers[sender] = f"participant-{len(speakers)}"
+            messages.append(
+                RoomMessage(
+                    role=(
+                        "user"
+                        if sender == owner
+                        else "staff" if resolver.is_staff(sender) else "participant"
+                    ),
+                    content=text,
+                    speaker=speakers[sender],
+                )
+            )
+        return messages, None

@@ -7,6 +7,20 @@ export interface StaffContextMetadata {
     generation_version: string;
     late_update_requires_review?: boolean;
     generation_question?: string;
+    candidate_conversation_ids?: number[];
+    pending_candidate_ids?: number[];
+}
+
+function caseIds(value: unknown): number[] {
+    if (!Array.isArray(value)) return [];
+    return [
+        ...new Set(
+            value.filter(
+                (id): id is number =>
+                    typeof id === "number" && Number.isSafeInteger(id) && id > 0
+            )
+        ),
+    ].slice(0, 20);
 }
 
 export function isStaffContextCase(metadata?: Record<string, unknown> | null): boolean {
@@ -38,6 +52,8 @@ export function staffContextMetadata(metadata?: Record<string, unknown> | null):
         generation_version: text("generation_version"),
         late_update_requires_review: metadata.incident_late_update_status === "needs_review_no_additional_generation",
         generation_question: text("incident_generation_question"),
+        candidate_conversation_ids: caseIds(metadata.candidate_conversation_ids),
+        pending_candidate_ids: caseIds(metadata.conversation_pending_candidate_ids),
     };
 }
 
@@ -72,10 +88,15 @@ export function staffContextReasonLabel(reason: string): string {
         recent_bot_reply: "An AI reply is already present, so another note was withheld.",
         source_stale: "The source question is too old for automatic context delivery.",
         source_changed_or_redacted: "The source question changed or was removed. Staff review is needed.",
+        source_relationship_changed: "The source message no longer matches its recorded conversation link. Staff review is needed.",
         source_context_incomplete: "Recent conversation context could not be fully checked.",
         incident_context_capacity_reached: "This incident has more context than can be checked automatically. Staff review is needed.",
         incident_source_context_incomplete: "The complete incident could not be checked against the source messages. Staff review is needed.",
         incident_updated_after_generation: "New incident information arrived after the AI context was prepared. The note was withheld for review.",
+        conversation_membership_unresolved: "This message may continue an existing conversation, but the connection is not confirmed. Review the related cases before responding; no new AI reply was generated for this message.",
+        conversation_helper_only: "This appears to be a participant asking someone else for diagnostic details. It is held for review instead of being treated as a new support request.",
+        source_followup_antecedent_unavailable: "The question or message being answered could not be established. Staff review is needed before generating a reply.",
+        source_discussion_capacity_reached: "The conversation is too large to check automatically. Staff review is needed.",
         staff_identity_unavailable: "Staff participation could not be checked.",
     };
     if (labels[reason]) return labels[reason];

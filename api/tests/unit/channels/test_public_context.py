@@ -11,11 +11,28 @@ from app.channels.staff_assist.public_context import (
     PublicContextRequest,
     PublicContextService,
     PublicEvidence,
+    RoomMessage,
     StaffEvidence,
 )
 from pydantic import ValidationError
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    "role,speaker",
+    [
+        ("user", "participant-1"),
+        ("participant", "requester"),
+        ("staff", "requester"),
+        ("participant", None),
+    ],
+)
+def test_room_message_cannot_misattribute_another_participant(role, speaker):
+    with pytest.raises(ValidationError):
+        RoomMessage(
+            role=role, speaker=speaker, content="A synthetic diagnostic report."
+        )
 
 
 def test_support_guide_links_are_typed_and_section_bound():

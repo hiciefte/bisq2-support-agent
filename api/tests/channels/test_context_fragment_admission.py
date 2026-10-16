@@ -100,7 +100,9 @@ async def test_captured_same_author_reply_keeps_referent_for_retrieval_and_promp
     bundle.retrieve.assert_called_once_with(combined)
     prompt = json.loads(bundle.llm.invoke.call_args.args[0])
     assert prompt["question"] == combined
-    assert prompt["recent_messages"] == [{"role": "user", "content": root.question}]
+    assert prompt["recent_messages"] == [
+        {"role": "user", "content": root.question, "speaker": "requester"}
+    ]
     assert unrelated.question not in json.dumps(prompt)
     bundle.llm.invoke.assert_called_once()
 
@@ -130,7 +132,9 @@ async def test_unresolved_thread_root_cannot_borrow_reply_fallback(runtime_case)
 
 
 @pytest.mark.asyncio
-async def test_reply_to_other_author_does_not_inherit_their_question(runtime_case):
+async def test_reply_to_other_author_keeps_distinct_senders_in_shared_case(
+    runtime_case,
+):
     bundle = runtime_case
     release = hold_worker(bundle)
     other = incoming(
@@ -148,11 +152,13 @@ async def test_reply_to_other_author_does_not_inherit_their_question(runtime_cas
     await bundle.engine.process(other, bundle.channel)
     await bundle.engine.process(followup, bundle.channel)
     cases, count = await bundle.repository.list_escalations(EscalationFilters())
-    assert count == 2
-    own = next(case for case in cases if case.user_id == followup.user.user_id)
-    assert own.question == followup.question
-    assert own.channel_metadata["context_reason"] == "incident_relation_unresolved"
-    assert own.channel_metadata["incident_unresolved_relation"] == "$other"
+    assert count == 1
+    shared = cases[0]
+    assert shared.user_id == other.user.user_id
+    assert [
+        message["sender_id"] for message in shared.channel_metadata["incident_messages"]
+    ] == [other.user.user_id, followup.user.user_id]
+    assert shared.channel_metadata["conversation_requester_id"] == other.user.user_id
     assert len(bundle.engine._active_cases) == 1
     await bundle.engine.close()
     release.set()

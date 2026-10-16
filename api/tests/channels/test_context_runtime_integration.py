@@ -31,6 +31,7 @@ def context(*, body=QUESTION, after=None):
         event=NS(
             event_id="$source",
             body=body,
+            sender="@user:example.org",
             server_timestamp=int(datetime.now(timezone.utc).timestamp() * 1000),
         ),
         events_before=[],
