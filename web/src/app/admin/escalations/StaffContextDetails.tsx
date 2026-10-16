@@ -13,6 +13,32 @@ export function StaffContextDetails({ context }: { context: StaffContextMetadata
                 internal review decision; it cannot publish a reply to the public room.
             </p>
             {context.context_reason && <p className="text-sm">{staffContextReasonLabel(context.context_reason)}</p>}
+            {(Boolean(context.candidate_conversation_ids?.length) ||
+                Boolean(context.pending_candidate_ids?.length)) && (
+                <div
+                    role="status"
+                    className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm"
+                >
+                    <p className="font-medium">Possible conversation connection</p>
+                    <p>
+                        These cases may belong to the same conversation. Their connection has not
+                        been confirmed; keep each participant’s statements separate when reviewing
+                        them.
+                    </p>
+                    {Boolean(context.candidate_conversation_ids?.length) && (
+                        <p>
+                            Possible earlier cases:{" "}
+                            {context.candidate_conversation_ids?.map((id) => `#${id}`).join(", ")}
+                        </p>
+                    )}
+                    {Boolean(context.pending_candidate_ids?.length) && (
+                        <p>
+                            Later messages awaiting review:{" "}
+                            {context.pending_candidate_ids?.map((id) => `#${id}`).join(", ")}
+                        </p>
+                    )}
+                </div>
+            )}
             {context.late_update_requires_review && (
                 <div role="status" className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
                     <p className="font-medium">New incident context needs review</p>

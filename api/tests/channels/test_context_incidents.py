@@ -6,12 +6,13 @@ import sqlite3
 import subprocess
 import sys
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace as NS
 
 import pytest
 from app.channels.models import ClassificationDecision, SendResult, UserContext
+from app.channels.staff_assist import context_incidents
 from app.channels.staff_assist.context_runtime import MatrixContextRuntime
 from app.models.escalation import EscalationFilters
 
@@ -89,11 +90,30 @@ def server_events(bundle, messages):
         message = by_id[event_id]
 
         def event(entry):
+            relation = {}
+            metadata = entry.channel_metadata
+            if metadata.get("reply_to_event_id"):
+                relation["m.in_reply_to"] = {"event_id": metadata["reply_to_event_id"]}
+            if metadata.get("thread_root_event_id"):
+                relation.update(
+                    rel_type="m.thread", event_id=metadata["thread_root_event_id"]
+                )
+            if metadata.get("replaces_event_id"):
+                relation.update(
+                    rel_type="m.replace", event_id=metadata["replaces_event_id"]
+                )
             return NS(
                 event_id=entry.message_id,
                 body=entry.question,
                 sender=entry.user.user_id,
                 server_timestamp=int(datetime.now(timezone.utc).timestamp() * 1000),
+                source={
+                    "content": {
+                        "body": entry.question,
+                        "m.new_content": {"body": entry.question},
+                        "m.relates_to": relation,
+                    }
+                },
             )
 
         index = messages.index(message)
@@ -348,10 +368,7 @@ async def test_linked_acknowledgements_are_stored_without_generation_or_late_cha
     assert len(case.channel_metadata["incident_messages"]) == 3
     assert case.channel_metadata["incident_messages"][-1]["text"] == text
     assert not case.channel_metadata.get("incident_late_meaningful_update")
-    assert (
-        case.channel_metadata["incident_late_update_status"]
-        == "needs_review_no_additional_generation"
-    )
+    assert not case.channel_metadata.get("incident_late_update_status")
     bundle.llm.invoke.assert_called_once()
     assert bundle.sender.await_count == 2
     with closing(sqlite3.connect(bundle.repository.db_path)) as db:
@@ -831,3 +848,540 @@ async def test_duplicate_append_explicitly_rolls_back_open_transaction(
     rolled_back.assert_awaited_once()
     assert len((await saved_case(bundle)).channel_metadata["incident_messages"]) == 1
     await bundle.engine.close()
+
+
+# Synthetic diagnostics: these exercise ownership, not any live support case.
+GROUPING_ROOT = (
+    "Bisq 1 version 1.2.3: wallet startup fails with WalletIndexMismatch: "
+    '"wallet index missing".'
+)
+GROUPING_FOLLOWUP = "Also, can WalletIndexMismatch persist after restarting?"
+
+
+@pytest.fixture
+def incident_clock(monkeypatch):
+    clock = [datetime.now(timezone.utc)]
+
+    class IncidentClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock[0]
+
+    monkeypatch.setattr(context_incidents, "datetime", IncidentClock)
+    return clock
+
+
+@pytest.mark.asyncio
+async def test_anchored_question_followups_share_one_case_call_and_thread(runtime_case):
+    bundle = runtime_case
+    enable_trial(bundle)
+    release = hold_worker(bundle)
+    messages = [
+        incoming(bundle, "$root", GROUPING_ROOT),
+        incoming(bundle, "$followup", GROUPING_FOLLOWUP),
+        incoming(
+            bundle,
+            "$next",
+            'Could that "wallet index missing" error explain the wallet failure?',
+        ),
+    ]
+    server_events(bundle, messages)
+    for message in messages:
+        await bundle.engine.process(message, bundle.channel)
+    release.set()
+    await bundle.engine.drain()
+    case = await saved_case(bundle)
+    assert case.channel_metadata["context_status"] == "delivered"
+    assert case.channel_metadata["incident_generation_event_ids"] == [
+        message.message_id for message in messages
+    ]
+    bundle.retrieve.assert_called_once_with(
+        "\n---\n".join(message.question for message in messages)
+    )
+    bundle.llm.invoke.assert_called_once()
+    assert bundle.sender.await_count == 2
+    with closing(sqlite3.connect(bundle.repository.db_path)) as db:
+        assert (
+            db.execute("SELECT COUNT(*) FROM matrix_context_trial_cases").fetchone()[0]
+            == 1
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Also, can I create another wallet?",
+        "Could that wallet receive another currency?",
+        "Also, can I restart the wallet?",
+        "Also, can I restart the wallet",  # Punctuation is not the ownership signal.
+        "Also, what does the wallet balance mean?",
+        "Where can I read about WalletIndexMismatch?",  # No continuation cue.
+        "Also, can WalletIndexMismatch happen in Bisq 2?",
+        "Also, can WalletIndexMismatch happen using version 1.2.4?",
+        "Different issue: can WalletIndexMismatch affect the wallet?",
+        "Also, can WalletIndexMismatchExtra affect the wallet?",
+    ],
+)
+async def test_independent_or_incompatible_questions_stay_separate(
+    runtime_case, question
+):
+    bundle = runtime_case
+    hold_worker(bundle)
+    await bundle.engine.process(
+        incoming(bundle, "$root", GROUPING_ROOT), bundle.channel
+    )
+    await bundle.engine.process(incoming(bundle, "$other", question), bundle.channel)
+    rows, count = await bundle.repository.list_escalations(EscalationFilters())
+    assert count == 2
+    assert all(len(row.channel_metadata["incident_messages"]) == 1 for row in rows)
+    await bundle.engine.close()
+    bundle.llm.invoke.assert_not_called()
+    bundle.sender.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "brand", ["BisqEasy", "PayPal", "Error", "Exception", "Failure", "Timeout"]
+)
+async def test_repeated_product_or_generic_word_is_not_a_diagnostic_anchor(
+    runtime_case, brand
+):
+    bundle = runtime_case
+    hold_worker(bundle)
+    await bundle.engine.process(
+        incoming(
+            bundle, "$root", f"{brand} wallet startup failed and the deposit is locked."
+        ),
+        bundle.channel,
+    )
+    await bundle.engine.process(
+        incoming(bundle, "$other", f"Also, can {brand} be used with SEPA?"),
+        bundle.channel,
+    )
+    _, count = await bundle.repository.list_escalations(EscalationFilters())
+    assert count == 2
+    await bundle.engine.close()
+    bundle.llm.invoke.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "followup",
+    ["Same BuildSettlementTx", "It still says recipientOutputAddress must not be null"],
+)
+async def test_statement_code_symbols_keep_established_incident_behavior(
+    runtime_case, followup
+):
+    bundle = runtime_case
+    release = hold_worker(bundle)
+    messages = [
+        incoming(
+            bundle,
+            "$root",
+            "A trade fails. BuildSettlementTx: recipientOutputAddress must not be null.",
+        ),
+        incoming(bundle, "$followup", followup),
+    ]
+    server_events(bundle, messages)
+    for message in messages:
+        await bundle.engine.process(message, bundle.channel)
+    release.set()
+    await bundle.engine.drain()
+    case = await saved_case(bundle)
+    assert len(case.channel_metadata["incident_messages"]) == 2
+    bundle.llm.invoke.assert_called_once()
+    assert bundle.sender.await_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", ["room", "author", "trial", "unknown_relation"])
+async def test_anchored_question_cannot_cross_ownership_scope(runtime_case, scope):
+    bundle = runtime_case
+    hold_worker(bundle)
+    await bundle.engine.process(
+        incoming(bundle, "$root", GROUPING_ROOT), bundle.channel
+    )
+    followup = incoming(
+        bundle, "$followup", GROUPING_FOLLOWUP, reply_to_event_id="$root"
+    )
+    trial_id = None
+    if scope == "room":
+        followup.channel_metadata["room_id"] = "!other:example.org"
+    elif scope == "author":
+        followup = followup.model_copy(
+            update={"user": UserContext(user_id="@other:example.org")}
+        )
+        # An unlinked new speaker must not join by a shared diagnostic alone.
+        followup.channel_metadata.pop("reply_to_event_id")
+    elif scope == "trial":
+        trial_id = "another-trial"
+    else:
+        followup.channel_metadata["reply_to_event_id"] = "$uncaptured"
+    store = context_incidents.ContextIncidentStore(bundle.repository.db_path)
+    assert await store.find(followup, trial_id) == (None, False)
+    await bundle.engine.close()
+
+
+@pytest.mark.asyncio
+async def test_anchored_question_does_not_pick_between_matching_incidents(runtime_case):
+    bundle = runtime_case
+    hold_worker(bundle)
+    for event_id, question in [
+        ("$root", GROUPING_ROOT),
+        ("$separate", "Separate issue: " + GROUPING_ROOT),
+        ("$ambiguous", GROUPING_FOLLOWUP),
+    ]:
+        await bundle.engine.process(
+            incoming(bundle, event_id, question), bundle.channel
+        )
+    rows, count = await bundle.repository.list_escalations(EscalationFilters())
+    assert count == 3
+    assert all(len(row.channel_metadata["incident_messages"]) == 1 for row in rows)
+    await bundle.engine.close()
+    bundle.llm.invoke.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_late_anchored_questions_keep_delivered_case_after_restart(
+    runtime_case, incident_clock
+):
+    bundle = runtime_case
+    bundle.incoming = incoming(bundle, "$root", GROUPING_ROOT)
+    server_events(bundle, [bundle.incoming])
+    original = await run(bundle)
+    incident_clock[0] = original.created_at + timedelta(minutes=10)
+    await bundle.engine.process(
+        incoming(bundle, "$late", GROUPING_FOLLOWUP), bundle.channel
+    )
+    await bundle.engine.close()
+    bundle.engine = MatrixContextRuntime(bundle.runtime)
+    incident_clock[0] = original.created_at + timedelta(minutes=20)
+    await bundle.engine.process(
+        incoming(
+            bundle,
+            "$later",
+            "Could that WalletIndexMismatch still explain the wallet failure?",
+        ),
+        bundle.channel,
+    )
+    await bundle.engine.drain()
+    case = await saved_case(bundle)
+    assert case.id == original.id
+    assert case.channel_metadata["context_status"] == "delivered"
+    assert case.channel_metadata["incident_generation_question"] == GROUPING_ROOT
+    assert len(case.channel_metadata["incident_messages"]) == 3
+    assert case.channel_metadata["staff_root_event_id"] == "$staff-root"
+    assert case.channel_metadata["incident_late_update_status"] == (
+        "needs_review_no_additional_generation"
+    )
+    bundle.llm.invoke.assert_called_once()
+    assert bundle.sender.await_count == 2
+    await bundle.engine.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("has_meaningful_followup", [False, True])
+async def test_acknowledgements_do_not_extend_meaningful_activity_window(
+    runtime_case, incident_clock, has_meaningful_followup
+):
+    bundle = runtime_case
+    hold_worker(bundle)
+    await bundle.engine.process(
+        incoming(bundle, "$root", GROUPING_ROOT), bundle.channel
+    )
+    original = await saved_case(bundle)
+    meaningful_at = original.created_at
+    if has_meaningful_followup:
+        meaningful_at += timedelta(minutes=10)
+        incident_clock[0] = meaningful_at
+        await bundle.engine.process(
+            incoming(bundle, "$meaningful", GROUPING_FOLLOWUP), bundle.channel
+        )
+    incident_clock[0] = meaningful_at + timedelta(minutes=14)
+    await bundle.engine.process(incoming(bundle, "$ack", "Thanks"), bundle.channel)
+    case = await saved_case(bundle)
+    assert len(case.channel_metadata["incident_messages"]) == (
+        3 if has_meaningful_followup else 2
+    )
+    assert case.channel_metadata.get("incident_last_meaningful_at") == (
+        meaningful_at.isoformat() if has_meaningful_followup else None
+    )
+    assert case.channel_metadata["incident_updated_at"] == incident_clock[0].isoformat()
+    incident_clock[0] = meaningful_at + timedelta(minutes=16)
+    await bundle.engine.process(
+        incoming(bundle, "$expired", GROUPING_FOLLOWUP), bundle.channel
+    )
+    _, count = await bundle.repository.list_escalations(EscalationFilters())
+    assert count == 2
+    await bundle.engine.close()
+    bundle.llm.invoke.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_recent_activity_cannot_extend_absolute_heuristic_lifetime(
+    runtime_case, incident_clock
+):
+    bundle = runtime_case
+    hold_worker(bundle)
+    await bundle.engine.process(
+        incoming(bundle, "$root", GROUPING_ROOT), bundle.channel
+    )
+    original = await saved_case(bundle)
+    incident_clock[0] = original.created_at + timedelta(minutes=50)
+    await bundle.engine.process(
+        incoming(bundle, "$linked", GROUPING_FOLLOWUP, reply_to_event_id="$root"),
+        bundle.channel,
+    )
+    incident_clock[0] = original.created_at + timedelta(minutes=61)
+    await bundle.engine.process(
+        incoming(bundle, "$expired", GROUPING_FOLLOWUP), bundle.channel
+    )
+    _, count = await bundle.repository.list_escalations(EscalationFilters())
+    assert count == 2
+    # The hard lifetime bounds inference, not an explicit same-owner relation.
+    store = context_incidents.ContextIncidentStore(bundle.repository.db_path)
+    linked = incoming(
+        bundle, "$late-linked", "Does that change anything?", reply_to_event_id="$root"
+    )
+    assert await store.find(linked, None) == (original.id, False)
+    await bundle.engine.close()
+    bundle.llm.invoke.assert_not_called()
+
+
+@pytest.mark.parametrize("text", ["Thanks again", "Thank you so much", "Thanks a lot"])
+def test_acknowledgement_suffix_is_not_a_new_request(text):
+    assert context_incidents.context_only(text)
+    assert not context_incidents.context_only(text + ". My wallet is still locked.")
+
+
+def test_mixed_sender_transcript_applies_edits_before_attribution():
+    messages = [
+        {
+            "event_id": "$helper",
+            "sender_id": "@helper:example.org",
+            "text": "How did you check the timeout?",
+        },
+        {
+            "event_id": "$old",
+            "sender_id": "@user:example.org",
+            "text": "The timeout was five seconds.",
+        },
+        {
+            "event_id": "$edit",
+            "sender_id": "@user:example.org",
+            "replaces_event_id": "$old",
+            "text": "The timeout was ten seconds.",
+        },
+    ]
+    transcript = context_incidents.incident_question(messages)
+    assert "five seconds" not in transcript
+    assert "participant-1: How did you" in transcript
+    assert "participant-2: The timeout was ten seconds." in transcript
+    assert "@" not in transcript
+
+
+@pytest.mark.asyncio
+async def test_legacy_case_keeps_focal_author_when_new_participant_joins(runtime_case):
+    bundle = runtime_case
+    release = hold_worker(bundle)
+    root = incoming(bundle, "$root", "My connection has a timeout error.")
+    helper = incoming(
+        bundle,
+        "$helper",
+        "Did you change the connection timeout?",
+        user="@helper:example.org",
+        reply_to_event_id="$root",
+    )
+    server_events(bundle, [root, helper])
+    await bundle.engine.process(root, bundle.channel)
+    case = await saved_case(bundle)
+    metadata = dict(case.channel_metadata)
+    for key in (
+        "conversation_requester_id",
+        "conversation_id",
+        "conversation_membership",
+    ):
+        metadata.pop(key, None)
+    for message in metadata["incident_messages"]:
+        message.pop("sender_id", None)
+    with closing(sqlite3.connect(bundle.repository.db_path)) as db:
+        db.execute(
+            "UPDATE escalations SET channel_metadata=? WHERE id=?",
+            (json.dumps(metadata), case.id),
+        )
+        db.commit()
+    await bundle.engine.process(helper, bundle.channel)
+    # Inspect the actual frozen question without needing a server window that
+    # includes messages after the focal author's source event.
+    question, _, overflow = await context_incidents.ContextIncidentStore(
+        bundle.repository.db_path
+    ).freeze(case.id)
+    assert question == root.question
+    assert helper.question not in question
+    assert not overflow
+    updated = await saved_case(bundle)
+    assert updated.channel_metadata["conversation_requester_id"] == root.user.user_id
+    await bundle.engine.close()
+    release.set()
+
+
+@pytest.mark.asyncio
+async def test_unmatched_explicit_quoted_question_is_held_without_reservation(
+    runtime_case,
+):
+    bundle = runtime_case
+    bundle.incoming = incoming(
+        bundle,
+        "$quote",
+        'You asked "Which connection setting did you change?". I changed the timeout.',
+    )
+    case = await run(bundle)
+    assert (
+        case.channel_metadata["context_reason"] == "conversation_membership_unresolved"
+    )
+    assert not case.channel_metadata.get("incident_frozen")
+    bundle.llm.invoke.assert_not_called()
+    bundle.retrieve.assert_not_called()
+    bundle.sender.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_general_how_to_question_is_not_a_helper_diagnostic(runtime_case):
+    bundle = runtime_case
+    bundle.incoming = incoming(bundle, "$question", "How do you restore a backup?")
+    server_events(bundle, [bundle.incoming])
+    case = await run(bundle)
+    assert case.channel_metadata["context_status"] == "delivered"
+    bundle.llm.invoke.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("boundary", ["closed", "attempted", "cutoff"])
+async def test_confirmed_reply_cannot_restart_ineligible_provisional_case(
+    runtime_case, boundary
+):
+    from app.channels.staff_assist.context_runtime import ContextReviewStore
+
+    bundle = runtime_case
+    helper = incoming(
+        bundle,
+        "$helper",
+        "How did you check the connection timeout?",
+        user="@helper:example.org",
+    )
+    await bundle.engine.process(helper, bundle.channel)
+    case = await saved_case(bundle)
+    store = ContextReviewStore(bundle.repository.db_path)
+    if boundary == "closed":
+        await bundle.service.close_escalation(case.id)
+    elif boundary == "attempted":
+        assert await store.reserve(case.id)
+    else:
+        await store.update(case.id, status="deferred", reason="context_trial_expired")
+    followup = incoming(
+        bundle,
+        "$answer",
+        "My connection fails after the timeout.",
+        reply_to_event_id="$helper",
+    )
+    await bundle.engine.process(followup, bundle.channel)
+    await bundle.engine.drain()
+    updated = await saved_case(bundle)
+    assert updated.channel_metadata["conversation_membership"] == "provisional"
+    assert updated.channel_metadata["context_reason"] == (
+        "context_trial_expired" if boundary == "cutoff" else "conversation_helper_only"
+    )
+    bundle.llm.invoke.assert_not_called()
+    bundle.retrieve.assert_not_called()
+    bundle.sender.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("helper_sender", ["originator", "another_helper"])
+@pytest.mark.parametrize("relationship", ["thread", "quote", "edit"])
+async def test_known_helpers_cannot_activate_provisional_conversation(
+    runtime_case, helper_sender, relationship
+):
+    bundle = runtime_case
+    release = hold_worker(bundle)
+    helper = incoming(
+        bundle,
+        "$helper",
+        "How did you check the connection timeout?",
+        user="@helper:example.org",
+    )
+    messages = [helper]
+    author = helper
+    if helper_sender == "another_helper":
+        author = incoming(
+            bundle,
+            "$other-helper",
+            "Have you changed the connection timeout?",
+            user="@other-helper:example.org",
+            thread_root_event_id=helper.message_id,
+        )
+        messages.append(author)
+    statement = "The connection timeout is controlled by the application."
+    relations = {"thread_root_event_id": helper.message_id}
+    if relationship == "quote":
+        statement = f'You asked "{helper.question}". {statement}'
+        relations = {}
+    elif relationship == "edit":
+        relations = {"replaces_event_id": author.message_id}
+    helper_update = incoming(
+        bundle,
+        "$helper-update",
+        statement,
+        user=author.user.user_id,
+        **relations,
+    )
+    messages.append(helper_update)
+    for message in messages:
+        await bundle.engine.process(message, bundle.channel)
+
+    held = await saved_case(bundle)
+    assert held.channel_metadata["conversation_membership"] == "provisional"
+    assert "conversation_requester_id" not in held.channel_metadata
+    assert held.channel_metadata["context_reason"] == "conversation_helper_only"
+    assert len(held.channel_metadata["incident_messages"]) == len(messages)
+    with closing(sqlite3.connect(bundle.repository.db_path)) as db:
+        attempts_table = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE name='matrix_context_attempts'"
+        ).fetchone()
+        assert (
+            not attempts_table
+            or db.execute("SELECT COUNT(*) FROM matrix_context_attempts").fetchone()[0]
+            == 0
+        )
+    bundle.llm.invoke.assert_not_called()
+    bundle.retrieve.assert_not_called()
+    bundle.sender.assert_not_awaited()
+
+    question = "My connection fails after the configured timeout."
+    requester_relations = {"thread_root_event_id": helper.message_id}
+    if relationship == "quote":
+        question = f'You asked "{helper.question}". {question}'
+        requester_relations = {}
+    requester = incoming(bundle, "$requester", question, **requester_relations)
+    messages.append(requester)
+    server_events(bundle, messages)
+    await bundle.engine.process(requester, bundle.channel)
+    release.set()
+    await bundle.engine.drain()
+
+    delivered = await saved_case(bundle)
+    assert delivered.id == held.id
+    assert delivered.channel_metadata["conversation_requester_id"] == (
+        requester.user.user_id
+    )
+    assert delivered.channel_metadata["context_status"] == "delivered"
+    assert bundle.retrieve.call_args.args[0] == requester.question
+    bundle.llm.invoke.assert_called_once()
+    assert bundle.sender.await_count == 2
+    with closing(sqlite3.connect(bundle.repository.db_path)) as db:
+        assert db.execute("SELECT COUNT(*) FROM escalations").fetchone()[0] == 1
+        assert (
+            db.execute("SELECT COUNT(*) FROM matrix_context_attempts").fetchone()[0]
+            == 1
+        )
