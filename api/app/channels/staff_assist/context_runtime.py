@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import re
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import quote
@@ -29,7 +30,9 @@ from app.channels.staff import resolve_channel_staff_resolver
 from app.channels.staff_assist.context_incidents import (
     ContextIncidentStore,
     answer_fragment,
+    compatible,
     context_only,
+    continuation,
     diagnostic_link,
     helper_question,
     incident_question,
@@ -77,6 +80,34 @@ def _digest(value: Any) -> str:
 def sanitize_question(text: str) -> str:
     """Remove known identifiers and neutralize mentions in copied public text."""
     return PIIDetector().redact(text).replace("@", "＠").strip()
+
+
+def _source_event_version(event: Any, resolver: Any, bot_user_id: str | None) -> str:
+    """Bind one event's identity and authored context without keeping raw text."""
+    source = getattr(event, "source", None) or {}
+    content = source.get("content", {})
+    sender = getattr(event, "sender", None)
+    return _digest(
+        {
+            "event_id": getattr(event, "event_id", None),
+            "sender": sender,
+            "staff": resolver.is_staff(sender),
+            "bot": sender == bot_user_id,
+            "text": sanitize_question(context_text(event)),
+            "relations": content.get("m.relates_to", {}),
+            "msgtype": content.get("msgtype", "m.text"),
+            "redacted": bool(source.get("unsigned", {}).get("redacted_because")),
+        }
+    )
+
+
+@dataclass
+class _SourceContextSnapshot:
+    """Per-generation selection; later reads validate it without selecting anew."""
+
+    events: dict[str, str] | None = None
+    messages: tuple[RoomMessage, ...] = ()
+    visible_ids: frozenset[str] = frozenset()
 
 
 def select_public_evidence(documents: list[Any]) -> list[PublicEvidence]:
@@ -631,7 +662,8 @@ class MatrixContextRuntime:
         ) == "high" or incoming.channel_metadata.get("incident_high_risk"):
             await store.update(case_id, status="needs_human", reason="high_risk_action")
             return False
-        snapshot, reason = await self._read_source(incoming)
+        source_snapshot = _SourceContextSnapshot()
+        snapshot, reason = await self._read_source(incoming, snapshot=source_snapshot)
         if reason:
             await store.update(case_id, status="deferred", reason=reason)
             return False
@@ -832,7 +864,9 @@ class MatrixContextRuntime:
             return False
         # Refresh after model work. Source edits/redactions and intervening staff
         # participation suppress publication; the durable review remains available.
-        current_snapshot, reason = await self._read_source(incoming)
+        current_snapshot, reason = await self._read_source(
+            incoming, snapshot=source_snapshot
+        )
         if (
             not reason
             and _digest([m.model_dump() for m in current_snapshot])
@@ -922,7 +956,9 @@ class MatrixContextRuntime:
                 staff_root_event_id=root_id,
                 staff_thread_url=matrix_link(staff_room, root_id),
             )
-            current_snapshot, reason = await self._read_source(incoming)
+            current_snapshot, reason = await self._read_source(
+                incoming, snapshot=source_snapshot
+            )
             if (
                 not reason
                 and _digest([m.model_dump() for m in current_snapshot])
@@ -1106,7 +1142,9 @@ class MatrixContextRuntime:
         finally:
             await service._release_delivery_lock(case_id, lock)
 
-    async def _read_source(self, incoming: Any) -> tuple[list[RoomMessage], str | None]:
+    async def _read_source(
+        self, incoming: Any, *, snapshot: _SourceContextSnapshot | None = None
+    ) -> tuple[list[RoomMessage], str | None]:
         """Read current server context; do not trust activity flags from text."""
         from app.channels.plugins.matrix.room_filter import (
             resolve_allowed_context_source_rooms,
@@ -1223,7 +1261,122 @@ class MatrixContextRuntime:
                 and getattr(item, "event_id", None) not in incident_ids
             ):
                 return [], "source_context_changed"
-        return self._source_discussion(incoming, event, before, after, saved, resolver)
+        if snapshot is not None and snapshot.events is not None:
+            # Recheck the exact events used for generation. Room activity and
+            # selection age/capacity must not replace that evidence, while an
+            # unavailable, edited, redacted or reassigned event still withholds.
+            timeline = before + after + [event]
+            invalidated_ids = {
+                context_relationships(item).get("replaces_event_id")
+                or getattr(item, "redacts", None)
+                or (getattr(item, "source", None) or {}).get("redacts")
+                for item in timeline
+            }
+            for event_id, version in snapshot.events.items():
+                matches = [
+                    item
+                    for item in timeline
+                    if getattr(item, "event_id", None) == event_id
+                ]
+                if (
+                    event_id in invalidated_ids
+                    or len(matches) != 1
+                    or _source_event_version(
+                        matches[0], resolver, getattr(client, "user_id", None)
+                    )
+                    != version
+                ):
+                    return [], "source_context_changed"
+            # A follow-up may reach server context before its intake
+            # callback sets the durable late-update flag. Keep that safety
+            # boundary without treating unrelated room chatter as new evidence.
+            relations = context_relationships(event)
+            targets = incident_ids | {
+                relations.get("thread_root_event_id")
+                or incoming.channel_metadata.get("thread_root_event_id")
+                or relations.get("reply_to_event_id")
+                or incoming.channel_metadata.get("reply_to_event_id")
+            }
+            captured = saved or [
+                {"sender_id": incoming.user.user_id, "text": incoming.question}
+            ]
+            previous = incident_question(saved) if saved else incoming.question
+            now = datetime.now(timezone.utc).timestamp()
+            updates = []
+            for item in before + after:
+                relation = context_relationships(item)
+                target = (
+                    relation.get("replaces_event_id")
+                    or relation.get("thread_root_event_id")
+                    or relation.get("reply_to_event_id")
+                )
+                observed = (getattr(item, "server_timestamp", 0) or 0) / 1000
+                content = (getattr(item, "source", None) or {}).get("content", {})
+                sender = getattr(item, "sender", None)
+                if (
+                    not getattr(item, "event_id", None)
+                    or not sender
+                    or sender == getattr(client, "user_id", None)
+                    or not 0 <= now - observed <= 3600
+                    or content.get("msgtype", "m.text") != "m.text"
+                    or (
+                        self._trial
+                        and not self._trial.start_at.timestamp()
+                        <= observed
+                        < self._trial.end_at.timestamp()
+                    )
+                ):
+                    continue
+                text = sanitize_question(context_text(item))
+                if not text or new_issue(text) or not compatible(text, previous):
+                    continue
+                updates.append((item.event_id, target, sender, text))
+            # Native ACKs can be intermediates even though they add no model
+            # context. Follow only bounded explicit edges from incident roots;
+            # optional unrelated neighbors never become roots of this graph.
+            for _ in updates:
+                previous_size = len(targets)
+                targets.update(
+                    event_id
+                    for event_id, target, _, _ in updates
+                    if target and target in targets
+                )
+                if len(targets) == previous_size:
+                    break
+            for event_id, target, sender, text in updates:
+                if event_id in snapshot.visible_ids or context_only(text):
+                    continue
+                # Match intake's relation priority and conservative continuation
+                # rules. This only withholds; it never establishes membership.
+                if target:
+                    if target in targets:
+                        return [], "incident_updated_after_generation"
+                    continue
+                quote = quoted_question(text)
+                if quote:
+                    if any(
+                        " ".join(message["text"].split()) == quote
+                        for message in captured
+                    ):
+                        return [], "incident_updated_after_generation"
+                    continue
+                own_texts = [
+                    message["text"]
+                    for message in captured
+                    if message.get(
+                        "sender_id",
+                        incoming.channel_metadata.get(
+                            "incident_original_owner", incoming.user.user_id
+                        ),
+                    )
+                    == sender
+                ]
+                if own_texts and continuation(text, "\n".join(own_texts)):
+                    return [], "incident_updated_after_generation"
+            return list(snapshot.messages), None
+        return self._source_discussion(
+            incoming, event, before, after, saved, resolver, snapshot=snapshot
+        )
 
     def _source_discussion(
         self,
@@ -1233,6 +1386,8 @@ class MatrixContextRuntime:
         after: list[Any],
         saved: list[dict[str, Any]],
         resolver: Any,
+        *,
+        snapshot: _SourceContextSnapshot | None = None,
     ) -> tuple[list[RoomMessage], str | None]:
         """Bound possibly unrelated surrounding discussion without assigning ownership."""
         owner = incoming.user.user_id
@@ -1407,4 +1562,19 @@ class MatrixContextRuntime:
                     speaker=speakers[sender],
                 )
             )
+        if snapshot is not None:
+            selected_ids = selected | {incoming.message_id}
+            if any(
+                sum(getattr(item, "event_id", None) == key for item in timeline) != 1
+                for key in selected_ids
+            ):
+                return [], "source_context_changed"
+            snapshot.events = {
+                key: _source_event_version(
+                    visible[key], resolver, getattr(client, "user_id", None)
+                )
+                for key in selected_ids
+            }
+            snapshot.messages = tuple(messages)
+            snapshot.visible_ids = frozenset(key for key in visible if key)
         return messages, None

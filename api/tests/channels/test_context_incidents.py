@@ -1295,3 +1295,93 @@ async def test_confirmed_reply_cannot_restart_ineligible_provisional_case(
     bundle.llm.invoke.assert_not_called()
     bundle.retrieve.assert_not_called()
     bundle.sender.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("helper_sender", ["originator", "another_helper"])
+@pytest.mark.parametrize("relationship", ["thread", "quote", "edit"])
+async def test_known_helpers_cannot_activate_provisional_conversation(
+    runtime_case, helper_sender, relationship
+):
+    bundle = runtime_case
+    release = hold_worker(bundle)
+    helper = incoming(
+        bundle,
+        "$helper",
+        "How did you check the connection timeout?",
+        user="@helper:example.org",
+    )
+    messages = [helper]
+    author = helper
+    if helper_sender == "another_helper":
+        author = incoming(
+            bundle,
+            "$other-helper",
+            "Have you changed the connection timeout?",
+            user="@other-helper:example.org",
+            thread_root_event_id=helper.message_id,
+        )
+        messages.append(author)
+    statement = "The connection timeout is controlled by the application."
+    relations = {"thread_root_event_id": helper.message_id}
+    if relationship == "quote":
+        statement = f'You asked "{helper.question}". {statement}'
+        relations = {}
+    elif relationship == "edit":
+        relations = {"replaces_event_id": author.message_id}
+    helper_update = incoming(
+        bundle,
+        "$helper-update",
+        statement,
+        user=author.user.user_id,
+        **relations,
+    )
+    messages.append(helper_update)
+    for message in messages:
+        await bundle.engine.process(message, bundle.channel)
+
+    held = await saved_case(bundle)
+    assert held.channel_metadata["conversation_membership"] == "provisional"
+    assert "conversation_requester_id" not in held.channel_metadata
+    assert held.channel_metadata["context_reason"] == "conversation_helper_only"
+    assert len(held.channel_metadata["incident_messages"]) == len(messages)
+    with closing(sqlite3.connect(bundle.repository.db_path)) as db:
+        attempts_table = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE name='matrix_context_attempts'"
+        ).fetchone()
+        assert (
+            not attempts_table
+            or db.execute("SELECT COUNT(*) FROM matrix_context_attempts").fetchone()[0]
+            == 0
+        )
+    bundle.llm.invoke.assert_not_called()
+    bundle.retrieve.assert_not_called()
+    bundle.sender.assert_not_awaited()
+
+    question = "My connection fails after the configured timeout."
+    requester_relations = {"thread_root_event_id": helper.message_id}
+    if relationship == "quote":
+        question = f'You asked "{helper.question}". {question}'
+        requester_relations = {}
+    requester = incoming(bundle, "$requester", question, **requester_relations)
+    messages.append(requester)
+    server_events(bundle, messages)
+    await bundle.engine.process(requester, bundle.channel)
+    release.set()
+    await bundle.engine.drain()
+
+    delivered = await saved_case(bundle)
+    assert delivered.id == held.id
+    assert delivered.channel_metadata["conversation_requester_id"] == (
+        requester.user.user_id
+    )
+    assert delivered.channel_metadata["context_status"] == "delivered"
+    assert bundle.retrieve.call_args.args[0] == requester.question
+    bundle.llm.invoke.assert_called_once()
+    assert bundle.sender.await_count == 2
+    with closing(sqlite3.connect(bundle.repository.db_path)) as db:
+        assert db.execute("SELECT COUNT(*) FROM escalations").fetchone()[0] == 1
+        assert (
+            db.execute("SELECT COUNT(*) FROM matrix_context_attempts").fetchone()[0]
+            == 1
+        )

@@ -516,8 +516,17 @@ class ContextIncidentStore:
                     )
                 ).fetchone()
             )
+            # A helper's later statement or edit is still helper context. Keep
+            # this role from the full history, including replaced questions,
+            # so only a different participant can activate the held case.
+            helper_senders = {row[2]} | {
+                message.get("sender_id", row[2])
+                for message in messages
+                if helper_question(message["text"])
+            }
             activated = (
                 metadata.get("conversation_membership") == "provisional"
+                and incoming.user.user_id not in helper_senders
                 and row[1] in {"pending", "in_review"}
                 and metadata.get("context_reason")
                 in {"conversation_helper_only", "context_preparing"}
