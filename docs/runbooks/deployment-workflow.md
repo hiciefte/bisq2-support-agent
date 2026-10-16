@@ -193,6 +193,15 @@ repeat within the phase's remaining readiness budget while Nginx workers drain;
 the capture and reload are never retried. The Nginx container, configuration and
 master process remain preserved; workers may change during reload.
 
+The selected-service switch and its one permitted availability restoration also
+reload Nginx once after direct service readiness. API `/api/health` and web `/`
+observations then wait within the existing readiness and phase deadlines for the
+expected build. A stale build, unavailable upstream or malformed API response
+can be observed again while workers change; the switch and reload are not
+retried. A route that never exposes the expected build fails the phase and keeps
+the scheduler held. Preflight and final verification remain strict single route
+observations without reload or convergence waits.
+
 API routing is checked again before releasing the scheduler and during final
 completion, including web-only releases that retain the original API image and
 build. These last checks do not reload Nginx or call a model. A failed route check

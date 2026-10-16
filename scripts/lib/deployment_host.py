@@ -1370,25 +1370,42 @@ class DeploymentHost:
             self._run(
                 ["docker", "exec", nginx, "nginx", "-s", "reload"], "nginx-reload"
             )
-        url = self.host["nginx_url"].rstrip("/")
         if service == "api":
             self._api_route(expected_build, wait=wait_for_route)
         else:
-            page = self._run(
-                [
-                    "curl",
-                    "-fsS",
-                    "--retry",
-                    "0",
-                    "--connect-timeout",
-                    "5",
-                    "--max-time",
-                    "15",
-                    url + "/",
-                ],
-                "route",
-            )
-            require(expected_build.encode() in page, "host_nginx_web_build")
+            self._web_route(expected_build, wait=wait_for_route)
+
+    def _web_route(self, expected_build, *, wait=False):
+        until = time.monotonic() + self.host["readiness_timeout_seconds"]
+        while True:
+            remaining = until - time.monotonic()
+            require(remaining > 0, "host_nginx_web_route_unavailable")
+            try:
+                page = self._run(
+                    [
+                        "curl",
+                        "-fsS",
+                        "--retry",
+                        "0",
+                        "--connect-timeout",
+                        "5",
+                        "--max-time",
+                        "15",
+                        self.host["nginx_url"].rstrip("/") + "/",
+                    ],
+                    "route",
+                    min(15, max(1, int(remaining))),
+                )
+                if expected_build.encode() in page:
+                    return
+                require(wait, "host_nginx_web_build")
+            except HostCommandError:
+                if not wait:
+                    raise
+            require(wait, "host_nginx_web_route_unavailable")
+            remaining = until - time.monotonic()
+            require(remaining > 0, "host_nginx_web_route_unavailable")
+            time.sleep(min(0.2, remaining))
 
     def _api_route(self, expected_build, *, wait=False):
         until = time.monotonic() + self.host["readiness_timeout_seconds"]
@@ -1454,7 +1471,15 @@ class DeploymentHost:
             self.expected[name] = current[name]
         self._preserved(current)
         for name in consumers:
-            self._ready(name, current, image["image_id"], image["build_id"])
+            # Reload completion does not mean the new workers serve requests yet.
+            # Retry only route observations; never repeat the switch or reload.
+            self._ready(
+                name,
+                current,
+                image["image_id"],
+                image["build_id"],
+                wait_for_route=True,
+            )
         current = self._inspect()
         self._preserved(current)
         for name in consumers:
@@ -1599,6 +1624,7 @@ class DeploymentHost:
                     current,
                     baseline["containers"][name]["Image"],
                     baseline["old_build_ids"][service],
+                    wait_for_route=True,
                 )
             self._preserved(self._inspect())
         except Exception as error:

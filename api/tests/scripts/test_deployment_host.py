@@ -610,9 +610,16 @@ def test_complete_real_host_phase_sequence_with_fixture_commands(
 
 
 def failed_switch(
-    host, module, protocol, monkeypatch, status="failed", *, builder_metadata=False
+    host,
+    module,
+    protocol,
+    monkeypatch,
+    status="failed",
+    *,
+    builder_metadata=False,
+    service="api",
 ):
-    phase = "switch_api"
+    phase = "switch_" + service
     image = {
         "Id": "sha256:" + "a" * 64,
         "Config": {
@@ -624,7 +631,8 @@ def failed_switch(
         },
     }
     built = payload_for("build")
-    built["images"]["api"].update(
+    built["images"] = {name: built["images"][name] for name in host.plan["services"]}
+    built["images"][service].update(
         image_id=image["Id"], image_inspect_sha256=module.digest(module.encode(image))
     )
     monkeypatch.setattr(host, "_build", lambda: built)
@@ -653,14 +661,14 @@ def failed_switch(
         },
     )
     module.private_bytes(
-        host.root / "build_api.image.private.json",
+        host.root / f"build_{service}.image.private.json",
         module.encode(image),
     )
-    host.fixture_state["api"]["Image"] = "sha256:" + "a" * 64
-    host.fixture_state["api"]["Config"]["Image"] = "sha256:" + "a" * 64
-    host.fixture_state["api"]["Config"]["Env"].reverse()
+    host.fixture_state[service]["Image"] = "sha256:" + "a" * 64
+    host.fixture_state[service]["Config"]["Image"] = "sha256:" + "a" * 64
+    host.fixture_state[service]["Config"]["Env"].reverse()
     if builder_metadata:
-        host.fixture_state["api"]["Config"]["Labels"][
+        host.fixture_state[service]["Config"]["Labels"][
             "com.docker.compose.image.builder"
         ] = "classic"
     host.fixture_state["scheduler"]["State"]["Paused"] = True
@@ -688,7 +696,7 @@ def test_known_failed_switch_restores_only_original_image_and_retains_failure(
 
     monkeypatch.setattr(host, "_shell", shell)
     monkeypatch.setattr(host, "_configuration", lambda: None)
-    monkeypatch.setattr(host, "_ready", lambda *args: None)
+    monkeypatch.setattr(host, "_ready", lambda *args, **kwargs: None)
     result = host.restore_availability(phase)
     assert (
         result["status"] == "availability_restored"
@@ -712,7 +720,7 @@ def test_original_image_recovery_rejects_candidate_builder_before_readiness(
             "Image"
         ]
 
-    def unexpected_readiness(*args):
+    def unexpected_readiness(*args, **kwargs):
         pytest.fail("Unproven rollback metadata must be refused before readiness")
 
     monkeypatch.setattr(host, "_shell", shell)
@@ -1114,7 +1122,9 @@ def test_known_failed_coupled_switch_restores_both_even_after_partial_recreate(
 
     monkeypatch.setattr(host, "_shell", shell)
     monkeypatch.setattr(host, "_configuration", lambda: None)
-    monkeypatch.setattr(host, "_ready", lambda name, *_args: ready.append(name))
+    monkeypatch.setattr(
+        host, "_ready", lambda name, *_args, **_kwargs: ready.append(name)
+    )
     result = host.restore_availability(phase)
     assert switches == [("api", "matrix-alert-relay")]
     assert ready == ["api", "matrix-alert-relay"]
@@ -1142,7 +1152,9 @@ def test_coupled_rollback_cannot_claim_success_if_relay_remains_candidate(
     monkeypatch.setattr(host, "_shell", shell)
     monkeypatch.setattr(host, "_configuration", lambda: None)
     monkeypatch.setattr(
-        host, "_ready", lambda *_args: pytest.fail("partial rollback is not ready")
+        host,
+        "_ready",
+        lambda *_args, **_kwargs: pytest.fail("partial rollback is not ready"),
     )
     with pytest.raises(module.JournalError, match="host_running_image"):
         host.restore_availability(phase)
@@ -1332,6 +1344,279 @@ def test_final_api_route_rejects_nonobject_without_reload(
         host._api_route("build-ccccccc")
     assert len(calls) == 1
     assert calls[0][0] == "curl"
+
+
+def prepare_route_switch(host, module, protocol, monkeypatch):
+    commands = install_phase_command_models(host, module, monkeypatch)
+    service = "web" if host.plan["services"] == ["web"] else "api"
+    target = "switch_" + service
+    for phase in host.plan["phases"][: host.plan["phases"].index(target)]:
+        payload = (
+            payload_for(phase)
+            if phase.endswith(("_backup", "_restore"))
+            else host.effect(phase, "f" * 64)
+        )
+        save_receipt(host, module, protocol, phase, payload)
+    return service, target, commands
+
+
+@pytest.mark.parametrize("host", [False, "web-only"], indirect=True)
+@pytest.mark.parametrize("fault", ["stale", "unavailable", "malformed", "status_only"])
+def test_switch_waits_for_route_convergence_without_repeating_effects(
+    host, module, protocol, monkeypatch, fault
+):
+    service, phase, commands = prepare_route_switch(host, module, protocol, monkeypatch)
+    previous = host._run
+    routes = []
+    url = host.host["nginx_url"].rstrip("/") + (
+        "/api/health" if service == "api" else "/"
+    )
+
+    def run(argv, *args, **kwargs):
+        if argv[0] == "curl" and argv[-1] == url:
+            routes.append(argv)
+            if len(routes) == 1:
+                if fault == "unavailable":
+                    raise module.HostCommandError("old_worker_upstream_unavailable")
+                if fault == "status_only":
+                    return b'{"status":"healthy"}'
+                return (
+                    b'{"build_id":"build-ccccccc"}' if fault == "stale" else b"not-json"
+                )
+        return previous(argv, *args, **kwargs)
+
+    monkeypatch.setattr(host, "_run", run)
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+    result = host.effect(phase, "f" * 64)
+    assert result["ready"] and result["nginx_routing_verified"]
+    assert len(routes) == 2
+    assert len([c for c in commands if c[-3:] == ["nginx", "-s", "reload"]]) == 1
+    assert len([c for c in commands if c[-2:] == ["nginx", "-t"]]) == 1
+    assert [action for action, _args in host.fixture_calls].count("switch") == 1
+    assert host.fixture_state["scheduler"]["State"]["Paused"] is True
+    assert not list(host.root.glob("smoke_*.intent.json"))
+    assert (
+        module.read_record(host.root / f"{phase}.result.json")["status"] == "succeeded"
+    )
+
+
+@pytest.mark.parametrize("host", [False, "web-only"], indirect=True)
+@pytest.mark.parametrize("fault", ["stale", "unavailable", "status_only"])
+def test_switch_route_timeout_preserves_failure_and_never_repeats_effect(
+    host, module, protocol, monkeypatch, fault
+):
+    service, phase, commands = prepare_route_switch(host, module, protocol, monkeypatch)
+    previous = host._run
+    routes = []
+    clock = [0.0]
+    url = host.host["nginx_url"].rstrip("/") + (
+        "/api/health" if service == "api" else "/"
+    )
+
+    def run(argv, *args, **kwargs):
+        if argv[0] == "curl" and argv[-1] == url:
+            routes.append(argv)
+            if fault == "unavailable":
+                raise module.HostCommandError("route_unavailable")
+            if fault == "status_only":
+                return b'{"status":"healthy"}'
+            return b'{"build_id":"build-ccccccc"}'
+        return previous(argv, *args, **kwargs)
+
+    monkeypatch.setattr(host, "_run", run)
+    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: clock.__setitem__(0, 60))
+    with pytest.raises(
+        module.JournalError, match=f"host_nginx_{service}_route_unavailable"
+    ):
+        host.effect(phase, "f" * 64)
+    assert len(routes) == 1
+    assert len([c for c in commands if c[-3:] == ["nginx", "-s", "reload"]]) == 1
+    assert [action for action, _args in host.fixture_calls].count("switch") == 1
+    assert module.read_record(host.root / f"{phase}.result.json")["status"] == "failed"
+    assert not (host.operation / "receipts" / f"{phase}.json").exists()
+    assert not list(host.root.glob("smoke_*.intent.json"))
+    assert host.fixture_state["scheduler"]["State"]["Paused"] is True
+    assert host.active_marker.exists()
+    with pytest.raises(module.JournalError):
+        host.effect(phase, "f" * 64)
+    assert [action for action, _args in host.fixture_calls].count("switch") == 1
+
+
+@pytest.mark.parametrize("host", [False, "web-only"], indirect=True)
+@pytest.mark.parametrize("fault", ["stale", "unavailable", "status_only"])
+@pytest.mark.parametrize("recovers", [False, True])
+def test_availability_restoration_waits_once_for_old_route_and_retains_failed_rollout(
+    host, module, protocol, monkeypatch, fault, recovers
+):
+    service = "web" if host.plan["services"] == ["web"] else "api"
+    phase = failed_switch(host, module, protocol, monkeypatch, service=service)
+    failed_bytes = (host.root / f"{phase}.result.json").read_bytes()
+    previous = host._run
+    commands, switches, routes = [], [], []
+    clock = [0.0]
+    url = host.host["nginx_url"].rstrip("/") + (
+        "/api/health" if service == "api" else "/"
+    )
+
+    def shell(action, overlay, *consumers, **kwargs):
+        if action == "switch":
+            switches.append(consumers)
+            for name in consumers:
+                host.fixture_state[name] = copy.deepcopy(
+                    host.baseline["containers"][name]
+                )
+        else:
+            assert action == "health"
+
+    def run(argv, *args, **kwargs):
+        commands.append(argv)
+        if argv[-2:] == ["nginx", "-t"] or argv[-3:] == ["nginx", "-s", "reload"]:
+            return b""
+        if argv[0] == "curl" and argv[-1] == url:
+            routes.append(argv)
+            if not recovers or len(routes) == 1:
+                if fault == "unavailable":
+                    raise module.HostCommandError("old_worker_upstream_unavailable")
+                if fault == "status_only":
+                    return b'{"status":"healthy"}'
+                return b'{"build_id":"build-aaaaaaa"}'
+        return previous(argv, *args, **kwargs)
+
+    monkeypatch.setattr(host, "_shell", shell)
+    monkeypatch.setattr(host, "_run", run)
+    monkeypatch.setattr(host, "_configuration", lambda: None)
+    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        module.time,
+        "sleep",
+        lambda _seconds: clock.__setitem__(0, clock[0] + (0.2 if recovers else 60)),
+    )
+    if recovers:
+        result = host.restore_availability(phase)
+        assert result["status"] == "availability_restored"
+        assert result["rollout_complete"] is False
+    else:
+        with pytest.raises(
+            module.JournalError, match=f"host_nginx_{service}_route_unavailable"
+        ):
+            host.restore_availability(phase)
+        assert (
+            module.read_record(host.root / "availability-recovery.result.json")[
+                "status"
+            ]
+            == "failed"
+        )
+    assert len(routes) == (2 if recovers else 1)
+    assert switches == [(service,)]
+    assert len([c for c in commands if c[-3:] == ["nginx", "-s", "reload"]]) == 1
+    assert (host.root / f"{phase}.result.json").read_bytes() == failed_bytes
+    assert host.fixture_state["scheduler"]["State"]["Paused"] is True
+    assert not list(host.root.glob("smoke_*.intent.json"))
+    with pytest.raises(module.JournalError, match="record_already_exists"):
+        host.restore_availability(phase)
+    assert switches == [(service,)]
+
+
+@pytest.mark.parametrize("host", ["web-only"], indirect=True)
+def test_final_web_route_fails_immediately_without_reload_or_completion(
+    host, module, protocol, monkeypatch
+):
+    commands = install_phase_command_models(host, module, monkeypatch)
+    for phase in host.plan["phases"]:
+        payload = (
+            payload_for(phase)
+            if phase.endswith(("_backup", "_restore"))
+            else host.effect(phase, "f" * 64)
+        )
+        save_receipt(host, module, protocol, phase, payload)
+    previous = host._run
+    routes = []
+    before = len(commands)
+
+    def run(argv, *args, **kwargs):
+        if argv[0] == "curl" and argv[-1] == host.host["nginx_url"].rstrip("/") + "/":
+            routes.append(argv)
+            return b"fixture build-ccccccc"
+        return previous(argv, *args, **kwargs)
+
+    monkeypatch.setattr(host, "_run", run)
+    monkeypatch.setattr(
+        module.time, "sleep", lambda _seconds: pytest.fail("final check must not wait")
+    )
+    with pytest.raises(module.JournalError, match="host_nginx_web_build"):
+        host.verify_completion()
+    assert len(routes) == 1
+    assert not any(c[-3:] == ["nginx", "-s", "reload"] for c in commands[before:])
+    assert not (host.root / "completion.json").exists()
+    assert host.active_marker.exists()
+
+
+@pytest.mark.parametrize("service", ["api", "web"])
+def test_route_wait_stops_at_effect_deadline_before_readiness_budget(
+    host, module, monkeypatch, service
+):
+    instant = datetime.now(timezone.utc)
+    elapsed = [0.0]
+    calls = []
+    host.effect_until = instant + timedelta(seconds=3)
+
+    class Runner:
+        def run(self, argv, label, timeout, **kwargs):
+            calls.append((argv, timeout))
+            return b'{"build_id":"build-aaaaaaa"}'
+
+    monkeypatch.setattr(host, "runner", Runner())
+    monkeypatch.setattr(host, "_run", module.DeploymentHost._run.__get__(host))
+    monkeypatch.setattr(
+        module, "now", lambda: (instant + timedelta(seconds=elapsed[0])).isoformat()
+    )
+    monkeypatch.setattr(module.time, "monotonic", lambda: elapsed[0])
+    monkeypatch.setattr(
+        module.time, "sleep", lambda _seconds: elapsed.__setitem__(0, 3.0)
+    )
+    with pytest.raises(module.JournalError, match="host_deadline"):
+        getattr(host, f"_{service}_route")("build-ccccccc", wait=True)
+    assert len(calls) == 1
+    assert calls[0][1] == 3
+
+
+@pytest.mark.parametrize("host", [False, "web-only"], indirect=True)
+@pytest.mark.parametrize("fault", ["config", "reload"])
+def test_switch_does_not_retry_failed_nginx_command_or_start_route_wait(
+    host, module, protocol, monkeypatch, fault
+):
+    _service, phase, commands = prepare_route_switch(
+        host, module, protocol, monkeypatch
+    )
+    previous = host._run
+    attempts = []
+
+    def run(argv, *args, **kwargs):
+        attempts.append(argv)
+        if (fault == "config" and argv[-2:] == ["nginx", "-t"]) or (
+            fault == "reload" and argv[-3:] == ["nginx", "-s", "reload"]
+        ):
+            raise module.HostCommandError("nginx_fault", uncertain=fault == "reload")
+        return previous(argv, *args, **kwargs)
+
+    monkeypatch.setattr(host, "_run", run)
+    monkeypatch.setattr(
+        module.time,
+        "sleep",
+        lambda _seconds: pytest.fail("nginx commands must not retry"),
+    )
+    with pytest.raises(module.HostCommandError, match="nginx_fault"):
+        host.effect(phase, "f" * 64)
+    assert len([c for c in attempts if c[-2:] == ["nginx", "-t"]]) == 1
+    assert len([c for c in attempts if c[-3:] == ["nginx", "-s", "reload"]]) == (
+        fault == "reload"
+    )
+    assert not any(c[0] == "curl" for c in attempts)
+    assert module.read_record(host.root / f"{phase}.result.json")["status"] == (
+        "uncertain" if fault == "reload" else "failed"
+    )
+    assert host.fixture_state["scheduler"]["State"]["Paused"] is True
 
 
 def test_nginx_master_restart_cannot_hide_as_same_container(host, module):
