@@ -104,7 +104,9 @@ def _advisory_start(text: str) -> bool:
         re.match(
             r"you (?:should|could|can|may|must|need to|have to)\b|"
             r"(?:please )?(?:try|check|restart|inspect|make sure)\b"
-            r"(?!\s+(?:failed|fails)\b)|"
+            r"(?!\s+(?:failed|fails|did(?:n['’]t| not)|does(?:n['’]t| not)|"
+            r"won['’]t|will not|is(?:n['’]t| not)|was(?:n['’]t| not)?|keeps|hangs|"
+            r"never)\b)|"
             r"i (?:recommend|suggest)\b|"
             r"my (?:recommendation|suggestion|advice)\b|"
             r"in my experience[,]? you\b",
@@ -142,8 +144,12 @@ def standalone_request(text: str) -> bool:
     )
     # A factual lead-in or conditional can precede a clear request. Avoid
     # treating "what I suggest" or "how about checking" as question grammar.
-    if re.search(rf"(?:^|[.!]\s+)(?:{question})", text, re.I) or re.match(
-        rf"if\b[^?\n]{{1,160}},\s*(?:{question}|"
+    if re.search(
+        rf"(?:^|[.!]\s+|^(?:restart|check)\b[^?\n]{{0,160}},\s*)(?:{question})",
+        text,
+        re.I,
+    ) or re.match(
+        rf"(?:if|when)\b[^?\n]{{1,160}},\s*(?:{question}|"
         r"(?:does|would|will|can|could|is) it\b)",
         text,
         re.I,

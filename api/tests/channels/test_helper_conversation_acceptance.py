@@ -53,7 +53,18 @@ REQUESTS = [
     "What does WalletSyncError mean?",
     'My wallet fails with the message "you must reconnect".',
     "Restart failed and my wallet is locked. How can I recover?",
+    "Restart didn't help. How can I recover my wallet?",
+    "Restart did not fix it, what should I do?",
+    "Restart doesn’t finish. How can I recover?",
+    "Restart won't complete. How can I reconnect?",
+    "Restart will not finish. What should I do?",
+    "Restart is not working. How can I recover?",
+    "Restart was not successful. How can I reconnect?",
+    "Restart keeps failing. What should I do?",
+    "Restart hangs. How can I reconnect?",
+    "Restart never finishes. How can I recover?",
     "If you restore a backup, does it also restore the wallet settings?",
+    "When you restore from seed, does it keep the trade history?",
     "Could you please explain the wallet status?",
 ]
 
@@ -117,6 +128,35 @@ async def test_known_helper_unthreaded_advice_is_held_without_a_second_attempt(
     assert held.id in retained.channel_metadata["conversation_pending_candidate_ids"]
     assert reservations(bundle) == 1
     bundle.llm.invoke.assert_called_once()
+    assert bundle.sender.await_count == 2
+    no_public_delivery(bundle)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Restart didn't help. How can I recover my wallet?",
+        "When you restore from seed, does it keep the trade history?",
+    ],
+)
+async def test_new_requester_outcome_or_conditional_is_not_helper_only(
+    conversation, text
+):
+    bundle = conversation
+    release = hold_worker(bundle)
+    request = incoming(bundle, "$new-request", text)
+    authoritative_timeline(bundle, [request])
+    await process_all(bundle, [request, request])
+    release.set()
+    await bundle.engine.drain()
+    cases = await all_cases(bundle)
+    assert len(cases) == 1
+    case = cases[0]
+    assert case.channel_metadata["conversation_requester_id"] == REQUESTER
+    assert case.channel_metadata["conversation_membership"] == "confirmed"
+    assert case.channel_metadata["context_status"] == "delivered"
+    assert reservations(bundle) == bundle.llm.invoke.call_count == 1
     assert bundle.sender.await_count == 2
     no_public_delivery(bundle)
 
