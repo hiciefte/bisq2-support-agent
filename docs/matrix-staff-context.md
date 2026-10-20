@@ -57,13 +57,23 @@ possible connections do not establish membership. These are deterministic
 deferrals, not model silence.
 
 The model context retains captured speakers separately; the requester's
-substantive messages form the combined retrieval question. Unlinked fragments
-still use the bounded same-author continuation rule; user identity or room
-proximity alone does not establish a missing relationship. A helper-only
-provisional case can become eligible when another participant supplies confirmed
-substantive context before any attempt or freeze. Once an incident is frozen or
-attempted, later meaningful updates remain visible for Admin review without
-another generation or delivery.
+substantive messages form the combined retrieval question. Unlinked substantive
+fragments use the bounded continuation rule only for that requester. A confirmed
+non-requester's unthreaded message can instead create a provisional Admin case
+with candidate links to their recent active conversations (at most one hour old
+and fifteen minutes idle). These links are review hints, never automatic merges.
+A clear independent question or first-person problem can still start a separate
+case; helping someone earlier is not a permanent role.
+
+Explicit advisory and diagnostic phrasing is held even before membership is
+known. This uses narrow English patterns, not a model classifier or a universal
+question-only gate. Neutral advice without known membership can remain
+indistinguishable from a new request; natural-trial review must assess that limit.
+A helper-only provisional case can become eligible when a different participant
+supplies linked substantive requester context before any attempt or freeze.
+Another helper's advice or later edit cannot activate it. Quiet acknowledgements
+remain quiet. Once an incident is frozen or attempted, later meaningful updates
+remain visible for Admin review without another generation or delivery.
 
 The context generator uses the configured answer model and a staff-only variant
 of the public-context prompt. Before drafting, an evidence resolver combines

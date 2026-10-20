@@ -94,7 +94,7 @@ export function staffContextReasonLabel(reason: string): string {
         incident_source_context_incomplete: "The complete incident could not be checked against the source messages. Staff review is needed.",
         incident_updated_after_generation: "New incident information arrived after the AI context was prepared. The note was withheld for review.",
         conversation_membership_unresolved: "This message may continue an existing conversation, but the connection is not confirmed. Review the related cases before responding; no new AI reply was generated for this message.",
-        conversation_helper_only: "This appears to be a participant asking someone else for diagnostic details. It is held for review instead of being treated as a new support request.",
+        conversation_helper_only: "This appears to be a participant offering advice or asking someone else for diagnostic details. It is held for review instead of being treated as a new support request.",
         source_followup_antecedent_unavailable: "The question or message being answered could not be established. Staff review is needed before generating a reply.",
         source_discussion_capacity_reached: "The conversation is too large to check automatically. Staff review is needed.",
         staff_identity_unavailable: "Staff participation could not be checked.",

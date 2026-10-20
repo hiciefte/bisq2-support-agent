@@ -34,7 +34,7 @@ from app.channels.staff_assist.context_incidents import (
     context_only,
     continuation,
     diagnostic_link,
-    helper_question,
+    helper_turn,
     incident_question,
     new_issue,
     quoted_question,
@@ -393,9 +393,7 @@ class MatrixContextRuntime:
             incoming, self._trial.trial_id if self._trial else None
         )
         unresolved_quote = quoted_question(question) is not None
-        provisional = (
-            helper_question(question) or bool(candidate_ids) or unresolved_quote
-        )
+        provisional = helper_turn(question) or bool(candidate_ids) or unresolved_quote
         case = await service.create_escalation(
             EscalationCreate(
                 message_id="matrix-context:" + _digest([room_id, incoming.message_id]),

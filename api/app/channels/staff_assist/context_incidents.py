@@ -99,6 +99,86 @@ def quoted_question(text: str) -> str | None:
     return None
 
 
+def _advisory_start(text: str) -> bool:
+    return bool(
+        re.match(
+            r"you (?:should|could|can|may|must|need to|have to)\b|"
+            r"(?:please )?(?:try|check|restart|inspect|make sure)\b"
+            r"(?!\s+(?:failed|fails)\b)|"
+            r"i (?:recommend|suggest)\b|"
+            r"my (?:recommendation|suggestion|advice)\b|"
+            r"in my experience[,]? you\b",
+            text,
+            re.I,
+        )
+    )
+
+
+def standalone_request(text: str) -> bool:
+    """Positive request evidence, not a global question/admission classifier.
+
+    A participant's earlier helper role must not suppress their own new request.
+    Punctuation or a first-person pronoun alone cannot establish that transition.
+    """
+    if (
+        context_only(text)
+        or helper_question(text)
+        or answer_fragment(text)
+        or quoted_question(text)
+    ):
+        return False
+    text = re.sub(r"^(?:also|and)\b[\s,:;-]*", "", text.strip(), flags=re.I)
+    # A diagnostic question after explicit advice still addresses the other
+    # participant. A later question mark must not manufacture request ownership.
+    if _advisory_start(text):
+        return False
+    question = (
+        r"(?:what|which|where|when|why|how) "
+        r"(?:do|does|did|is|are|was|were|can|could|should|would|will|has|have)\b|"
+        r"how to\b|"
+        r"(?:can|could|would) you (?:please )?(?:explain|help|tell|show)\b|"
+        r"(?:can|could|should|may|do|does|is|are|will|would) "
+        r"(?:i|we|my|our|the|a|an)\b"
+    )
+    # A factual lead-in or conditional can precede a clear request. Avoid
+    # treating "what I suggest" or "how about checking" as question grammar.
+    if re.search(rf"(?:^|[.!]\s+)(?:{question})", text, re.I) or re.match(
+        rf"if\b[^?\n]{{1,160}},\s*(?:{question}|"
+        r"(?:does|would|will|can|could|is) it\b)",
+        text,
+        re.I,
+    ):
+        return True
+    return bool(
+        re.match(
+            r"(?:i|we) (?:cannot|can't|can’t|need help|am unable|are unable|"
+            r"have (?:a |an )?(?:problem|issue|error)|"
+            r"get (?:a |an )?(?:error|exception))\b|"
+            r"(?:my|our)\b[^.!?\n]{0,100}\b"
+            r"(?:[a-z]*error|[a-z]*exception|fails?|failed|stuck|locked|"
+            r"missing|broken|cannot|can't|can’t|"
+            r"not (?:work\w*|connect\w*|respond\w*)|"
+            r"(?:doesn't|doesn’t|won't|won’t) (?:work|connect|sync|start|open|load))\b",
+            text,
+            re.I,
+        )
+    )
+
+
+def helper_turn(text: str) -> bool:
+    """Recognize explicit advice even before conversation membership is known.
+
+    This is a narrow deterministic hold, not a claim to classify arbitrary prose.
+    Established non-requester participation supplies the broader review hint.
+    """
+    if helper_question(text):
+        return True
+    if standalone_request(text) or quoted_question(text):
+        return False
+    text = re.sub(r"^(?:also|and)\b[\s,:;-]*", "", text.strip(), flags=re.I)
+    return bool(_advisory_start(text) or re.match(r"(?:if|when) you\b", text, re.I))
+
+
 def compatible(text: str, previous: str) -> bool:
     old_product, product = explicit_product(previous), explicit_product(text)
     old_version, version = explicit_user_version(previous), explicit_user_version(text)
@@ -372,8 +452,25 @@ class ContextIncidentStore:
                     for message in messages
                     if message.get("sender_id", owner) == incoming.user.user_id
                 ]
-                if (own_texts or owner == incoming.user.user_id) and continuation(
-                    incoming.question, "\n".join(own_texts) if own_texts else question
+                requester = saved.get("conversation_requester_id")
+                if (
+                    not requester
+                    and saved.get("conversation_membership") != "provisional"
+                ):
+                    requester = owner
+                # A retained helper is not the requester. Their substantive
+                # unthreaded turn needs a confirmed relation or Admin review.
+                # Quiet acknowledgements can still use the bounded association.
+                can_continue = requester == incoming.user.user_id or context_only(
+                    incoming.question
+                )
+                if (
+                    can_continue
+                    and (own_texts or owner == incoming.user.user_id)
+                    and continuation(
+                        incoming.question,
+                        "\n".join(own_texts) if own_texts else question,
+                    )
                 ):
                     candidates.append(case_id)
         # An unresolved explicit relation is not permission to associate with
@@ -407,12 +504,8 @@ class ContextIncidentStore:
         ):
             return []
         response_like = answer_fragment(text)
-        if (
-            not response_like
-            and not helper_question(text)
-            and not quoted_question(text)
-        ):
-            return []
+        dependent = response_like or helper_question(text) or quoted_question(text)
+        independent_request = standalone_request(text)
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute(
                 "SELECT id, channel_metadata, question, created_at FROM escalations "
@@ -446,13 +539,26 @@ class ContextIncidentStore:
                 or not 0 <= age <= 3600
                 or not 0 <= idle <= 900
                 or not compatible(text, previous)
-                or not any(
-                    helper_question(message["text"])
-                    for message in saved.get("incident_messages", [])
-                )
             ):
                 continue
-            if words & (set(re.findall(r"[a-z]{4,}", previous.lower())) - ignored):
+            messages = saved.get("incident_messages", [])
+            requester = saved.get("conversation_requester_id")
+            known_helper = (
+                saved.get("conversation_membership") == "confirmed"
+                and requester
+                and requester != incoming.user.user_id
+                and any(
+                    message.get("sender_id") == incoming.user.user_id
+                    for message in messages
+                )
+            )
+            if known_helper and not independent_request:
+                matches.append(case_id)
+            elif (
+                dependent
+                and any(helper_question(message["text"]) for message in messages)
+                and words & (set(re.findall(r"[a-z]{4,}", previous.lower())) - ignored)
+            ):
                 matches.append(case_id)
         return matches
 
@@ -517,12 +623,12 @@ class ContextIncidentStore:
                 ).fetchone()
             )
             # A helper's later statement or edit is still helper context. Keep
-            # this role from the full history, including replaced questions,
+            # this role from the full history, including replaced advice,
             # so only a different participant can activate the held case.
             helper_senders = {row[2]} | {
                 message.get("sender_id", row[2])
                 for message in messages
-                if helper_question(message["text"])
+                if helper_turn(message["text"])
             }
             activated = (
                 metadata.get("conversation_membership") == "provisional"
@@ -533,7 +639,7 @@ class ContextIncidentStore:
                 and not attempted
                 and not metadata.get("incident_frozen")
                 and not context_only(sanitized)
-                and not helper_question(sanitized)
+                and not helper_turn(sanitized)
                 and not metadata.get("candidate_conversation_ids")
             )
             if activated:
