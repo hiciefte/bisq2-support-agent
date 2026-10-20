@@ -42,7 +42,7 @@ export function StaffContextDetails({ context }: { context: StaffContextMetadata
             {context.late_update_requires_review && (
                 <div role="status" className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
                     <p className="font-medium">New incident context needs review</p>
-                    <p>The question below includes later updates. No additional AI note was generated or sent for those updates. Review them alongside the existing note.</p>
+                    <p>New messages arrived after this case was last assessed. No additional AI note was generated or sent for those updates. Review the updated conversation before responding.</p>
                     {context.generation_question && (
                         <details>
                             <summary className="cursor-pointer font-medium">Context used for the existing AI attempt</summary>
