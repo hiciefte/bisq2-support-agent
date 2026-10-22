@@ -9,6 +9,35 @@ export interface StaffContextMetadata {
     generation_question?: string;
     candidate_conversation_ids?: number[];
     pending_candidate_ids?: number[];
+    staff_activity_snapshot?: ReviewContextMessage[];
+    moderation_context_snapshot?: ReviewContextMessage[];
+}
+
+interface ReviewContextMessage {
+    role: "user" | "staff" | "participant";
+    speaker: string;
+    content: string;
+}
+
+function reviewContextMessages(value: unknown): ReviewContextMessage[] {
+    if (!Array.isArray(value)) return [];
+    const result: ReviewContextMessage[] = [];
+    let remaining = 4000;
+    for (const entry of value.slice(0, 10)) {
+        if (!entry || typeof entry !== "object") continue;
+        const { role, speaker, content } = entry;
+        if (
+            !["user", "staff", "participant"].includes(role) ||
+            typeof content !== "string" || !content.trim() ||
+            typeof speaker !== "string" ||
+            !/^(?:requester|participant-[1-9][0-9]?)$/.test(speaker) ||
+            (role === "user") !== (speaker === "requester")
+        ) continue;
+        if (content.length > remaining) break;
+        result.push({ role, speaker, content });
+        remaining -= content.length;
+    }
+    return result;
 }
 
 function caseIds(value: unknown): number[] {
@@ -54,6 +83,8 @@ export function staffContextMetadata(metadata?: Record<string, unknown> | null):
         generation_question: text("incident_generation_question"),
         candidate_conversation_ids: caseIds(metadata.candidate_conversation_ids),
         pending_candidate_ids: caseIds(metadata.conversation_pending_candidate_ids),
+        staff_activity_snapshot: reviewContextMessages(metadata.staff_activity_snapshot),
+        moderation_context_snapshot: reviewContextMessages(metadata.moderation_context_snapshot),
     };
 }
 
@@ -84,7 +115,9 @@ export function staffContextReasonLabel(reason: string): string {
         context_capacity_reached: "The context queue is full. Staff review is needed.",
         context_pii_detected: "The draft may contain personal information and was withheld.",
         high_risk_action: "This question needs a human response.",
-        staff_active: "Staff are already active in the conversation, so the note was withheld.",
+        moderation_review_required: "A request for personal information needs human moderation review. The automatic reply was withheld.",
+        staff_active: "Staff are active in this conversation, so the note is held for review. This does not mean the question is resolved.",
+        staff_context_membership_unresolved: "Nearby staff activity could not be linked to a confirmed conversation. The AI note was withheld; review the source context before responding.",
         recent_bot_reply: "An AI reply is already present, so another note was withheld.",
         source_stale: "The source question is too old for automatic context delivery.",
         source_changed_or_redacted: "The source question changed or was removed. Staff review is needed.",

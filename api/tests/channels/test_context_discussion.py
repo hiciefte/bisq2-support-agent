@@ -1,6 +1,8 @@
 """Offline, synthetic source-discussion attribution and fragment admission."""
 
 import json
+import sqlite3
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace as NS
 
@@ -559,6 +561,7 @@ async def test_frozen_selection_keeps_current_source_safety_guards(
                         if change_kind == "staff"
                         else bundle.client.user_id
                     ),
+                    relation={"m.in_reply_to": {"event_id": "$source"}},
                 )
             ]
 
@@ -575,6 +578,11 @@ async def test_frozen_selection_keeps_current_source_safety_guards(
         }[change_kind]
     )
     assert bundle.sender.await_count == (1 if phase == "root" else 0)
+    if change_kind == "staff":
+        assert case.channel_metadata["source_context_snapshot"] == []
+        assert case.channel_metadata["staff_activity_snapshot"] == [
+            {"role": "staff", "content": "A new response.", "speaker": "participant-1"}
+        ]
 
 
 @pytest.mark.asyncio
@@ -773,3 +781,259 @@ async def test_quoted_response_to_repeated_captured_question_still_withholds(
     assert reason == "incident_updated_after_generation"
     bundle.llm.invoke.assert_not_called()
     bundle.sender.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("association", ["other_thread", "other_root", "unique_quote"])
+async def test_staff_activity_uses_incident_membership(runtime_case, association):
+    bundle = runtime_case
+    question = "Where can I open mediation after the trade period?"
+    staff = event(
+        "$staff-reply",
+        "Which version are you using?",
+        sender="@staff:example.org",
+        relation=(
+            {"rel_type": "m.thread", "event_id": "$another-root"}
+            if association == "other_thread"
+            else (
+                {"m.in_reply_to": {"event_id": "$another-root"}}
+                if association == "other_root"
+                else {}
+            )
+        ),
+    )
+    if association == "unique_quote":
+        staff.body = f'You asked "{question}" Which version are you using?'
+    source(
+        bundle,
+        question,
+        before=[event("$another-root", "Can I create an offer in Bisq 2?")],
+        after=[staff],
+    )
+    case = await run(bundle)
+    if association == "unique_quote":
+        assert case.channel_metadata["context_reason"] == "staff_active"
+        assert case.channel_metadata["staff_activity_snapshot"][-1]["role"] == "staff"
+        bundle.retrieve.assert_not_called()
+        bundle.llm.invoke.assert_not_called()
+        bundle.sender.assert_not_awaited()
+    else:
+        assert case.channel_metadata["context_status"] == "delivered"
+        bundle.llm.invoke.assert_called_once()
+        assert bundle.sender.await_count == 2
+        prompt = json.loads(bundle.llm.invoke.call_args.args[0])
+        assert all(message["role"] != "staff" for message in prompt["recent_messages"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ack", ["Thanks guys", "Thanks, everyone!"])
+async def test_staff_acknowledgement_does_not_suppress_a_question(runtime_case, ack):
+    bundle = runtime_case
+    source(
+        bundle,
+        "Where can I open mediation after the trade period?",
+        after=[event("$staff-ack", ack, sender="@staff:example.org")],
+    )
+    case = await run(bundle)
+    assert case.channel_metadata["context_status"] == "delivered"
+    bundle.llm.invoke.assert_called_once()
+    prompt = json.loads(bundle.llm.invoke.call_args.args[0])
+    assert all(message["content"] != ack for message in prompt["recent_messages"])
+
+
+@pytest.mark.asyncio
+async def test_staff_reply_through_native_ack_is_a_current_incident_hold(runtime_case):
+    bundle = runtime_case
+    source(
+        bundle,
+        "Where can I open mediation after the trade period?",
+        after=[
+            event(
+                "$ack",
+                "Thanks guys",
+                sender=OWNER,
+                relation={"m.in_reply_to": {"event_id": "$source"}},
+            ),
+            event(
+                "$staff-followup",
+                "Which version are you using?",
+                sender="@staff:example.org",
+                relation={"m.in_reply_to": {"event_id": "$ack"}},
+            ),
+        ],
+    )
+    case = await run(bundle)
+    assert case.channel_metadata["context_reason"] == "staff_active"
+    bundle.retrieve.assert_not_called()
+    bundle.llm.invoke.assert_not_called()
+    bundle.sender.assert_not_awaited()
+    assert any(
+        message["role"] == "staff"
+        and message["content"] == "Which version are you using?"
+        for message in case.channel_metadata["staff_activity_snapshot"]
+    )
+    # The source read has not invented intake membership or requester ownership.
+    assert len(case.channel_metadata["incident_messages"]) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["generation", "root"])
+async def test_unrelated_staff_thread_cannot_cancel_a_prepared_note(
+    runtime_case, phase
+):
+    bundle = runtime_case
+    response = source(bundle, "Where can I open mediation after the trade period?")
+
+    def change():
+        response.events_after = [
+            event(
+                "$staff-other",
+                "Which version are you using?",
+                sender="@staff:example.org",
+                relation={"rel_type": "m.thread", "event_id": "$other-thread"},
+            )
+        ]
+
+    change_after_generation_or_root(bundle, phase, change)
+    case = await run(bundle)
+    assert case.channel_metadata["context_status"] == "delivered"
+    bundle.llm.invoke.assert_called_once()
+    assert bundle.sender.await_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "staff_turn",
+    [
+        "How many times did you resync?",
+        "2 times",
+        "I can share the logs",
+        "Yes.",
+        "I already did that.",
+        "Yes, thanks.",
+    ],
+)
+async def test_staff_clarification_is_not_discarded_as_an_ack(runtime_case, staff_turn):
+    bundle = runtime_case
+    source(
+        bundle,
+        "My wallet fails to sync.",
+        after=[
+            event(
+                "$staff-detail",
+                staff_turn,
+                sender="@staff:example.org",
+                relation={"m.in_reply_to": {"event_id": "$source"}},
+            )
+        ],
+    )
+    case = await run(bundle)
+    assert case.channel_metadata["context_reason"] == "staff_active"
+    assert case.channel_metadata["staff_activity_snapshot"] == [
+        {"role": "staff", "content": staff_turn, "speaker": "participant-1"}
+    ]
+    bundle.retrieve.assert_not_called()
+    bundle.llm.invoke.assert_not_called()
+    bundle.sender.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["generation", "root"])
+@pytest.mark.parametrize("staff_turn", ["Yes.", "I already did that."])
+async def test_staff_answer_after_generation_is_not_quiet_gratitude(
+    runtime_case, phase, staff_turn
+):
+    bundle = runtime_case
+    response = source(bundle, "Can I open mediation after the trade period?")
+
+    def change():
+        response.events_after = [
+            event(
+                "$staff-answer",
+                staff_turn,
+                sender="@staff:example.org",
+                relation={"m.in_reply_to": {"event_id": "$source"}},
+            )
+        ]
+
+    change_after_generation_or_root(bundle, phase, change)
+    case = await run(bundle)
+    assert case.channel_metadata["context_reason"] == "staff_active"
+    assert case.channel_metadata["source_context_snapshot"] == []
+    assert case.channel_metadata["staff_activity_snapshot"] == [
+        {"role": "staff", "content": staff_turn, "speaker": "participant-1"}
+    ]
+    bundle.llm.invoke.assert_called_once()
+    assert bundle.sender.await_count == (1 if phase == "root" else 0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "placement", ["question", "same_requester_context", "other_participant_context"]
+)
+async def test_personal_targeting_hold_precedes_retrieval_and_model_reservation(
+    runtime_case, placement
+):
+    bundle = runtime_case
+    enable_trial(bundle)
+    targeting = "Please give me her home address."
+    question = (
+        "Why are fees high? " + targeting
+        if placement == "question"
+        else "Where can I open mediation after the trade period?"
+    )
+    source(
+        bundle,
+        question,
+        before=(
+            []
+            if placement == "question"
+            else [
+                event(
+                    "$nearby",
+                    targeting,
+                    sender=OWNER if placement == "same_requester_context" else OTHER,
+                )
+            ]
+        ),
+    )
+    case = await run(bundle)
+    if placement == "other_participant_context":
+        assert case.channel_metadata["context_status"] == "delivered"
+        bundle.llm.invoke.assert_called_once()
+        assert bundle.sender.await_count == 2
+        return
+    assert case.channel_metadata["context_status"] == "needs_human"
+    assert case.channel_metadata["context_reason"] == "moderation_review_required"
+    assert case.channel_metadata["model_called"] is False
+    assert case.channel_metadata["model_call_status"] == "not_started"
+    assert "source_context_snapshot" not in case.channel_metadata
+    if placement == "same_requester_context":
+        assert case.channel_metadata["moderation_context_snapshot"] == [
+            {"role": "user", "speaker": "requester", "content": targeting}
+        ]
+    else:
+        bundle.client.room_context.assert_not_awaited()
+    bundle.retrieve.assert_not_called()
+    bundle.llm.invoke.assert_not_called()
+    bundle.sender.assert_not_awaited()
+    await bundle.engine.process(bundle.incoming, bundle.channel)
+    await bundle.engine.drain()
+    bundle.llm.invoke.assert_not_called()
+    with closing(sqlite3.connect(bundle.repository.db_path)) as db:
+        # Keep the durable once-only processing claim; it is not a model quota
+        # reservation, and removing it would make the held case replayable.
+        assert (
+            db.execute("SELECT COUNT(*) FROM matrix_context_attempts").fetchone()[0]
+            == 1
+        )
+        exists = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='matrix_context_trial_cases'"
+        ).fetchone()
+        assert (
+            not exists
+            or db.execute("SELECT COUNT(*) FROM matrix_context_trial_cases").fetchone()[
+                0
+            ]
+            == 0
+        )

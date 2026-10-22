@@ -312,6 +312,44 @@ class TestEscalationRepositoryList:
         assert results[0].message_id == "msg-001"
 
     @pytest.mark.asyncio
+    async def test_case_id_search_is_exact_and_preserves_filters(
+        self, escalation_repository
+    ):
+        await escalation_repository.initialize()
+        target = await escalation_repository.create(
+            _make_create(message_id="target", channel="matrix")
+        )
+        await escalation_repository.create(
+            _make_create(
+                message_id="text-match", question=f"Question mentions #{target.id}"
+            )
+        )
+        results, total = await escalation_repository.list_escalations(
+            EscalationFilters(search=f" #{target.id} ", channel="matrix")
+        )
+        assert total == 1 and [item.id for item in results] == [target.id]
+        results, total = await escalation_repository.list_escalations(
+            EscalationFilters(search=f"#{target.id}", channel="web")
+        )
+        assert results == [] and total == 0
+        results, total = await escalation_repository.list_escalations(
+            EscalationFilters(search=f"#{target.id}", status=EscalationStatus.CLOSED)
+        )
+        assert results == [] and total == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("query", ["#9999999999999999999999999999", "#1 OR 1=1"])
+    async def test_case_id_search_does_not_overflow_or_expand(
+        self, escalation_repository, query
+    ):
+        await escalation_repository.initialize()
+        await escalation_repository.create(_make_create(message_id="only"))
+        results, total = await escalation_repository.list_escalations(
+            EscalationFilters(search=query)
+        )
+        assert results == [] and total == 0
+
+    @pytest.mark.asyncio
     async def test_list_filter_by_search_staff_answer(self, escalation_repository):
         """Search filter matches staff_answer text."""
         await escalation_repository.initialize()

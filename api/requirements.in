@@ -3,6 +3,8 @@ fastapi
 uvicorn
 # Security floor for CVE-2026-63374 (TLS host name certificate matching).
 anyio>=4.14.2
+# Remove compromised emSign roots (GHSA-6q48-6c7w-9gw2).
+certifi>=2026.10.19
 
 # Data handling
 pydantic
@@ -100,9 +102,8 @@ mypy
 flake8
 pip-tools
 pre-commit
-# Security fixes for seed wheel verification (CVE-2026-102930) and shell
-# activation paths (CVE-2026-102925).
-virtualenv>=21.7.13
+# Security fixes for seed wheel verification and shell activation paths.
+virtualenv>=21.14.9
 
 # Added for cross-process file locking
 portalocker
@@ -110,4 +111,5 @@ portalocker
 # Data science libs
 matplotlib
 scikit-learn
-pillow>=12.3.0
+# Image parser and rendering security fixes in Pillow 13.
+pillow>=13.0.0

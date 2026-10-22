@@ -68,7 +68,7 @@ def enable_trial(bundle, **changes):
         {"MATRIX_CONTEXT_TRIAL_START_AT": "2026-01-01T00:00:00"},
         {"MATRIX_CONTEXT_TRIAL_END_AT": "invalid"},
         {"MATRIX_CONTEXT_TRIAL_END_AT": "2030-01-01T00:00:00Z"},
-        {"MATRIX_CONTEXT_TRIAL_MAX_CASES": 11},
+        {"MATRIX_CONTEXT_TRIAL_MAX_CASES": 21},
         {"MATRIX_CONTEXT_TRIAL_MAX_CASES": 0},
         {"MATRIX_CONTEXT_SOURCE_ROOMS": []},
         {"MATRIX_STAFF_ROOM": SOURCE_ROOM},
@@ -83,24 +83,62 @@ def test_no_trial_preserves_existing_settings():
     assert ContextTrial.from_settings(NS()) is None
 
 
+@pytest.mark.parametrize("duration", [timedelta(hours=48), timedelta(days=7)])
+def test_authorized_window_ceiling_and_exact_cutoff(duration):
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    trial = ContextTrial.from_settings(
+        trial_settings(
+            MATRIX_CONTEXT_TRIAL_START_AT=start.isoformat(),
+            MATRIX_CONTEXT_TRIAL_END_AT=(start + duration).isoformat(),
+            MATRIX_CONTEXT_TRIAL_MAX_CASES=20,
+        )
+    )
+    assert trial.reason(start + duration - timedelta(microseconds=1)) is None
+    assert trial.reason(start + duration) == "context_trial_expired"
+
+
+@pytest.mark.parametrize(
+    "duration", [timedelta(0), timedelta(seconds=-1), timedelta(days=7, microseconds=1)]
+)
+def test_duration_outside_bound_is_refused(duration):
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    with pytest.raises(ValueError, match="at most 7 days"):
+        ContextTrial.from_settings(
+            trial_settings(
+                MATRIX_CONTEXT_TRIAL_START_AT=start.isoformat(),
+                MATRIX_CONTEXT_TRIAL_END_AT=(start + duration).isoformat(),
+            )
+        )
+
+
 def test_settings_model_validates_trial_configuration(tmp_path):
     from app.core.config import Settings
 
     values = vars(trial_settings())
     settings = Settings(DATA_DIR=str(tmp_path), _env_file=None, **values)
     assert settings.MATRIX_CONTEXT_TRIAL_MAX_CASES == 10
-    values["MATRIX_CONTEXT_TRIAL_MAX_CASES"] = 11
-    with pytest.raises(ValueError, match="between 1 and 10"):
+    values["MATRIX_CONTEXT_TRIAL_MAX_CASES"] = 20
+    assert (
+        Settings(
+            DATA_DIR=str(tmp_path), _env_file=None, **values
+        ).MATRIX_CONTEXT_TRIAL_MAX_CASES
+        == 20
+    )
+    values["MATRIX_CONTEXT_TRIAL_MAX_CASES"] = 21
+    with pytest.raises(ValueError, match="between 1 and 20"):
         Settings(DATA_DIR=str(tmp_path), _env_file=None, **values)
 
 
 @pytest.mark.asyncio
-async def test_concurrent_reservations_and_restart_cannot_replenish_cap(tmp_path):
-    trial = ContextTrial.from_settings(trial_settings())
+@pytest.mark.parametrize("cap", [10, 20])
+async def test_concurrent_reservations_and_restart_cannot_replenish_cap(tmp_path, cap):
+    trial = ContextTrial.from_settings(
+        trial_settings(MATRIX_CONTEXT_TRIAL_MAX_CASES=cap)
+    )
     store = ContextTrialStore(str(tmp_path / "trial.db"), trial)
     results = await asyncio.gather(*(store.reserve(case_id) for case_id in range(30)))
-    assert results.count(None) == 10
-    assert results.count("context_trial_capacity_reached") == 20
+    assert results.count(None) == cap
+    assert results.count("context_trial_capacity_reached") == 30 - cap
     restarted = ContextTrialStore(store.db_path, trial)
     assert await restarted.reserve(100) == "context_trial_capacity_reached"
     admitted = results.index(None)
@@ -115,6 +153,7 @@ async def test_concurrent_reservations_and_restart_cannot_replenish_cap(tmp_path
         ("staff_room", "!other:example.org"),
         ("source_rooms", ("!other:example.org",)),
         ("max_cases", 9),
+        ("max_cases", 20),
         ("start_at", datetime(2025, 1, 1, tzinfo=timezone.utc)),
         ("end_at", datetime(2030, 1, 1, tzinfo=timezone.utc)),
     ],

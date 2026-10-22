@@ -42,6 +42,10 @@ ACKNOWLEDGEMENTS = [
     "Yeah, thanks",
     "Okay! Thank you. 👌",
     "Thanks 🤙🏿!",
+    "thanks guys",
+    "Thanks, everyone!",
+    "Thank you all",
+    "Thanks so much folks 🙏",
 ]
 
 
@@ -330,7 +334,7 @@ async def test_detached_acknowledgements_have_no_work(runtime_case, text, relati
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("text", ACKNOWLEDGEMENTS[:3])
+@pytest.mark.parametrize("text", ACKNOWLEDGEMENTS[:3] + ACKNOWLEDGEMENTS[-4:])
 @pytest.mark.parametrize(
     "relations",
     [{}, {"reply_to_event_id": "$root"}, {"thread_root_event_id": "$root"}],
@@ -401,6 +405,10 @@ async def test_linked_acknowledgements_are_stored_without_generation_or_late_cha
         "Thanks for nothing",
         "Okay / thanks",
         "Thanks 😕",
+        "Thanks guys, what should I do next?",
+        "Thanks everyone. My wallet is still locked.",
+        "Thanks folks, correction: the fee is 20 sat/vB.",
+        "Thanks, all funds arrived.",
     ],
 )
 async def test_acknowledgement_with_question_or_status_is_admitted(runtime_case, text):
@@ -1385,3 +1393,91 @@ async def test_known_helpers_cannot_activate_provisional_conversation(
             db.execute("SELECT COUNT(*) FROM matrix_context_attempts").fetchone()[0]
             == 1
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("quote_target", ["other", "ambiguous"])
+async def test_staff_quote_reuses_durable_incident_membership(
+    runtime_case, quote_target
+):
+    bundle = runtime_case
+    hold_worker(bundle)
+    question = "Where can I open mediation after the trade period?"
+    other_question = (
+        question
+        if quote_target == "ambiguous"
+        else "How do I change the connection timeout?"
+    )
+    other = incoming(
+        bundle, "$other-root", other_question, user="@another-user:example.org"
+    )
+    current = incoming(bundle, "$current-root", question)
+    for message in (other, current):
+        await bundle.engine.process(message, bundle.channel)
+    server_events(bundle, [other, current])
+    original_read = bundle.client.room_context.side_effect
+
+    async def read(*args, **kwargs):
+        response = await original_read(*args, **kwargs)
+        response.events_after = [
+            NS(
+                event_id="$staff-quote",
+                sender="@staff:example.org",
+                body=f'You asked "{other_question}" Which version are you using?',
+                server_timestamp=int(datetime.now(timezone.utc).timestamp() * 1000),
+                source={},
+            )
+        ]
+        return response
+
+    bundle.client.room_context.side_effect = read
+    _, reason = await bundle.engine._read_source(current)
+    assert reason == (
+        "staff_context_membership_unresolved" if quote_target == "ambiguous" else None
+    )
+    rows, count = await bundle.repository.list_escalations(EscalationFilters())
+    assert count == 2
+    assert all(len(case.channel_metadata["incident_messages"]) == 1 for case in rows)
+    bundle.llm.invoke.assert_not_called()
+    bundle.sender.assert_not_awaited()
+    await bundle.engine.close()
+
+
+@pytest.mark.asyncio
+async def test_grouped_helper_targeting_does_not_become_requester_intent(runtime_case):
+    bundle = runtime_case
+    enable_trial(bundle)
+    release = hold_worker(bundle)
+    root = incoming(
+        bundle, "$requester-root", "Where can I open mediation after the trade period?"
+    )
+    helper = incoming(
+        bundle,
+        "$helper-targeting",
+        "Please give me her home address.",
+        user="@another-participant:example.org",
+        reply_to_event_id=root.message_id,
+    )
+    followup = incoming(
+        bundle,
+        "$requester-followup",
+        "Which mediation screen has that entry?",
+        reply_to_event_id=root.message_id,
+    )
+    server_events(bundle, [root, helper, followup])
+    for message in (root, helper, followup):
+        await bundle.engine.process(message, bundle.channel)
+    release.set()
+    await bundle.engine.drain()
+    case = await saved_case(bundle)
+    assert case.channel_metadata["context_status"] == "delivered"
+    assert helper.question in case.question
+    assert helper.question not in case.channel_metadata["incident_generation_question"]
+    prompt = json.loads(bundle.llm.invoke.call_args.args[0])
+    assert helper.question not in prompt["question"]
+    assert any(
+        message["role"] == "participant" and message["content"] == helper.question
+        for message in prompt["recent_messages"]
+    )
+    bundle.llm.invoke.assert_called_once()
+    assert bundle.sender.await_count == 2

@@ -176,7 +176,9 @@ Public-room posting remains a separate feature and rollout decision.
 An opt-in bounded trial uses `MATRIX_CONTEXT_TRIAL_ID`,
 `MATRIX_CONTEXT_TRIAL_START_AT`, `MATRIX_CONTEXT_TRIAL_END_AT`, and
 `MATRIX_CONTEXT_TRIAL_MAX_CASES`. Dates require an explicit timezone. The window
-must be positive and at most 48 hours; the case limit is 1–10 (default 10).
+must be positive and at most 7 days; the case limit is 1–20 (default 10).
+These are configuration ceilings for a separately authorized trial, not an
+extension of an existing descriptor or its reservations.
 Existing operation is unchanged when the trial ID and dates are empty.
 
 The ID binds an immutable descriptor containing the source rooms, staff room,
@@ -185,8 +187,8 @@ settings fails closed. Reservations are atomic across workers and survive proces
 restarts and case retention. A case consumes a slot before paid retrieval, even
 if the model later chooses silence, publication is suppressed, or the outcome is
 uncertain. This deliberately bounds paid cases and consequently bounds notes;
-it does not promise ten published notes. Changing to a new ID starts a distinct
-trial and requires a new explicit operational decision.
+it does not promise the same number of published notes. Changing to a new ID
+starts a distinct trial and requires a new explicit operational decision.
 
 Source events before the start timestamp remain deferred for Admin review, with
 no paid retrieval or generation. Keep generation off during initial sync catch-up,

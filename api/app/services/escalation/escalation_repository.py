@@ -6,6 +6,7 @@ Stores channel_metadata and sources as JSON text columns.
 
 import json
 import logging
+import re
 import sqlite3
 from datetime import datetime, timezone
 from enum import Enum
@@ -444,7 +445,12 @@ class EscalationRepository:
         if filters.staff_id:
             where_clauses.append("staff_id = ?")
             params.append(filters.staff_id)
-        if filters.search:
+        if filters.search and re.fullmatch(r"#[1-9][0-9]*", filters.search.strip()):
+            # Keep the ID as a bound string: oversized IDs safely match no row
+            # instead of overflowing SQLite's signed integer adapter.
+            where_clauses.append("id = ?")
+            params.append(filters.search.strip()[1:])
+        elif filters.search:
             search_pattern = f"%{filters.search}%"
             where_clauses.append(
                 "(question LIKE ? OR COALESCE(question_original, '') LIKE ? OR "

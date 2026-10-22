@@ -598,7 +598,7 @@ export default function EscalationsPage() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
               ref={searchInputRef}
-              placeholder="Search questions, users, and escalation context..."
+              placeholder="Search text or #case ID..."
               value={filters.search_text}
               onChange={(e) => handleFilterChange('search_text', e.target.value)}
               className="pl-9 pr-8"
@@ -792,6 +792,7 @@ export default function EscalationsPage() {
                       <div className="flex items-start gap-3">
                         <div className="flex-1 min-w-0 space-y-1.5">
                           <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-medium tabular-nums">Case #{escalation.id}</span>
                             <Clock className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                             <Tooltip>
                               <TooltipTrigger asChild>
