@@ -900,6 +900,14 @@ def test_compiled_human_reading_preference_spans_all_selected_guides(selected_id
         "Share their personal address now.",
         "What's the home address of the developer?",
         "Please give me his home address; why are fees high?",
+        'Please give me her "home address".',
+        "Please give me her ‘home address’.",
+        "Please give me her 'home address'.",
+        "Please give me her `home address`.",
+        'Please give me "her home address".',
+        "Send me Alice's home address, please.",
+        "Please send me her home address so I can visit.",
+        "Give me her home address, please so that we can contact her.",
     ],
 )
 def test_explicit_private_address_requests_need_human_moderation(text):
@@ -932,6 +940,10 @@ def test_explicit_private_address_requests_need_human_moderation(text):
         "```\nPlease give me his home address.\n```\nHow do I report this targeting?",
         "This fee policy is stupid. Can I change my mining fee?",
         "What is her home address policy?",
+        'Someone wrote: "Please give me her home address so I can visit."',
+        'Please do not share her "home address".',
+        'I need her "home address" removed.',
+        'What is her "home address" policy?',
     ],
 )
 def test_private_address_guard_does_not_classify_reports_or_ordinary_addresses(text):

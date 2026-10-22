@@ -340,14 +340,27 @@ def _private_address_request(text: str) -> bool:
     """
     text = re.sub(r"```.*?```", "", text, flags=re.S)
     text = re.sub(r"(?m)^\s*>.*$", "", text)
-    text = re.sub(r'"[^"\n]*"|“[^”\n]*”|`[^`\n]*`', "", text)
-    text = re.sub(r"(?<!\w)'[^'\n]{8,}'(?!\w)", "", text)
     owner = r"(?:his|her|their|your|(?:the )?[a-z][a-z-]{0,30}['’]s)"
     address = r"(?:home|residential|private|personal)(?: street)? address"
     target = (
         rf"(?:{owner} {address}|(?:the )?{address} of "
         r"(?:him|her|them|the (?:developer|maintainer|contributor|moderator)))"
     )
+
+    # Preserve an emphasized target noun phrase within a direct request, while
+    # leaving quoted complete requests/reports to the contextual model policy.
+    def quoted_target(match: re.Match[str]) -> str:
+        phrase = match.group(1)
+        return phrase if re.fullmatch(rf"(?:{address}|{target})", phrase, re.I) else ""
+
+    for quoted_span in (
+        r'"([^"\n]*)"',
+        r"“([^”\n]*)”",
+        r"‘([^’\n]*)’",
+        r"`([^`\n]*)`",
+        r"(?<!\w)'([^'\n]{8,})'(?!\w)",
+    ):
+        text = re.sub(quoted_span, quoted_target, text)
     direct_request = (
         r"(?:(?:i|we) (?:want|need|would like)(?: to (?:know|get|find))? |"
         r"(?:please )?(?:give|send|show|tell|find|share|publish|provide)(?: me| us)? |"
@@ -355,9 +368,14 @@ def _private_address_request(text: str) -> bool:
         r"(?:can|could) (?:you|someone|anyone) "
         r"(?:give|send|show|tell|find|share|provide)(?: me| us)? )"
     )
+    qualification = (
+        r"(?:,? please)?(?: now| right now)?"
+        r"(?: (?:so (?:that )?(?:i|we) can|to (?:visit|contact|find|meet|see))"
+        r"\b[^.!?;]*)?"
+    )
     return any(
         re.fullmatch(
-            rf"(?:also[, ]+)?{direct_request}{target}(?: please| now| right now)?[.!?;]*",
+            rf"(?:also[, ]+)?{direct_request}{target}{qualification}[.!?;]*",
             " ".join(clause.split()),
             flags=re.I,
         )
