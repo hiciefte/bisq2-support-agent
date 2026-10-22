@@ -237,7 +237,8 @@ The Matrix integration uses lane-specific names to separate support-channel inge
     **`MATRIX_CONTEXT_TRIAL_END_AT`**, **`MATRIX_CONTEXT_TRIAL_MAX_CASES`**
     *   Optional staff-context trial descriptor. ID and dates default empty;
         the case cap defaults to 10. Dates must include a timezone, the window
-        must be at most 48 hours, and the cap must be 1–10.
+        must be at most 7 days, and the cap must be 1–20. Existing descriptors
+        retain their original limits; a larger trial requires a new authorization.
     *   A durable reservation is spent before paid retrieval and is never
         replenished by silence, failure, restart, or deleting a review case.
         The start timestamp excludes older source messages; the end time is

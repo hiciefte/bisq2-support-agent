@@ -51,13 +51,13 @@ class ContextTrial:
         start_at, end_at = start_at.astimezone(timezone.utc), end_at.astimezone(
             timezone.utc
         )
-        if not timedelta(0) < end_at - start_at <= timedelta(hours=48):
+        if not timedelta(0) < end_at - start_at <= timedelta(days=7):
             raise ValueError(
-                "Matrix trial duration must be positive and at most 48 hours"
+                "Matrix trial duration must be positive and at most 7 days"
             )
         max_cases = int(getattr(settings, "MATRIX_CONTEXT_TRIAL_MAX_CASES", 10))
-        if not 1 <= max_cases <= 10:
-            raise ValueError("MATRIX_CONTEXT_TRIAL_MAX_CASES must be between 1 and 10")
+        if not 1 <= max_cases <= 20:
+            raise ValueError("MATRIX_CONTEXT_TRIAL_MAX_CASES must be between 1 and 20")
         rooms = tuple(sorted(resolve_allowed_context_source_rooms(settings)))
         staff = str(getattr(settings, "MATRIX_STAFF_ROOM", "") or "").strip()
         if (
