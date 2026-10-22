@@ -1,7 +1,21 @@
 import { Badge } from "@/components/ui/badge";
 import { staffContextReasonLabel, staffContextStatusLabel, type StaffContextMetadata } from "@/lib/staff-context";
 
+function CaseLinks({ ids }: { ids: number[] }) {
+    return ids.map((id, index) => (
+        <span key={id}>
+            {index > 0 && ", "}
+            <a href={`/admin/escalations?search=%23${id}`} className="text-primary underline underline-offset-4" aria-label={`Review case #${id}`}>
+                #{id}
+            </a>
+        </span>
+    ));
+}
+
 export function StaffContextDetails({ context }: { context: StaffContextMetadata }) {
+    const reviewMessages = context.context_reason === "moderation_review_required"
+        ? context.moderation_context_snapshot
+        : context.staff_activity_snapshot;
     return (
         <section aria-label="Staff context delivery" className="space-y-3 rounded-lg border border-border bg-muted/20 p-4">
             <div className="flex flex-wrap items-center gap-2">
@@ -13,6 +27,25 @@ export function StaffContextDetails({ context }: { context: StaffContextMetadata
                 internal review decision; it cannot publish a reply to the public room.
             </p>
             {context.context_reason && <p className="text-sm">{staffContextReasonLabel(context.context_reason)}</p>}
+            {Boolean(reviewMessages?.length) && (
+                <details className="space-y-2 text-sm">
+                    <summary className="cursor-pointer font-medium">Conversation observed when the reply was held</summary>
+                    <p className="text-muted-foreground">
+                        This is a bounded review snapshot, not proof of what the AI saw or that the
+                        question was answered. Nearby unthreaded turns may belong to another conversation.
+                    </p>
+                    <ol className="space-y-2">
+                        {reviewMessages?.map((message, index) => (
+                            <li key={index} className="rounded border border-border p-2">
+                                <p className="font-medium">
+                                    {message.role === "user" ? "Requester" : message.role === "staff" ? `Staff (${message.speaker})` : `Participant (${message.speaker})`}
+                                </p>
+                                <p className="whitespace-pre-wrap break-words">{message.content}</p>
+                            </li>
+                        ))}
+                    </ol>
+                </details>
+            )}
             {(Boolean(context.candidate_conversation_ids?.length) ||
                 Boolean(context.pending_candidate_ids?.length)) && (
                 <div
@@ -28,13 +61,13 @@ export function StaffContextDetails({ context }: { context: StaffContextMetadata
                     {Boolean(context.candidate_conversation_ids?.length) && (
                         <p>
                             Possible earlier cases:{" "}
-                            {context.candidate_conversation_ids?.map((id) => `#${id}`).join(", ")}
+                            <CaseLinks ids={context.candidate_conversation_ids ?? []} />
                         </p>
                     )}
                     {Boolean(context.pending_candidate_ids?.length) && (
                         <p>
                             Later messages awaiting review:{" "}
-                            {context.pending_candidate_ids?.map((id) => `#${id}`).join(", ")}
+                            <CaseLinks ids={context.pending_candidate_ids ?? []} />
                         </p>
                     )}
                 </div>

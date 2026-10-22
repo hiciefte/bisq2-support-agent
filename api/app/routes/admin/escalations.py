@@ -86,7 +86,7 @@ async def list_escalations(
         status_filter: Filter by escalation status
         channel: Filter by channel identifier
         priority: Filter by priority level
-        search: Full-text search across escalation text fields
+        search: Exact #case ID, or text search across escalation fields
         limit: Maximum number of results (1-100)
         offset: Number of results to skip
         service: Escalation service dependency

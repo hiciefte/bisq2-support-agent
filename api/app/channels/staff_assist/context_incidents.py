@@ -16,26 +16,45 @@ import aiosqlite
 from app.channels.arbitration.coordinator import accumulate_question
 from app.services.rag.code_evidence import explicit_product, explicit_user_version
 
+_GRATITUDE = (
+    r"(?:thanks?(?: you)?|thx)"
+    r"(?: (?:again|a lot|so much|very much))?"
+    r"(?:,? (?:guys|everyone|all|folks|both))?"
+    r"(?: (?:for )?(?:the )?(?:quick|speedy|prompt|fast) (?:response|reply))?"
+)
+
+
+def _acknowledgement_clauses(text: str, clause: str) -> bool:
+    # Match entire clauses; never discard arbitrary words or question marks.
+    return bool(
+        re.fullmatch(
+            rf"{clause}(?:(?:[,!.]\s*|\s+){clause})*"
+            r"(?:[.!]?\s*[👍🙏🤙👌]\ufe0f?[\U0001f3fb-\U0001f3ff]?)*",
+            text.strip().lower().rstrip(".! "),
+        )
+    )
+
+
+def acknowledgement_only(text: str) -> bool:
+    """Existing requester acknowledgements, without substantive suffixes."""
+    return _acknowledgement_clauses(
+        text,
+        rf"(?:ok(?:ay)?|yes|yeah|great|{_GRATITUDE}|"
+        r"i (?:already )?did that(?: (?:as well|too))?)",
+    )
+
+
+def gratitude_only(text: str) -> bool:
+    """Staff thanks are quiet; yes/action confirmations may answer a question."""
+    return _acknowledgement_clauses(text, _GRATITUDE)
+
 
 def context_only(text: str) -> bool:
     text = text.strip().lower().rstrip(".! ")
     if re.search(r"\b(?:error|fails?|failed|cannot|locked)\b|can['’]t|not work", text):
         return False
-    # Match entire acknowledgement clauses; never discard arbitrary words or
-    # question marks. Concrete actions and outcome updates remain substantive.
-    acknowledgement = (
-        r"(?:ok(?:ay)?|yes|yeah|great|"
-        r"(?:thanks?(?: you)?|thx)"
-        r"(?: (?:again|a lot|so much|very much))?"
-        r"(?: (?:for )?(?:the )?(?:quick|speedy|prompt|fast) (?:response|reply))?|"
-        r"i (?:already )?did that(?: (?:as well|too))?)"
-    )
     return bool(
-        re.fullmatch(
-            rf"{acknowledgement}(?:(?:[,!.]\s*|\s+){acknowledgement})*"
-            r"(?:[.!]?\s*[👍🙏🤙👌]\ufe0f?[\U0001f3fb-\U0001f3ff]?)*",
-            text,
-        )
+        acknowledgement_only(text)
         or re.fullmatch(r"(?:no|\d+\s*(?:times?)?)", text)
         or re.fullmatch(
             r"i (?:can|could) (?:also )?(?:provide|send|share|upload) "

@@ -34,6 +34,7 @@ from app.channels.staff_assist.context_incidents import (
     context_only,
     continuation,
     diagnostic_link,
+    gratitude_only,
     helper_turn,
     incident_question,
     new_issue,
@@ -152,6 +153,16 @@ def select_public_evidence(documents: list[Any]) -> list[PublicEvidence]:
         if len(selected) == 8:
             break
     return selected
+
+
+def _staff_activity_metadata(
+    reason: str | None, messages: list[RoomMessage]
+) -> dict[str, Any]:
+    if reason not in {"staff_active", "staff_context_membership_unresolved"}:
+        return {}
+    # Observation-time review context, never a replacement for model-input
+    # provenance or proof that an unthreaded neighbor belongs to this incident.
+    return {"staff_activity_snapshot": [message.model_dump() for message in messages]}
 
 
 class ContextReviewStore:
@@ -660,10 +671,38 @@ class MatrixContextRuntime:
         ) == "high" or incoming.channel_metadata.get("incident_high_risk"):
             await store.update(case_id, status="needs_human", reason="high_risk_action")
             return False
+        if PublicContextRequest(question=question).needs_moderation_review:
+            await store.update(
+                case_id,
+                status="needs_human",
+                reason="moderation_review_required",
+                model_called=False,
+                model_call_status="not_started",
+            )
+            return False
         source_snapshot = _SourceContextSnapshot()
         snapshot, reason = await self._read_source(incoming, snapshot=source_snapshot)
+        if PublicContextRequest(
+            question=question, recent_messages=snapshot
+        ).needs_moderation_review:
+            await store.update(
+                case_id,
+                status="needs_human",
+                reason="moderation_review_required",
+                model_called=False,
+                model_call_status="not_started",
+                moderation_context_snapshot=[
+                    message.model_dump() for message in snapshot
+                ],
+            )
+            return False
         if reason:
-            await store.update(case_id, status="deferred", reason=reason)
+            await store.update(
+                case_id,
+                status="deferred",
+                reason=reason,
+                **_staff_activity_metadata(reason, snapshot),
+            )
             return False
         rag = self.runtime.rag_service
         retriever = rag.document_retriever
@@ -877,7 +916,10 @@ class MatrixContextRuntime:
             or not await self._case_is_open(case_id)
         ):
             await store.update(
-                case_id, status="deferred", reason=reason or "review_or_policy_changed"
+                case_id,
+                status="deferred",
+                reason=reason or "review_or_policy_changed",
+                **_staff_activity_metadata(reason, current_snapshot),
             )
             return False
         room_id = incoming.channel_metadata["room_id"]
@@ -965,7 +1007,10 @@ class MatrixContextRuntime:
                 reason = "source_context_changed"
             if reason or not await self._case_is_open(case_id):
                 await store.update(
-                    case_id, status="deferred", reason=reason or "review_changed"
+                    case_id,
+                    status="deferred",
+                    reason=reason or "review_changed",
+                    **_staff_activity_metadata(reason, current_snapshot),
                 )
                 return False
             result = await self._send_if_open(
@@ -1242,15 +1287,6 @@ class MatrixContextRuntime:
         # bounded window before selecting a smaller chronological prompt history.
         for item in before + after:
             sender = str(getattr(item, "sender", ""))
-            if item in after and resolver.is_staff(sender):
-                return [], "staff_active"
-            if (
-                resolver.is_staff(sender)
-                and datetime.now(timezone.utc).timestamp()
-                - getattr(item, "server_timestamp", 0) / 1000
-                < cooldown
-            ):
-                return [], "staff_active"
             if item in after and sender == getattr(client, "user_id", None):
                 return [], "recent_bot_reply"
             replacement = context_relationships(item).get("replaces_event_id")
@@ -1259,6 +1295,14 @@ class MatrixContextRuntime:
                 and getattr(item, "event_id", None) not in incident_ids
             ):
                 return [], "source_context_changed"
+        staff_reason = await self._staff_activity_reason(
+            incoming, before, after, resolver, cooldown, incident_ids
+        )
+        if staff_reason:
+            discussion, reason = self._source_discussion(
+                incoming, event, before, after, saved, resolver, staff_review=True
+            )
+            return discussion, reason or staff_reason
         if snapshot is not None and snapshot.events is not None:
             # Recheck the exact events used for generation. Room activity and
             # selection age/capacity must not replace that evidence, while an
@@ -1376,6 +1420,104 @@ class MatrixContextRuntime:
             incoming, event, before, after, saved, resolver, snapshot=snapshot
         )
 
+    async def _staff_activity_reason(
+        self,
+        incoming: Any,
+        before: list[Any],
+        after: list[Any],
+        resolver: Any,
+        cooldown: int,
+        incident_ids: set[str],
+    ) -> str | None:
+        """Use intake membership, not room proximity, for human activity holds."""
+        now = datetime.now(timezone.utc).timestamp()
+        active = [
+            item
+            for item in before + after
+            if resolver.is_staff(str(getattr(item, "sender", "")))
+            and (
+                item in after
+                or 0 <= now - getattr(item, "server_timestamp", 0) / 1000 < cooldown
+            )
+            and not gratitude_only(sanitize_question(context_text(item)))
+        ]
+        if not active:
+            return None
+        service = self.runtime.resolve_optional("escalation_service")
+        if service is None:
+            return "staff_context_membership_unresolved"
+        incidents = ContextIncidentStore(service.repository.db_path)
+        trial_id = self._trial.trial_id if self._trial else None
+        current_case, _ = await incidents.find(incoming, trial_id)
+        visible = {getattr(item, "event_id", None): item for item in before + after}
+        targets = incident_ids | {
+            incoming.channel_metadata.get("thread_root_event_id")
+            or incoming.channel_metadata.get("reply_to_event_id")
+            or incoming.message_id
+        }
+        unresolved = False
+        for item in active:
+            text = sanitize_question(context_text(item))
+            relations = context_relationships(item)
+            candidate = incoming.model_copy(
+                update={
+                    "message_id": str(getattr(item, "event_id", "")),
+                    "question": text,
+                    "user": incoming.user.model_copy(
+                        update={"user_id": str(getattr(item, "sender", ""))}
+                    ),
+                    "channel_metadata": {
+                        "room_id": incoming.channel_metadata["room_id"],
+                        **relations,
+                    },
+                }
+            )
+            member_case, _ = await incidents.find(candidate, trial_id)
+            if member_case is not None:
+                if current_case is not None and member_case == current_case:
+                    return "staff_active"
+                # A positively identified other incident does not block this one.
+                if current_case is not None:
+                    continue
+            if new_issue(text):
+                continue
+            # The server read can precede intake. Follow only its native edges,
+            # including an ACK intermediate, without creating or moving members.
+            target = (
+                relations.get("replaces_event_id")
+                or relations.get("thread_root_event_id")
+                or relations.get("reply_to_event_id")
+            )
+            seen = set()
+            while target and target not in seen:
+                if target in targets:
+                    if compatible(text, incoming.question):
+                        return "staff_active"
+                    target = None
+                    break
+                seen.add(target)
+                if target not in visible:
+                    break
+                antecedent = visible[target]
+                if new_issue(context_text(antecedent)) or not compatible(
+                    context_text(antecedent), incoming.question
+                ):
+                    target = None
+                    break
+                related = context_relationships(antecedent)
+                target = (
+                    related.get("replaces_event_id")
+                    or related.get("thread_root_event_id")
+                    or related.get("reply_to_event_id")
+                )
+            if seen and target is None:
+                # An explicit chain ended at another observed root.
+                continue
+            if relations.get("thread_root_event_id") not in (None, *targets):
+                continue
+            unresolved = True
+        return "staff_context_membership_unresolved" if unresolved else None
+
     def _source_discussion(
         self,
         incoming: Any,
@@ -1386,6 +1528,7 @@ class MatrixContextRuntime:
         resolver: Any,
         *,
         snapshot: _SourceContextSnapshot | None = None,
+        staff_review: bool = False,
     ) -> tuple[list[RoomMessage], str | None]:
         """Bound possibly unrelated surrounding discussion without assigning ownership."""
         owner = incoming.user.user_id
@@ -1413,7 +1556,13 @@ class MatrixContextRuntime:
             for item in saved
             if item["event_id"] not in replaced_ids
             and item["event_id"] != incoming.message_id
-            and not context_only(item["text"])
+            and (
+                not context_only(item["text"])
+                or (
+                    resolver.is_staff(item.get("sender_id", owner))
+                    and not gratitude_only(item["text"])
+                )
+            )
         }
         relations = context_relationships(event)
         reply_target = relations.get(
@@ -1424,21 +1573,27 @@ class MatrixContextRuntime:
             or incoming.channel_metadata.get("thread_root_event_id")
             or reply_target
         )
-        scoped_ids = {incoming.message_id, *captured}
+        scoped_ids = {
+            incoming.message_id,
+            *captured,
+            *incoming.channel_metadata.get("incident_source_ids", []),
+        }
         if native_root:
             scoped_ids.add(native_root)
-            # Follow only explicit edges within the already bounded server read.
-            for _ in timeline:
-                previous_size = len(scoped_ids)
-                for item in timeline:
-                    relation = context_relationships(item)
-                    target = relation.get("thread_root_event_id") or relation.get(
-                        "reply_to_event_id"
-                    )
-                    if target in scoped_ids:
-                        scoped_ids.add(getattr(item, "event_id", None))
-                if len(scoped_ids) == previous_size:
-                    break
+        # Follow only explicit edges within the already bounded server read.
+        # An unthreaded root may still receive native replies through an ACK;
+        # the ACK is a relation bridge, not additional model context.
+        for _ in timeline:
+            previous_size = len(scoped_ids)
+            for item in timeline:
+                relation = context_relationships(item)
+                target = relation.get("thread_root_event_id") or relation.get(
+                    "reply_to_event_id"
+                )
+                if target in scoped_ids:
+                    scoped_ids.add(getattr(item, "event_id", None))
+            if len(scoped_ids) == previous_size:
+                break
 
         candidates: dict[str, tuple[str, str]] = {}
         for item in timeline:
@@ -1480,10 +1635,21 @@ class MatrixContextRuntime:
             ):
                 continue
             text = sanitize_question(context_text(item))
-            if text and not context_only(text):
+            if text and (
+                not context_only(text)
+                or (resolver.is_staff(sender) and not gratitude_only(text))
+            ):
                 candidates[event_id] = (sender, text)
 
         required = set(captured)
+        if staff_review:
+            # A held review must retain its bounded Staff clarification rather
+            # than let nearer optional chatter displace the relevant evidence.
+            required.update(
+                event_id
+                for event_id, (sender, _) in candidates.items()
+                if resolver.is_staff(sender)
+            )
         # An unrelated neighboring message cannot resolve an answer fragment.
         # Without an explicit relation, only one specific diagnostic antecedent
         # is sufficient for admission; semantic uncertainty stays with humans.

@@ -887,3 +887,79 @@ def test_compiled_human_reading_preference_spans_all_selected_guides(selected_id
     assert 'href="https://bisq.wiki/Bisq_Easy"' in html
     assert "github.com" not in html
     assert "Internal" not in html
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "I would like her home address please.",
+        "Please send me the maintainer's home address.",
+        "Can anyone show us their private address?",
+        "Why are fees high? I need his residential address.",
+        "What is Alice's home address?",
+        "Share their personal address now.",
+        "What's the home address of the developer?",
+        "Please give me his home address; why are fees high?",
+    ],
+)
+def test_explicit_private_address_requests_need_human_moderation(text):
+    llm = llm_output()
+    result = PublicContextService(llm).preview(request(question=text))
+    assert result.decision.reason == "moderation_review_required"
+    assert result.decision.action == "silence"
+    assert result.model_called is False
+    assert result.rendered_note is None
+    llm.invoke.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "What is his Bitcoin address?",
+        "Can you share the contributor's onion address?",
+        "What is your private IP address?",
+        "I need their payment address.",
+        "How can I protect my home address?",
+        "Should I share my home address with a trader?",
+        "Is it safe to disclose her home address?",
+        "I need her home address removed.",
+        "Please do not share their home address.",
+        "Do not give me his home address.",
+        'Someone wrote: "Please give me his home address." How do I report this?',
+        "Someone wrote: 'Please give me his home address.' How do I report this?",
+        "She said: I would like their home address please.",
+        "> Please give me his home address.\nHow do I report this targeting?",
+        "```\nPlease give me his home address.\n```\nHow do I report this targeting?",
+        "This fee policy is stupid. Can I change my mining fee?",
+        "What is her home address policy?",
+    ],
+)
+def test_private_address_guard_does_not_classify_reports_or_ordinary_addresses(text):
+    llm = llm_output()
+    result = PublicContextService(llm).preview(request(question=text))
+    assert result.decision.reason != "moderation_review_required"
+    llm.invoke.assert_called_once()
+
+
+@pytest.mark.parametrize("role", ["user", "participant", "staff"])
+def test_moderation_context_respects_focal_requester_attribution(role):
+    llm = llm_output()
+    context = RoomMessage(
+        role=role,
+        speaker="requester" if role == "user" else "participant-1",
+        content="Please give me her home address.",
+    )
+    result = PublicContextService(llm).preview(request(recent_messages=[context]))
+    if role == "user":
+        assert result.decision.reason == "moderation_review_required"
+        assert result.model_called is False
+        llm.invoke.assert_not_called()
+    else:
+        assert result.decision.reason != "moderation_review_required"
+        llm.invoke.assert_called_once()
+
+
+def test_moderation_prompt_preserves_attribution_and_context_limits():
+    assert "A neutral technical\nsubquestion does not override" in PUBLIC_CONTEXT_PROMPT
+    assert "profanity alone" in PUBLIC_CONTEXT_PROMPT
+    assert "quoted/reported abuse" in PUBLIC_CONTEXT_PROMPT

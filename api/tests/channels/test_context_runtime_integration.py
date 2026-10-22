@@ -465,7 +465,13 @@ async def test_verified_faq_enters_context_generation_with_real_source_kind(
 async def test_staff_activity_defers_durable_case_before_model(runtime_case):
     bundle = runtime_case
     staff_reply = NS(
-        sender="@staff:example.org", body="I can help with this.", source={}
+        event_id="$staff-question",
+        sender="@staff:example.org",
+        body="Which version are you using?",
+        server_timestamp=int(datetime.now(timezone.utc).timestamp() * 1000),
+        source={
+            "content": {"m.relates_to": {"m.in_reply_to": {"event_id": "$source"}}}
+        },
     )
     bundle.client.room_context.side_effect = lambda *a, **kw: context(
         after=[staff_reply]
@@ -473,6 +479,14 @@ async def test_staff_activity_defers_durable_case_before_model(runtime_case):
     case = await run(bundle)
     assert case.channel_metadata["context_status"] == "deferred"
     assert case.channel_metadata["context_reason"] == "staff_active"
+    assert case.status == EscalationStatus.PENDING
+    assert case.channel_metadata["staff_activity_snapshot"] == [
+        {
+            "role": "staff",
+            "content": "Which version are you using?",
+            "speaker": "participant-1",
+        }
+    ]
     bundle.retrieve.assert_not_called()
     bundle.llm.invoke.assert_not_called()
     bundle.sender.assert_not_awaited()
@@ -854,12 +868,13 @@ async def test_reopen_rejects_workers_still_shutting_down(runtime_case):
 
 
 @pytest.mark.asyncio
-async def test_nearest_staff_event_defers_generation_in_reverse_context(runtime_case):
+async def test_unthreaded_staff_activity_remains_unresolved_for_admin(runtime_case):
     bundle = runtime_case
     now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
     before = [
         NS(
-            sender="@staff:example.org" if i == 0 else "@user:example.org",
+            event_id=f"$earlier-{i}",
+            sender="@staff:example.org" if i == 19 else "@user:example.org",
             body=f"Earlier message {i}",
             server_timestamp=now_ms - 1000 * (i + 1),
             source={},
@@ -871,7 +886,13 @@ async def test_nearest_staff_event_defers_generation_in_reverse_context(runtime_
     bundle.client.room_context.side_effect = None
     bundle.client.room_context.return_value = response
     case = await run(bundle)
-    assert case.channel_metadata["context_reason"] == "staff_active"
+    assert (
+        case.channel_metadata["context_reason"] == "staff_context_membership_unresolved"
+    )
+    assert any(
+        message["role"] == "staff"
+        for message in case.channel_metadata["staff_activity_snapshot"]
+    )
     bundle.retrieve.assert_not_called()
     bundle.llm.invoke.assert_not_called()
     bundle.sender.assert_not_awaited()

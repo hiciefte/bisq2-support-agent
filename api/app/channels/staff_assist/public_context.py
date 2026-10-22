@@ -43,6 +43,12 @@ Anonymous speaker labels identify input attribution only. Do not use labels
 such as participant-1 or requester as names in the proposed note.
 Use surrounding diagnostic exchanges to understand what humans are already
 checking. Add only materially new, relevant evidence; otherwise choose silence.
+Choose silence when the focal participant requests another person's private home
+address, targets someone for harassment, or makes threats. A neutral technical
+subquestion does not override the need for human moderation. Do not attribute
+another participant's words or quoted/reported abuse to the focal participant;
+profanity alone, ordinary payment/network addresses and privacy-protection
+questions are not proof of targeting. Leave moderation decisions to human staff.
 Choose silence when your contribution would repeat existing information or add no
 useful evidence. A note must add a relevant finding from the supplied evidence,
 not merely offer a source, acknowledge the question, or request more information.
@@ -325,6 +331,40 @@ class RoomMessage(_StrictModel):
         return self
 
 
+def _private_address_request(text: str) -> bool:
+    """Recognize explicit direct locating/sharing requests, not general moderation.
+
+    Quoted/reported speech and privacy questions are left to the existing model
+    policy. Restrict the deterministic hold to whole direct-request clauses;
+    names, profanity, addresses and topic proximity alone establish no risk.
+    """
+    text = re.sub(r"```.*?```", "", text, flags=re.S)
+    text = re.sub(r"(?m)^\s*>.*$", "", text)
+    text = re.sub(r'"[^"\n]*"|“[^”\n]*”|`[^`\n]*`', "", text)
+    text = re.sub(r"(?<!\w)'[^'\n]{8,}'(?!\w)", "", text)
+    owner = r"(?:his|her|their|your|(?:the )?[a-z][a-z-]{0,30}['’]s)"
+    address = r"(?:home|residential|private|personal)(?: street)? address"
+    target = (
+        rf"(?:{owner} {address}|(?:the )?{address} of "
+        r"(?:him|her|them|the (?:developer|maintainer|contributor|moderator)))"
+    )
+    direct_request = (
+        r"(?:(?:i|we) (?:want|need|would like)(?: to (?:know|get|find))? |"
+        r"(?:please )?(?:give|send|show|tell|find|share|publish|provide)(?: me| us)? |"
+        r"(?:what is|what's|does (?:anyone|anybody) (?:know|have)) |"
+        r"(?:can|could) (?:you|someone|anyone) "
+        r"(?:give|send|show|tell|find|share|provide)(?: me| us)? )"
+    )
+    return any(
+        re.fullmatch(
+            rf"(?:also[, ]+)?{direct_request}{target}(?: please| now| right now)?[.!?;]*",
+            " ".join(clause.split()),
+            flags=re.I,
+        )
+        for clause in re.split(r"(?<=[.!?;])\s+|[\r\n]+", text)
+    )
+
+
 class PublicContextRequest(_StrictModel):
     question: str = Field(min_length=1, max_length=4000)
     recent_messages: list[RoomMessage] = Field(default_factory=list, max_length=20)
@@ -334,6 +374,20 @@ class PublicContextRequest(_StrictModel):
     already_resolved: bool = False
     recent_bot_reply: bool = False
     high_risk_action: bool = False
+
+    @property
+    def needs_moderation_review(self) -> bool:
+        return any(
+            _private_address_request(text)
+            for text in [
+                self.question,
+                *(
+                    message.content
+                    for message in self.recent_messages
+                    if message.role == "user"
+                ),
+            ]
+        )
 
     @field_validator("evidence")
     @classmethod
@@ -445,6 +499,8 @@ class PublicContextService:
         self.llm = llm
 
     def preview(self, request: PublicContextRequest) -> PublicContextPreview:
+        if request.needs_moderation_review:
+            return _silence("moderation_review_required")
         for field in (
             "already_resolved",
             "staff_active",
