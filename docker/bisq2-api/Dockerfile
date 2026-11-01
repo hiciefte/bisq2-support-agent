@@ -78,7 +78,7 @@ RUN chown ${APP_UID}:${APP_GID} /opt/bisq2/data && \
 
 # Set environment variables for the runtime
 ENV BISQ_DATA_DIR=/opt/bisq2/data
-ENV JAVA_OPTS="-Xmx1g"
+ENV JAVA_OPTS="-Xmx2g -XX:+ExitOnOutOfMemoryError"
 
 # Expose the API port (no changes needed here)
 EXPOSE 8090

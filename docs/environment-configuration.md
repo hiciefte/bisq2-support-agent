@@ -171,6 +171,29 @@ Notes:
 * In Dockerized production, `/data` maps to `$BISQ_SUPPORT_INSTALL_DIR/api/data`, so `BISQ_API_AUTH_STATE_FILE=bisq_api_auth.json` survives normal container rebuilds, `docker compose up -d`, and `docker compose down` as long as operators do not remove volumes or delete the host data directory.
 * See `docs/bisq2-api-startup-and-pairing.md` for the local production-network startup flow and production re-pairing checklist.
 
+### Bisq2 JVM Memory
+
+* **`BISQ2_JAVA_OPTS`**
+  * Description: JVM options passed as `JAVA_OPTS` to the containerized Bisq2
+    node. This does not configure the Python support API or a host-run local
+    Bisq2 harness.
+  * Default: `-Xmx2g -XX:+ExitOnOutOfMemoryError`
+  * Location: `docker/.env`, not `deploy.env`.
+  * This replaces the complete option string. Retain
+    `-XX:+ExitOnOutOfMemoryError` when overriding the heap so an exhausted JVM
+    exits and the service's `restart: always` policy can recover it.
+
+The default reserves at most 2 GiB for Java heap within the node's 4 GiB
+container memory limit. The remainder is needed by native allocations, thread
+stacks, JVM metadata and Tor; the container limit is not a heap allowance.
+Review available host memory and other services before increasing the heap.
+
+An environment change requires container recreation through the authorized
+lifecycle workflow; `docker compose restart` retains the old environment.
+Preserve the Bisq2 named volume and support API auth state when recreating the
+node. See [Critical service health](runbooks/critical-service-health.md) for heap
+exhaustion triage and recovery checks.
+
 ### Matrix Variables (Sync vs Alerts)
 
 The Matrix integration uses lane-specific names to separate support-channel ingestion from Alertmanager notifications.
