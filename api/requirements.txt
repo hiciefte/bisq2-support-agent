@@ -49,7 +49,7 @@ attrs==26.1.0
     #   referencing
 beautifulsoup4==4.15.0
     # via -r api/requirements.in
-black==26.5.1
+black==26.10.1
     # via -r api/requirements.in
 build==1.5.0
     # via pip-tools
@@ -109,8 +109,9 @@ docstring-parser==0.15
     #   instructor
 fastapi==0.136.3
     # via -r api/requirements.in
-filelock==3.29.2
+filelock==4.2.6
     # via
+    #   -r api/requirements.in
     #   datasets
     #   huggingface-hub
     #   python-discovery
@@ -322,8 +323,10 @@ numpy==2.4.6
     #   scikit-network
     #   scipy
     #   transformers
-oauthlib==3.3.1
-    # via requests-oauthlib
+oauthlib==4.0.1
+    # via
+    #   -r api/requirements.in
+    #   requests-oauthlib
 openai==1.109.1
     # via
     #   -r api/requirements.in
@@ -623,7 +626,7 @@ uvicorn==0.49.0
     # via
     #   -r api/requirements.in
     #   mcp
-virtualenv==21.14.9
+virtualenv==21.15.2
     # via
     #   -r api/requirements.in
     #   pre-commit

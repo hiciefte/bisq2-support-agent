@@ -38,6 +38,8 @@ langchain-community<0.4.2
 # NOTE: torch is installed separately as pinned CPU-only in Dockerfile/CI
 # to avoid ~5GB of unnecessary NVIDIA CUDA libraries
 transformers>=4.35.0
+# Security floor for CVE-2026-112940 in filelock read/write locks.
+filelock>=4.2.1
 # torch - installed as torch==2.10.0+cpu from https://download.pytorch.org/whl/cpu
 
 # Matrix integration
@@ -67,6 +69,9 @@ beautifulsoup4
 requests
 urllib3>=2.8.0  # Security fixes for CVE-2026-97687 and CVE-2026-97689
 mwclient
+# OAuthLib provider fixes; 4.0.1 completes CVE-2026-49272 beyond 4.0.0.
+# Also covers client identity validation in CVE-2026-118669.
+oauthlib>=4.0.1
 
 # Async SQLite (for escalation pipeline)
 aiosqlite
@@ -96,14 +101,16 @@ prometheus-fastapi-instrumentator
 # Testing and development
 pytest
 pytest-asyncio
-black
+# Security floor for the bundled GitHub Action (CVE-2026-114134).
+black>=26.10.1
 isort
 mypy
 flake8
 pip-tools
 pre-commit
-# Security fixes for seed wheel verification and shell activation paths.
-virtualenv>=21.14.9
+# Security fixes for seed wheel verification and shell activation paths,
+# including prompt expansion (CVE-2026-115586).
+virtualenv>=21.14.13
 
 # Added for cross-process file locking
 portalocker
