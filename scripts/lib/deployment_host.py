@@ -20,7 +20,8 @@ import tarfile
 import time
 import uuid
 from contextlib import closing
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from functools import partial
 from pathlib import Path
 from typing import Callable, cast
@@ -951,7 +952,7 @@ class DeploymentHost:
             return
         require(
             process_identity(containers["prometheus"])
-            == process_identity(self.baseline["containers"]["prometheus"]),
+            == self._monitoring_expected_state()["process"],
             "host_monitoring_process_changed",
         )
         before = self.baseline["monitoring"]["heartbeat_file"]
@@ -964,6 +965,240 @@ class DeploymentHost:
             "host_monitoring_inode_changed",
         )
         self._monitoring_mounts(containers)
+
+    @staticmethod
+    def _process_started_ns(process):
+        """Docker's UTC nanosecond timestamp, without float clock rounding."""
+        require(
+            set(process) == {"pid", "started_at", "restart_count"}
+            and type(process["pid"]) is int
+            and process["pid"] > 0
+            and type(process["restart_count"]) is int
+            and process["restart_count"] >= 0,
+            "host_monitoring_backup_process",
+        )
+        match = re.fullmatch(
+            r"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d{1,9}))?(?:Z|\+00:00)",
+            process["started_at"],
+        )
+        require(match is not None, "host_monitoring_backup_process")
+        value = datetime.fromisoformat(match[1] + "+00:00")
+        epoch = value - datetime(1970, 1, 1, tzinfo=timezone.utc)
+        return (epoch.days * 86400 + epoch.seconds) * 10**9 + int(
+            (match[2] or "").ljust(9, "0")
+        )
+
+    def _monitoring_backup_proof(self, phase, intent_sha256):
+        require(
+            phase in {"prechange_backup", "postchange_backup"}
+            and is_digest(intent_sha256),
+            "host_monitoring_backup_binding",
+        )
+        directory = self.operation / "recovery" / phase
+
+        def saved(name):
+            path = directory / name
+            before = path.lstat()
+            value = read_record(path)
+            after = path.lstat()
+            require(
+                not any(p.is_symlink() for p in (path, *path.parents))
+                and (
+                    before.st_dev,
+                    before.st_ino,
+                    before.st_mtime_ns,
+                    before.st_ctime_ns,
+                )
+                == (after.st_dev, after.st_ino, after.st_mtime_ns, after.st_ctime_ns),
+                "host_monitoring_backup_evidence_changed",
+            )
+            return value, digest(encode(value)), before.st_mtime_ns
+
+        capture, capture_sha, began_ns = saved("capture-intent.json")
+        require(
+            capture
+            == {
+                "plan_sha256": digest(encode(self.plan)),
+                "profile_sha256": digest(encode(self.profile)),
+                "phase": phase,
+                "intent_sha256": intent_sha256,
+                "deadline": self.approval["deadline"],
+            },
+            "host_monitoring_backup_binding",
+        )
+        receipt, receipt_sha, finished_ns = saved("canonical-backup.json")
+        require(
+            set(receipt)
+            == {
+                "schema",
+                "ciphertext_name",
+                "ciphertext_sha256",
+                "ciphertext_bytes",
+                "destination_kind",
+                "writers_resumed",
+                "scratch_cleanup_verified",
+            }
+            and receipt["schema"] == "canonical-backup-v1"
+            and receipt["destination_kind"] == "same_host_encrypted_export"
+            and receipt["writers_resumed"] is True
+            and receipt["scratch_cleanup_verified"] is True
+            and is_digest(receipt["ciphertext_sha256"])
+            and type(receipt["ciphertext_bytes"]) is int
+            and receipt["ciphertext_bytes"] > 0
+            and isinstance(receipt["ciphertext_name"], str)
+            and re.fullmatch(
+                r"bisq-support-backup-[A-Za-z0-9_.-]+\.tar\.gz\.(age|gpg)",
+                receipt["ciphertext_name"],
+            )
+            and 0 < began_ns <= finished_ns,
+            "host_monitoring_backup_receipt",
+        )
+        return {
+            "capture_intent_sha256": capture_sha,
+            "canonical_backup_sha256": receipt_sha,
+            "capture_started_ns": began_ns,
+            "capture_finished_ns": finished_ns,
+        }
+
+    def _monitoring_expected_state(self):
+        expected = process_identity(self.baseline["containers"]["prometheus"])
+        reload_timestamp = self.baseline["monitoring"]["reload_timestamp"]
+        directory = self.root / "backup-processes"
+        if not directory.exists():
+            require(not directory.is_symlink(), "host_monitoring_backup_directory")
+            return {"process": expected, "reload_timestamp": reload_timestamp}
+        info = directory.lstat()
+        require(
+            stat.S_ISDIR(info.st_mode)
+            and stat.S_IMODE(info.st_mode) == 0o700
+            and info.st_uid == os.geteuid(),
+            "host_monitoring_backup_directory",
+        )
+        phases = ("prechange_backup", "postchange_backup")
+        present = {p.name for p in directory.iterdir()}
+        require(
+            present <= {phase + ".json" for phase in phases}
+            and (
+                "postchange_backup.json" not in present
+                or "prechange_backup.json" in present
+            ),
+            "host_monitoring_backup_order",
+        )
+        for phase in phases:
+            if phase + ".json" not in present:
+                continue
+            record = read_record(directory / (phase + ".json"))
+            require(
+                set(record)
+                == {
+                    "schema",
+                    "phase",
+                    "plan_sha256",
+                    "profile_sha256",
+                    "baseline_sha256",
+                    "client_intent_sha256",
+                    "proof",
+                    "before",
+                    "after",
+                    "container_identity_sha256",
+                    "reload_state",
+                    "previous_reload_timestamp",
+                }
+                and record["schema"] == "deployment-backup-process-v1"
+                and record["phase"] == phase
+                and record["plan_sha256"] == digest(encode(self.plan))
+                and record["profile_sha256"] == digest(encode(self.profile))
+                and record["baseline_sha256"] == self.baseline_sha256
+                and record["before"] == expected
+                and record["previous_reload_timestamp"] == reload_timestamp
+                and record["container_identity_sha256"]
+                == immutable(self.baseline["containers"]["prometheus"]),
+                "host_monitoring_backup_checkpoint",
+            )
+            proof = self._monitoring_backup_proof(phase, record["client_intent_sha256"])
+            require(record["proof"] == proof, "host_monitoring_backup_evidence_changed")
+            began = self._process_started_ns(record["after"])
+            require(
+                proof["capture_started_ns"] <= began <= proof["capture_finished_ns"]
+                and began > self._process_started_ns(expected)
+                and record["after"]["restart_count"] == expected["restart_count"],
+                "host_monitoring_backup_process",
+            )
+            self._monitoring_backup_reload(record["reload_state"], began, proof)
+            expected = record["after"]
+            reload_timestamp = record["reload_state"]["timestamp"]
+        return {"process": expected, "reload_timestamp": reload_timestamp}
+
+    @staticmethod
+    def _monitoring_backup_reload(state, started_ns, proof):
+        require(
+            set(state) == {"success", "timestamp"}
+            and state["success"] == 1
+            and type(state["timestamp"]) in (float, int)
+            and math.isfinite(state["timestamp"]),
+            "host_monitoring_backup_reload",
+        )
+        reloaded_ns = int(Decimal(str(state["timestamp"])) * 10**9)
+        require(
+            started_ns <= reloaded_ns <= proof["capture_finished_ns"],
+            "host_monitoring_backup_reload",
+        )
+
+    def _monitoring_accept_backup_process(self, phase, intent_sha256):
+        if self.plan["schema"] != "deployment-plan-v5":
+            return
+        # The owner verified the previous process immediately before capture.
+        # Accept only a restart inside this successfully completed backup's
+        # private evidence window; retain this checkpoint for every later check.
+        previous = self._monitoring_expected_state()
+        expected = previous["process"]
+        proof = self._monitoring_backup_proof(phase, intent_sha256)
+        current = self._inspect()["prometheus"]
+        after = process_identity(current)
+        began = self._process_started_ns(after)
+        require(
+            immutable(current) == immutable(self.baseline["containers"]["prometheus"])
+            and current["State"]["Running"]
+            and not current["State"]["Paused"]
+            and not current["State"]["Restarting"]
+            and proof["capture_started_ns"] <= began <= proof["capture_finished_ns"]
+            and began > self._process_started_ns(expected)
+            and after["restart_count"] == expected["restart_count"],
+            "host_monitoring_backup_process",
+        )
+        reload_state = self._monitoring_reload_state(current)
+        self._monitoring_backup_reload(reload_state, began, proof)
+        directory = self.root / "backup-processes"
+        directory.mkdir(mode=0o700, exist_ok=True)
+        info = directory.lstat()
+        require(
+            stat.S_ISDIR(info.st_mode)
+            and stat.S_IMODE(info.st_mode) == 0o700
+            and info.st_uid == os.geteuid(),
+            "host_monitoring_backup_directory",
+        )
+        require(
+            phase != "postchange_backup"
+            or (directory / "prechange_backup.json").exists(),
+            "host_monitoring_backup_order",
+        )
+        exclusive_record(
+            directory / (phase + ".json"),
+            {
+                "schema": "deployment-backup-process-v1",
+                "phase": phase,
+                "plan_sha256": digest(encode(self.plan)),
+                "profile_sha256": digest(encode(self.profile)),
+                "baseline_sha256": self.baseline_sha256,
+                "client_intent_sha256": intent_sha256,
+                "proof": proof,
+                "before": expected,
+                "after": after,
+                "container_identity_sha256": immutable(current),
+                "reload_state": reload_state,
+                "previous_reload_timestamp": previous["reload_timestamp"],
+            },
+        )
 
     def _monitoring_publish_heartbeat(self):
         current = self._inspect()
@@ -1040,7 +1275,8 @@ class DeploymentHost:
         before = self._monitoring_reload_state(prometheus)
         require(
             before["success"] == 1
-            and before["timestamp"] == self.baseline["monitoring"]["reload_timestamp"],
+            and before["timestamp"]
+            == self._monitoring_expected_state()["reload_timestamp"],
             "host_monitoring_reload_drift",
         )
         self._run(
@@ -1578,6 +1814,7 @@ class DeploymentHost:
             self.effect_until = None
 
     def _verify_backup_resumption(self, phase, intent_sha256, started):
+        self._monitoring_accept_backup_process(phase, intent_sha256)
         self.verify_preservation()
         effects = self._state()
         self._prefix(phase)

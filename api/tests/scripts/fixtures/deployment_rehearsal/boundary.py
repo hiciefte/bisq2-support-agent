@@ -5,10 +5,13 @@ import hashlib
 import io
 import json
 import os
+import re
 import signal
 import sys
 import tarfile
+import time
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parent.parent
 STATE = ROOT / "boundary-state.json"
@@ -40,7 +43,7 @@ def select_containers(tokens):
 
 
 def inspected(tokens):
-    ids = [token for token in tokens if len(token) == 64]
+    ids = [token for token in tokens if re.fullmatch(r"[0-9a-f]{64}", token)]
     values = [value for value in state["containers"].values() if value["Id"] in ids]
     assert len(values) == len(ids), ("unknown inspect", tokens)
     return values
@@ -88,10 +91,29 @@ def docker():
         assert len(values) == 1
         values[0]["State"]["Paused"] = args[0] == "pause"
         values[0]["State"]["Status"] = "paused" if args[0] == "pause" else "running"
+        if args[0] == "unpause" and "monitoring_heartbeat_timestamp" in state:
+            # External model of the next ordinary cron tick, not a job invocation.
+            state["monitoring_heartbeat_timestamp"] = int(time.time())
         emit(values[0]["Id"])
     elif args[0] == "cp":
-        assert args[-1] == "-" and args[-2].endswith(":/etc/crontabs/root")
-        raw = state["cron"].encode()
+        assert args[-1] == "-"
+        target = args[-2].split(":", 1)[1]
+        if target == "/etc/crontabs/root":
+            raw = state["cron"].encode()
+        elif target == "/scripts/scheduler-heartbeat.sh":
+            raw = (ROOT / "install/docker/scripts/scheduler-heartbeat.sh").read_bytes()
+        elif target == "/etc/prometheus/alert_rules.yml":
+            raw = (ROOT / "install/docker/prometheus/alert_rules.yml").read_bytes()
+        elif target.endswith("scheduler-heartbeat.prom"):
+            heartbeat = state["monitoring_heartbeat_timestamp"]
+            raw = (
+                f"scheduler_heartbeat_timestamp_seconds {heartbeat}\n"
+                "scheduler_retention_hold_active 1\nscheduler_retention_hold_invalid 0\n"
+                f"scheduler_retention_hold_cutoff_timestamp_seconds {heartbeat - 100}\n"
+                f"scheduler_retention_hold_observed_timestamp_seconds {heartbeat}\n"
+            ).encode()
+        else:
+            raise AssertionError(("unknown cp", args))
         output = io.BytesIO()
         with tarfile.open(fileobj=output, mode="w") as archive:
             info = tarfile.TarInfo("root")
@@ -100,7 +122,50 @@ def docker():
         sys.stdout.buffer.write(output.getvalue())
     elif args[0] == "exec":
         value = inspected(args)[0]
-        if args[2:] == ["nginx", "-t"]:
+        if "/bin/promtool" in args:
+            if "format" in args:
+                emit(args[-1])
+            else:
+                assert "check" in args
+                if "-i" in args:
+                    assert sys.stdin.read()
+        elif "/bin/wget" in args:
+            url = urlparse(args[-1])
+            if url.path == "/metrics":
+                emit(
+                    "prometheus_config_last_reload_successful 1\n"
+                    f"prometheus_config_last_reload_success_timestamp_seconds {state['monitoring_reload_timestamp']}"
+                )
+            elif url.path == "/api/v1/rules":
+                emit(
+                    {
+                        "status": "success",
+                        "data": {"groups": [{"rules": state["monitoring_rules"]}]},
+                    }
+                )
+            elif url.path == "/api/v1/alerts":
+                emit({"status": "success", "data": {"alerts": []}})
+            elif url.path == "/api/v1/query":
+                expression = parse_qs(url.query)["query"][0]
+                sample = (
+                    1
+                    if expression == "privacy_retention:verified_scheduler_hold"
+                    else state["monitoring_heartbeat_timestamp"]
+                )
+                emit(
+                    {
+                        "status": "success",
+                        "data": {
+                            "resultType": "vector",
+                            "result": [
+                                {"metric": {}, "value": [time.time(), str(sample)]}
+                            ],
+                        },
+                    }
+                )
+            else:
+                raise AssertionError(("unknown metrics", args))
+        elif args[2:] == ["nginx", "-t"]:
             assert value["Config"]["Labels"]["com.docker.compose.service"] == "nginx"
             state["nginx_config_checks"] = state.get("nginx_config_checks", 0) + 1
             emit("synthetic nginx configuration valid")
@@ -114,6 +179,13 @@ def docker():
             emit({"build_id": state["build_ids"][value["Image"]]})
         else:
             raise AssertionError(("unknown exec", args))
+    elif args[:3] == ["kill", "--signal", "HUP"]:
+        assert (
+            inspected(args)[0]["Config"]["Labels"]["com.docker.compose.service"]
+            == "prometheus"
+        )
+        state["monitoring_hups"] += 1
+        state["monitoring_reload_timestamp"] = time.time()
     elif args[0] == "run":
         assert "--network" in args and args[args.index("--network") + 1] == "none"
         assert args[-1] == "/app/.next/BUILD_ID"
