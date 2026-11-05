@@ -146,7 +146,8 @@ it is not a retention-compliance or data-age assessment.
 During deployment, verify the heartbeat script bytes visible inside the running
 scheduler: the script is a single-file bind mount, so replacing its host path
 atomically can leave the container using the previous inode. Preserve the guard
-and scheduler identity; use the reviewed deployment procedure to materialize the
+and scheduler identity; use the explicit `--include-retention-monitoring` capability
+in the [reviewed deployment procedure](deployment-workflow.md#publish-reviewed-retention-monitoring-without-recreation) to materialize the
 script on that existing mount without recreating the scheduler. After reloading
 the Prometheus rules, observe the next ordinary heartbeat and scrape. Confirm
 the hold warning, unchanged guard, and resolved expected missing/stale alerts.

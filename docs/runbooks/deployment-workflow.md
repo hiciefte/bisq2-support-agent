@@ -39,8 +39,9 @@ on failure and cannot be overwritten. Inside the source checkout, outputs are
 restricted to ignored `.agent-artifacts/` or `failed_updates/` directories.
 
 The planner accepts a conservative subset of selective API/web source changes.
-By default it refuses operational scripts. It always refuses migrations, runtime
-data, catalogues, Compose, unknown paths and mismatched services. Dependency
+By default it refuses operational scripts, migrations, runtime data, catalogues,
+Compose, unknown paths and mismatched services. The explicit capabilities below
+admit only their individually bound exceptions. Dependency
 changes can be planned; live compatibility still requires the reviewed release
 checks. Unknown changes are not guessed into a deployment capability.
 
@@ -68,6 +69,33 @@ record with an identical `tooling_sha256` map; an ordinary v2 approval cannot
 authorize it. Review the complete tooling diff before granting that capability.
 Existing plans and attempted operations must never be upgraded in place.
 
+### Preserve an already-applied Bisq2 heap repair
+
+The separate `--preserve-bisq2-heap-repair` option creates a
+`deployment-plan-v4` with `selective-api-web-preserved-heap-v1`. It carries only
+the fixed change from the former 1 GiB JVM heap to the reviewed 2 GiB heap and
+exit-on-OOM configuration. The complete Compose, Bisq2 Dockerfile and example
+environment blobs are pinned in the plan and matching `deployment-approval-v4`.
+Any other edit in those files is refused. The option can be combined with
+`--include-deployment-tooling`; its tooling pins remain separately explicit.
+
+Before any effect, the installation must contain exactly the unstaged Compose
+repair already equal to the candidate blob, with an otherwise unchanged index
+and clean source tree. The existing Bisq2 node must already run the repaired
+options, 4 GiB container limit and `always` restart policy. Normal plans continue
+to refuse dirty source and all Compose changes. This capability does not apply
+the runtime repair, rebuild or recreate Bisq2, modify its volume, or authorize
+other operational/configuration changes.
+
+Only after both backup/restore chains and the API/web checks succeed, the
+journaled `publish_source` phase adopts that exact Compose blob into the index
+and fast-forwards the source. It does not reset, stash or rewrite the existing
+Compose file. The effective Compose configuration and all unrelated container
+identities remain equal to the captured baseline. Its receipt explicitly proves
+heap-source reconciliation. A failure after index adoption remains an attempted
+publication requiring read-only reconciliation; it is never a fresh attempt or
+permission to stage other files. Preserve the original dirty-patch evidence.
+
 This mode still requires a real API or web source change. Tooling-only releases
 are not supported. For a tooling and web dependency release with no API source
 change, select only `web`: API tests do not select an API restart, and the plan
@@ -80,6 +108,53 @@ hash-checked helpers before that revision is installed. The controller publishes
 the source only after postchange restore verification. Do not copy helpers into
 the live installation, advance its source manually, filter its diff or repeat
 the historical pre-quality-gate transition to bypass commissioning.
+
+### Publish reviewed retention monitoring without recreation
+
+`--include-retention-monitoring` selects `deployment-plan-v5` and
+`selective-api-web-with-monitoring-v1`. Its matching approval explicitly pins
+all four fixed monitoring files: scheduler heartbeat, Prometheus alert rules,
+their rule test fixture, and the offline monitoring validator. It does not admit
+other monitoring/configuration paths. Tooling and already-applied heap repair
+remain separate pin maps and optional flags.
+
+For the reviewed Python runner compatibility repair only,
+`--include-python-runner-pins` additionally binds the complete two workflow
+blobs. The planner and host require exactly three `ubuntu-latest` to
+`ubuntu-24.04` runner replacements in the named Python jobs, including the fixed
+explanatory comment. Every other byte must match the previous commit. Model,
+permission, step and other workflow changes remain refused.
+
+Preflight requires the original scheduler to be unpaused, fresh heartbeat
+telemetry, exact host-to-container bind sources and bytes, and valid candidate
+rules checked by the existing Prometheus `promtool`. It records the heartbeat
+inode/ownership/mode and successful Prometheus reload timestamp. Candidate and
+loaded rule expressions are compared using that same installed PromQL formatter;
+the experimental CLI flag enables formatting only, not server features.
+
+Inside the existing journaled `publish_source` phase, with the scheduler paused,
+the controller writes the pinned heartbeat bytes in place, fsyncs, verifies the
+actual mounted bytes, and adopts only that blob into the index. The subsequent
+fast-forward preserves the single-file bind inode. Prometheus keeps its existing
+container and process: configuration validation precedes one HUP, followed by
+bounded observations requiring a newer successful reload and the exact loaded
+rule expressions. A partial write, index adoption or uncertain HUP is an attempted
+phase requiring reconciliation, never permission to retry.
+
+After its one ordinary scheduler resume, the controller waits for the existing
+cron to publish a fresh heartbeat with valid six-job hold proof. It never invokes
+the heartbeat or held jobs directly. A resumed old invocation can produce one
+legacy-format sample; that is not acceptance, and observation continues within
+the original timeout. Partial or contradictory new hold fields fail. Acceptance
+also requires Prometheus to consume that new sample, evaluate the hold recording
+rule afterward, and clear the four held-job missing/stale alerts. Stored sample
+times come from `timestamp(...)`, not instant-query evaluation times.
+
+Publish/resume receipts carry explicit monitoring proofs. Failure to observe the
+normal resumed heartbeat is a failed resume phase even if the scheduler has
+already returned to its original running state; preserve the recorded attempt
+and reconcile without replay. The six held jobs, scheduler command/crontab,
+Prometheus runtime configuration, and unrelated services remain preserved.
 
 ## Protected profile and explicit approval
 
