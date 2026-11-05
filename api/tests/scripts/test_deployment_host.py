@@ -43,6 +43,7 @@ def container(service, digit, install):
                 "com.docker.compose.project": "fixture",
                 "com.docker.compose.project.working_dir": str(install / "docker"),
                 "com.docker.compose.config-hash": "old",
+                "com.docker.compose.version": "2.39.4",
             },
             "Cmd": ["fixture"],
         },
@@ -409,6 +410,67 @@ def test_replacement_environment_order_and_build_id_only_may_change(host, module
         host._replacement("api", current, current["Image"])
 
 
+def test_replacement_accepts_only_generated_compose_version_metadata(host):
+    """Allow a different Compose tool version without mutating saved Config."""
+    before = host.baseline["containers"]["api"]
+    current = copy.deepcopy(before)
+    current["Config"]["Labels"]["com.docker.compose.version"] = "2.40.1"
+    originals = copy.deepcopy((before, current))
+    host._replacement("api", current, current["Image"])
+    assert (before, current) == originals
+
+
+@pytest.mark.parametrize("side", ["original", "replacement"])
+@pytest.mark.parametrize("value", [None, "", "2.40.1\x00", 2401, [], "2.40", "v2.40.1"])
+def test_replacement_refuses_malformed_compose_version_metadata(
+    host, module, side, value
+):
+    """Only present numeric tool-version strings qualify for the metadata waiver."""
+    before = host.baseline["containers"]["api"]
+    current = copy.deepcopy(before)
+    target = before if side == "original" else current
+    target["Config"]["Labels"]["com.docker.compose.version"] = value
+    with pytest.raises(module.JournalError, match="host_compose_version_metadata"):
+        host._replacement("api", current, current["Image"])
+
+
+@pytest.mark.parametrize("side", ["original", "replacement"])
+def test_replacement_refuses_missing_compose_version_metadata(host, module, side):
+    """Do not equate a missing Compose-version label with a populated label."""
+    before = host.baseline["containers"]["api"]
+    current = copy.deepcopy(before)
+    target = before if side == "original" else current
+    del target["Config"]["Labels"]["com.docker.compose.version"]
+    with pytest.raises(module.JournalError, match="host_compose_version_metadata"):
+        host._replacement("api", current, current["Image"])
+
+
+@pytest.mark.parametrize(
+    "field,change",
+    [
+        ("Labels", {"com.docker.compose.service": "other"}),
+        ("Labels", {"com.docker.compose.project": "other"}),
+        ("Labels", {"com.docker.compose.project.working_dir": "/other"}),
+        ("Labels", {"com.docker.compose.unrecognized": "other"}),
+        ("Labels", {"custom.label": "other"}),
+        ("Env", ["BUILD_ID=build-ccccccc", "DATA_DIR=/other"]),
+        ("Cmd", ["other"]),
+    ],
+)
+def test_compose_version_change_does_not_hide_other_config_drift(
+    host, module, field, change
+):
+    """Keep other labels, environment and runtime settings strict during recreation."""
+    current = copy.deepcopy(host.baseline["containers"]["api"])
+    current["Config"]["Labels"]["com.docker.compose.version"] = "2.40.1"
+    if field == "Labels":
+        current["Config"][field].update(change)
+    else:
+        current["Config"][field] = change
+    with pytest.raises(module.JournalError, match="host_replacement_configuration"):
+        host._replacement("api", current, current["Image"])
+
+
 @pytest.mark.parametrize("side", ["original", "replacement"])
 @pytest.mark.parametrize(
     "entries",
@@ -648,6 +710,7 @@ def install_phase_command_models(host, module, monkeypatch):
                 replacement["Config"]["Labels"][
                     "com.docker.compose.image.builder"
                 ] = "classic"
+                replacement["Config"]["Labels"]["com.docker.compose.version"] = "2.40.1"
                 state[service] = replacement
         return base_shell(action, *args, **kwargs)
 
@@ -801,6 +864,9 @@ def failed_switch(
     for field in ("Dns", "DnsOptions", "DnsSearch"):
         host.fixture_state[service]["HostConfig"][field] = None
     host.fixture_state[service]["HostConfig"]["MaskedPaths"].reverse()
+    host.fixture_state[service]["Config"]["Labels"][
+        "com.docker.compose.version"
+    ] = "2.40.1"
     if builder_metadata:
         host.fixture_state[service]["Config"]["Labels"][
             "com.docker.compose.image.builder"

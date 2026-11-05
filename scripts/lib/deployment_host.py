@@ -1800,6 +1800,23 @@ class DeploymentHost:
         old, new = json.loads(json.dumps(before["Config"])), json.loads(
             json.dumps(current["Config"])
         )
+        version_label = "com.docker.compose.version"
+        if old["Labels"].get(version_label) != new["Labels"].get(version_label):
+            # Compose records its build/run tool version, not service settings.
+            # api.ComposeVersion uses the numeric major.minor.patch core; keep
+            # missing/malformed labels and every other label/config field strict.
+            require(
+                all(
+                    isinstance(config["Labels"].get(version_label), str)
+                    and re.fullmatch(
+                        r"[0-9]+\.[0-9]+\.[0-9]+", config["Labels"][version_label]
+                    )
+                    for config in (old, new)
+                ),
+                "host_compose_version_metadata",
+            )
+            old["Labels"].pop(version_label)
+            new["Labels"].pop(version_label)
         builder_label = "com.docker.compose.image.builder"
         if old["Labels"].get(builder_label) != new["Labels"].get(builder_label):
             # Compose may inherit build metadata from the new immutable image.

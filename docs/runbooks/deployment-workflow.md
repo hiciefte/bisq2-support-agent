@@ -324,6 +324,14 @@ existing build-ID allowance is separate. Compose builder metadata may differ onl
 when the saved build evidence proves it belongs to the exact candidate image.
 These replacement rules do not relax existing-container identity hashes.
 
+The exact `com.docker.compose.version` label may change between two present
+numeric `major.minor.patch` strings. Compose uses this label for its build/run
+tool version, independently of the service's runtime settings
+([Compose label definition](https://github.com/docker/compose/blob/v2.40.1/pkg/api/labels.go#L49-L63)).
+Changes involving missing or malformed version labels are refused; this exception
+does not admit other label changes, environment changes or new runtime configuration. Image,
+build provenance and existing-container identity checks remain in force.
+
 Replacement comparisons also tolerate two Docker inspection representations:
 present `Dns`, `DnsOptions` and `DnsSearch` values may change between `null` and
 `[]`, and `MaskedPaths` may reorder the exact same absolute path strings.
