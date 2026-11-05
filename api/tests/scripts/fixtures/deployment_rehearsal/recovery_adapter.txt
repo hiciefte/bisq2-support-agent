@@ -18,6 +18,7 @@ def preflight_capture(profile):
 
 
 def capture_backup(profile, attempt_dir, binding):
+    """Model writer restart and capture bytes; use the real canonical receipt producer."""
     from lib.lifecycle_lock import verify_inherited_lock
 
     verify_inherited_lock(
@@ -26,6 +27,21 @@ def capture_backup(profile, attempt_dir, binding):
     )
     _remaining(profile, binding)
     exclusive_record(attempt_dir / "capture-intent.json", binding)
+    boundary = Path(profile["host"]["repository"]).parent / "boundary-state.json"
+    state = json.loads(boundary.read_text())
+    if "monitoring_backup_restarts" in state:
+        # Model the ordinary backup writer stop/start inside its actual capture
+        # intent/receipt boundary. No production Docker or provider is reachable.
+        from datetime import datetime, timezone
+        import time
+
+        prometheus = state["containers"]["prometheus"]
+        prometheus["RestartCount"] = 0
+        prometheus["State"]["Pid"] += 1
+        prometheus["State"]["StartedAt"] = datetime.now(timezone.utc).isoformat()
+        state["monitoring_reload_timestamp"] = time.time()
+        state["monitoring_backup_restarts"] += 1
+        boundary.write_text(json.dumps(state, sort_keys=True))
     raw = ("SYNTHETIC_NOT_ENCRYPTED_" + binding["phase"]).encode()
     name = "bisq-support-backup-fixture-" + binding["phase"] + ".tar.gz.age"
     path = Path(profile["recovery"]["export_directory"]) / name
@@ -41,6 +57,19 @@ def capture_backup(profile, attempt_dir, binding):
         "writers_resumed": True,
     }
     exclusive_record(attempt_dir / "synthetic-capture.json", record)
+    if "monitoring_backup_restarts" in state:
+        import shlex
+
+        # Use the maintained ordinary canonical receipt producer, while the
+        # snapshot/encryption bytes above remain explicitly synthetic.
+        program = f'''source {shlex.quote(str(ROOT / "scripts/backup.sh"))}
+TARGET_DIR={shlex.quote(str(path.parent))}; EXPORT_DIR="$TARGET_DIR"
+COMPLETED_OUTPUT_NAME={shlex.quote(name)}
+BACKUP_RECEIPT={shlex.quote(str(attempt_dir / "canonical-backup.json"))}
+write_backup_receipt
+'''
+        subprocess.run(["bash", "-c", program], check=True, capture_output=True)
+        return record | {"canonical_backup_receipt_sha256": _file(attempt_dir / "canonical-backup.json")[0]}
     return record | {"canonical_backup_receipt_sha256": canonical_sha256(record)}
 
 

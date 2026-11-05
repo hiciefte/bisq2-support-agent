@@ -39,6 +39,14 @@ from lib.deployment_protocol import (  # noqa: E402
 )
 
 
+def capture_clock_sample() -> dict:
+    """Bracket monotonic time with wall-clock samples, without a grace period."""
+    before = time.time_ns()
+    monotonic = time.monotonic_ns()
+    after = time.time_ns()
+    return {"wall_before_ns": before, "monotonic_ns": monotonic, "wall_after_ns": after}
+
+
 def private_directory(path: Path, *, create: bool = False) -> None:
     require(path.is_absolute() and ".." not in path.parts, "host_private_path")
     require(not any(p.is_symlink() for p in (path, *path.parents)), "host_private_path")
@@ -187,6 +195,7 @@ class Owner:
         }
 
     def _status(self) -> dict:
+        """Expose interrupted intents as attempted without promoting capture evidence."""
         if self.host is not None:
             return self.host.status()
         phases = {}
@@ -196,6 +205,15 @@ class Owner:
             result_path = self.operation / "host" / f"{phase}.result.json"
             if phase.endswith("_backup"):
                 host_path = self.operation / "recovery" / phase / "capture-intent.json"
+                if self.plan["schema"] == "deployment-plan-v5":
+                    monitoring_intent = (
+                        self.operation
+                        / "recovery"
+                        / phase
+                        / "monitoring-capture.intent.json"
+                    )
+                    if monitoring_intent.exists():
+                        host_path = monitoring_intent
                 # Canonical capture evidence alone is not a completed phase.
                 result_path = self.operation / "receipts" / f"{phase}.json"
             phases[phase] = {
@@ -252,6 +270,7 @@ class Owner:
         return final
 
     def dispatch(self, message: dict) -> dict:
+        """Execute one strictly ordered effect or return saved reconciliation evidence."""
         command = message.get("command")
         if command == "open":
             return self.open(message)
@@ -322,8 +341,40 @@ class Owner:
                     "intent_sha256": intent,
                     "deadline": self.approval["deadline"],
                 }
-                payload = capture_backup(self.profile, attempt, binding)
-                self.host.verify_backup_resumption(phase, intent, started)
+                if self.plan["schema"] == "deployment-plan-v5":
+                    window_intent = {
+                        "schema": "deployment-monitoring-capture-intent-v1",
+                        "binding": binding,
+                    }
+                    exclusive_record(
+                        attempt / "monitoring-capture.intent.json", window_intent
+                    )
+                    began = capture_clock_sample()
+                    payload = capture_backup(self.profile, attempt, binding)
+                    finished = capture_clock_sample()
+                    exclusive_record(
+                        attempt / "monitoring-capture.result.json",
+                        {
+                            "schema": "deployment-monitoring-capture-result-v1",
+                            "intent_sha256": canonical_sha256(window_intent),
+                            "canonical_backup_receipt_sha256": payload[
+                                "canonical_backup_receipt_sha256"
+                            ],
+                            "began": began,
+                            "finished": finished,
+                        },
+                    )
+                    self.host.verify_backup_resumption(
+                        phase,
+                        intent,
+                        started,
+                        canonical_receipt_sha256=payload[
+                            "canonical_backup_receipt_sha256"
+                        ],
+                    )
+                else:
+                    payload = capture_backup(self.profile, attempt, binding)
+                    self.host.verify_backup_resumption(phase, intent, started)
             else:
                 try:
                     payload = self.host.effect(phase, intent)

@@ -9,6 +9,7 @@ client/bootstrap/stdio owner/host backend, ciphertext transfer and journals run.
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import os
@@ -17,12 +18,47 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 SOURCE = Path(__file__).resolve().parents[3]
 FIXTURES = Path(__file__).parent / "fixtures/deployment_rehearsal"
+MONITORING_FILES = (
+    "docker/scripts/scheduler-heartbeat.sh",
+    "docker/prometheus/alert_rules.yml",
+    "docker/prometheus/tests/privacy_retention.test.yml",
+    "scripts/validate-monitoring-config.sh",
+)
+
+
+def monitoring_rules():
+    names = [
+        "privacy_retention:verified_scheduler_hold",
+        "PrivacyRetentionHeld",
+        "PrivacyRetentionHoldInvalid",
+        "PrivacyRetentionMetricsMissing",
+        "PrivacyRetentionJobStale",
+        "PrivacyRetentionLogMetricsMissing",
+        "PrivacyRetentionLogJobStale",
+        "PrivacyRetentionWindowExceeded",
+    ]
+    return [
+        {
+            "name": name,
+            "type": "recording" if i == 0 else "alerting",
+            "query": "vector(1)"
+            + (
+                " unless on () privacy_retention:verified_scheduler_hold"
+                if 3 <= i <= 6
+                else ""
+            ),
+            "health": "ok",
+            "labels": {"severity": "warning" if i == 1 else "critical"},
+        }
+        for i, name in enumerate(names)
+    ]
 
 
 def sha(value):
@@ -132,6 +168,8 @@ def container(service, install, build_id):
 
 
 def prepare(source, root, scenario):
+    """Create a disposable Git and runtime fixture with explicit external doubles."""
+    monitoring = scenario == "monitoring_success"
     root.mkdir(mode=0o700, parents=True, exist_ok=False)
     candidate, install = root / "candidate", root / "install"
     candidate.mkdir()
@@ -156,10 +194,36 @@ def prepare(source, root, scenario):
     # This substitution exists only in the disposable committed fixture tree.
     with (candidate / "scripts/lib/deployment_recovery.py").open("a") as output:
         output.write("\n" + (FIXTURES / "recovery_adapter.txt").read_text())
+    if monitoring:
+        for name in MONITORING_FILES:
+            path = candidate / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                "#!/bin/sh\n# Original fixture\n"
+                if name.endswith(".sh")
+                else "# Original fixture\n"
+            )
+            path.chmod(0o755 if name.endswith(".sh") else 0o644)
     git(candidate, "init", "-q")
     previous = commit(candidate)
     (candidate / "api/app/release_fixture.py").write_text("VERSION = 2\n")
     (candidate / "web/src/release_fixture.ts").write_text("export const version = 2;\n")
+    if monitoring:
+        for name in MONITORING_FILES:
+            with (candidate / name).open("a") as stream:
+                stream.write("# Candidate fixture\n")
+        rules = "groups:\n  - name: fixture\n    rules:\n" + "".join(
+            "      - "
+            + ("record" if rule["type"] == "recording" else "alert")
+            + ": "
+            + rule["name"]
+            + "\n"
+            + "        expr: "
+            + rule["query"]
+            + "\n"
+            for rule in monitoring_rules()
+        )
+        (candidate / "docker/prometheus/alert_rules.yml").write_text(rules)
     revision = commit(candidate)
     subprocess.run(
         [
@@ -220,8 +284,33 @@ def prepare(source, root, scenario):
     build_id = "build-" + previous[:7]
     containers = {
         name: container(name, install, build_id)
-        for name in ("api", "web", "nginx", "scheduler")
+        for name in (
+            "api",
+            "web",
+            "nginx",
+            "scheduler",
+            *(("prometheus",) if monitoring else ()),
+        )
     }
+    if monitoring:
+        containers["prometheus"]["RestartCount"] = 3
+        containers["prometheus"]["State"]["StartedAt"] = (
+            datetime.now(timezone.utc) - timedelta(seconds=60)
+        ).isoformat()
+        containers["prometheus"]["Mounts"].append(
+            {
+                "Type": "bind",
+                "Source": str(install / "docker/prometheus"),
+                "Destination": "/etc/prometheus",
+            }
+        )
+        containers["scheduler"]["Mounts"].append(
+            {
+                "Type": "bind",
+                "Source": str(install / "docker/scripts/scheduler-heartbeat.sh"),
+                "Destination": "/scripts/scheduler-heartbeat.sh",
+            }
+        )
     if scenario == "preflight_refusal":
         containers["api"]["Config"]["Env"] = [
             (
@@ -253,6 +342,15 @@ def prepare(source, root, scenario):
         "nginx_reloads": 0,
         "synthetic_validator_calls": 0,
     }
+    if monitoring:
+        state.update(
+            monitoring_reload_timestamp=time.time() - 50,
+            monitoring_heartbeat_timestamp=int(time.time()) - 5,
+            monitoring_rules=monitoring_rules(),
+            monitoring_hups=0,
+            monitoring_backup_restarts=0,
+            monitoring_heartbeat_forced=0,
+        )
     private_record(root / "boundary-state.json", state)
     env = os.environ.copy()
     env.update(
@@ -281,6 +379,7 @@ def prepare(source, root, scenario):
         deadline,
         "--operation",
         str(operation),
+        *(("--include-retention-monitoring",) if monitoring else ()),
     )
     assert planned.returncode == 0, planned.stderr
     plan = json.loads((operation / "plan.json").read_text())
@@ -356,6 +455,14 @@ def prepare(source, root, scenario):
         "data_compatible_rollback": True,
         "policy": "private-disabled-channels",
     }
+    if monitoring:
+        approval.update(
+            schema="deployment-approval-v5",
+            tooling_sha256=plan["tooling_sha256"],
+            preserved_heap_sha256=plan["preserved_heap_sha256"],
+            monitoring_sha256=plan["monitoring_sha256"],
+            python_runner_sha256=plan["python_runner_sha256"],
+        )
     private_record(root / "profile.json", profile)
     private_record(root / "approval.json", approval)
     return candidate, install, operation, env, plan, state
@@ -372,6 +479,7 @@ def invoke(candidate, env, *arguments):
 
 
 def run_case(source, root, scenario):
+    """Exercise ordinary owner/client phases and verify their durable evidence."""
     assert sys.platform == "linux", "real lifecycle ownership requires Linux /proc"
     for command in ("git", "flock", "jq", "openssl", "bash", "python3"):
         assert shutil.which(command), "missing local fixture tool: " + command
@@ -425,7 +533,7 @@ def run_case(source, root, scenario):
             "real ciphertext framing/receive hashing and fsync run over synthetic bytes",
         ],
     }
-    if scenario == "success":
+    if scenario in {"success", "monitoring_success"}:
         assert applied.returncode == 0, applied.stderr
         outcome = json.loads(applied.stdout)
         assert outcome["completed"] is True
@@ -453,6 +561,38 @@ def run_case(source, root, scenario):
             list((operation / "receipts").glob("*.json"))
         )
         report["already_complete_no_replay"] = True
+        if scenario == "monitoring_success":
+            assert state["monitoring_backup_restarts"] == 2
+            assert (
+                state["monitoring_hups"] == 1
+                and state["monitoring_heartbeat_forced"] == 0
+            )
+            host_operation = root / "host-operations" / canonical(plan)
+            checkpoints = list(
+                (host_operation / "host/backup-processes").glob("*.json")
+            )
+            assert len(checkpoints) == 2
+            for path in checkpoints:
+                checkpoint = json.loads(path.read_text())
+                phase_receipt = json.loads(
+                    (host_operation / "receipts" / path.name).read_text()
+                )
+                assert (
+                    checkpoint["proof"]["canonical_backup_sha256"]
+                    == phase_receipt["payload"]["canonical_backup_receipt_sha256"]
+                )
+                assert checkpoint["after"]["restart_count"] == 0
+            assert (
+                json.loads(
+                    (
+                        host_operation / "host/backup-processes/prechange_backup.json"
+                    ).read_text()
+                )["before"]["restart_count"]
+                == 3
+            )
+            report["monitoring_backups_checkpointed"] = 2
+            report["monitoring_publish_hups"] = 1
+            report["monitoring_heartbeat_forced"] = False
     elif scenario == "preflight_refusal":
         assert (
             applied.returncode == 2
@@ -513,6 +653,49 @@ def run_case(source, root, scenario):
 
 
 class ExternalBoundaryRegression(unittest.TestCase):
+    def test_monitoring_queries_are_exact_and_timestamps_distinct(self):
+        """Reject unknown historical queries and distinguish scrape from rule evaluation."""
+        tree = ast.parse((FIXTURES / "boundary.py").read_text())
+        function = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "monitoring_query_sample"
+        )
+        scope = {}
+        exec(
+            compile(
+                ast.Module(body=[function], type_ignores=[]), "boundary-query", "exec"
+            ),
+            scope,
+        )
+        query = scope["monitoring_query_sample"]
+        state = {
+            "monitoring_heartbeat_timestamp": 100,
+            "monitoring_scrape_timestamp": 101,
+            "monitoring_record_timestamp": 102,
+        }
+        selector = (
+            'scheduler_retention_hold_observed_timestamp_seconds{job="node-exporter"}'
+        )
+        expected = {
+            selector: 100,
+            "privacy_retention:verified_scheduler_hold": 1,
+            "timestamp(privacy_retention:verified_scheduler_hold)": 102,
+            selector + " @ 102.000000": 100,
+            "timestamp(" + selector + " @ 102.000000)": 101,
+        }
+        for expression, value in expected.items():
+            self.assertEqual(query(expression, state), value)
+        for expression in (
+            "vector(1)",
+            selector + " @ 101.000000",
+            selector + " @ 102",
+            "timestamp(" + selector + " @ 99.000000)",
+        ):
+            with self.assertRaises(AssertionError):
+                query(expression, state)
+
     def test_web_root_boundary_matches_fixed_readiness_endpoint(self):
         with tempfile.TemporaryDirectory() as parent:
             root = Path(parent)
@@ -595,6 +778,10 @@ class ExternalBoundaryRegression(unittest.TestCase):
     "explicit isolated Linux rehearsal only",
 )
 class OrdinaryDeploymentRehearsal(unittest.TestCase):
+    def test_monitoring_survives_both_backup_boundaries(self):
+        with tempfile.TemporaryDirectory() as parent:
+            run_case(SOURCE, Path(parent) / "monitoring", "monitoring_success")
+
     def test_full_success(self):
         with tempfile.TemporaryDirectory() as parent:
             run_case(SOURCE, Path(parent) / "success", "success")
@@ -614,7 +801,7 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
         "--scenario",
-        choices=["success", "preflight_refusal", "lost_smoke"],
+        choices=["success", "preflight_refusal", "lost_smoke", "monitoring_success"],
         required=True,
     )
     args = parser.parse_args()

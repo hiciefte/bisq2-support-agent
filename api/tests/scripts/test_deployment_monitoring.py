@@ -212,11 +212,18 @@ def monitoring_host(monitoring_repo, monitoring_plan, tmp_path, monkeypatch):
     host._monitoring_mounts = lambda _containers: None
     host._monitoring_reload = lambda: None
     host.baseline = {
+        "containers": {
+            "prometheus": {
+                "State": {"Pid": 1, "StartedAt": "2026-11-05T09:00:00Z"},
+                "RestartCount": 0,
+            }
+        },
         "monitoring": {
+            "reload_timestamp": 100,
             "heartbeat_file": host._monitoring_file(
                 "docker/scripts/scheduler-heartbeat.sh"
-            )
-        }
+            ),
+        },
     }
     return host, module
 
