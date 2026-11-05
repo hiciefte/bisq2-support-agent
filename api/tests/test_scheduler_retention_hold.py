@@ -24,6 +24,7 @@ HELD_SCRIPTS = (
 
 
 def _crontab(*, held: bool = True) -> str:
+    """Build the real scheduler entries with an optional canonical trial guard."""
     config = yaml.safe_load(
         (REPO_ROOT / "docker/docker-compose.yml").read_text(encoding="utf-8")
     )
@@ -42,6 +43,7 @@ def _crontab(*, held: bool = True) -> str:
 
 
 def _observe(tmp_path: Path, content: str | None) -> dict[str, float]:
+    """Run only the heartbeat observer and parse its published metrics."""
     crontab = tmp_path / "root-crontab"
     if content is not None:
         crontab.write_text(content, encoding="utf-8")
@@ -98,6 +100,9 @@ def test_normal_crontab_does_not_claim_a_hold(tmp_path: Path) -> None:
         lambda text: text + text.splitlines()[0] + "\n",
         lambda text: text + "* * * * * /scripts/privacy-retention.sh\n",
         lambda text: text.replace(TRIAL_ID, "another-trial", 1),
+        lambda text: text.replace(TRIAL_ID, "7").replace(" 7 ", " 07 ", 1),
+        lambda text: text.replace("false && : ", "false&& : "),
+        lambda text: text.replace("false && : ", "false\t&& : "),
         lambda text: text.replace(CUTOFF, "1792659601", 1),
         lambda text: text.replace(CUTOFF, "not-a-timestamp"),
         lambda text: text.replace(TRIAL_ID, "$(touch /tmp/unsafe)", 1),
@@ -113,6 +118,9 @@ def test_normal_crontab_does_not_claim_a_hold(tmp_path: Path) -> None:
         "duplicate-entry",
         "extra-retention-job",
         "mixed-trial",
+        "mixed-numeric-trial",
+        "missing-guard-spaces",
+        "tabbed-guard",
         "mixed-cutoff",
         "malformed-cutoff",
         "shell-in-trial-id",
@@ -136,6 +144,25 @@ def test_unreadable_crontab_fails_closed(tmp_path: Path) -> None:
 
     assert metrics["scheduler_retention_hold_active"] == 0
     assert metrics["scheduler_retention_hold_invalid"] == 1
+
+
+def test_failed_inspection_publishes_invalid_heartbeat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A read race or awk failure must not prevent fresh invalid telemetry."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    failing_awk = bin_dir / "awk"
+    failing_awk.write_text("#!/bin/sh\nexit 2\n", encoding="utf-8")
+    failing_awk.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+
+    metrics = _observe(tmp_path, _crontab())
+
+    assert metrics["scheduler_retention_hold_active"] == 0
+    assert metrics["scheduler_retention_hold_invalid"] == 1
+    assert metrics["scheduler_retention_hold_cutoff_timestamp_seconds"] == 0
+    assert metrics["scheduler_heartbeat_timestamp_seconds"] > 0
 
 
 def test_comments_cannot_supply_a_missing_guard(tmp_path: Path) -> None:

@@ -46,6 +46,12 @@ tests:
     exp_samples:
     - labels: '{}'
       value: 0
+  - expr: count(ALERTS{alertname="PrivacyRetentionLogMetricsMissing",alertstate="firing"})
+      or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 0
 - name: missing hold proof produces one missing-metrics incident
   interval: 1m
   input_series: []
@@ -56,6 +62,12 @@ tests:
     - labels: '{}'
       value: 0
   - expr: count(ALERTS{alertname="PrivacyRetentionMetricsMissing",alertstate="firing"})
+      or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+  - expr: count(ALERTS{alertname="PrivacyRetentionLogMetricsMissing",alertstate="firing"})
       or vector(0)
     eval_time: 20m
     exp_samples:
@@ -439,6 +451,12 @@ tests:
     - labels: '{}'
       value: 0
   - expr: count(ALERTS{alertname="PrivacyRetentionMetricsMissing",alertstate="firing"})
+      or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+  - expr: count(ALERTS{alertname="PrivacyRetentionHoldInvalid",alertstate="firing",severity="critical"})
       or vector(0)
     eval_time: 20m
     exp_samples:

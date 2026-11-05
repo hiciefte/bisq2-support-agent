@@ -39,7 +39,7 @@ if [ -r "$crontab_file" ]; then
         /^[[:space:]]*(#|$)/ { next }
         /\/scripts\/(process-feedback|poll-matrix|privacy-retention|rotate-retention-logs)\.sh/ {
             relevant++
-            if (index($0, "false && : ")) attempted = 1
+            if ($0 ~ /(^|[[:space:]])false[[:space:]]*&&/) attempted = 1
             matched = 0
             for (i = 1; i <= 6; i++) {
                 prefix = schedules[i] " false && : "
@@ -51,7 +51,7 @@ if [ -r "$crontab_file" ]; then
                 if (cutoff !~ /^[0-9]+$/ || length(cutoff) != 10 || cutoff + 0 <= 0) continue
                 if ($0 != prefix id " " cutoff " && " jobs[i]) continue
                 if (seen[i]++) invalid = 1
-                if (guard_id != "" && (guard_id != id || guard_cutoff != cutoff)) invalid = 1
+                if (guard_id != "" && (guard_id "" != id "" || guard_cutoff != cutoff)) invalid = 1
                 guard_id = id
                 guard_cutoff = cutoff
                 matched = 1
@@ -65,7 +65,7 @@ if [ -r "$crontab_file" ]; then
             active = attempted && !invalid && count == 6 && relevant == 6
             printf "%d %s %d\n", active, active ? guard_cutoff : "0", attempted && !active
         }
-    ' "$crontab_file")
+    ' "$crontab_file") || hold_state="0 0 1"
 fi
 read -r hold_active hold_cutoff hold_invalid <<< "$hold_state"
 
