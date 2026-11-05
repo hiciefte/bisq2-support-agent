@@ -277,6 +277,7 @@ def test_replacement_rejects_runtime_drift_or_third_image(host, module, field):
 def test_replacement_accepts_only_equivalent_dns_and_mask_representations(
     host, reverse
 ):
+    """Accept equivalent Docker representations without changing either snapshot."""
     before = host.baseline["containers"]["api"]
     current = copy.deepcopy(before)
     for field in ("Dns", "DnsOptions", "DnsSearch"):
@@ -302,6 +303,7 @@ def test_replacement_accepts_only_equivalent_dns_and_mask_representations(
 def test_replacement_preserves_nonempty_dns_values_order_and_multiplicity(
     host, module, field, old, new
 ):
+    """Reject changes to populated DNS overrides, including order and duplicates."""
     host.baseline["containers"]["api"]["HostConfig"][field] = old
     current = copy.deepcopy(host.baseline["containers"]["api"])
     current["HostConfig"][field] = new
@@ -315,6 +317,7 @@ def test_replacement_preserves_nonempty_dns_values_order_and_multiplicity(
 def test_replacement_does_not_equate_absent_host_fields_with_empty(
     host, module, field, side, value
 ):
+    """Keep a missing inspection field distinct from explicit null or empty."""
     before = host.baseline["containers"]["api"]
     before["HostConfig"][field] = value
     current = copy.deepcopy(before)
@@ -337,6 +340,7 @@ def test_replacement_does_not_equate_absent_host_fields_with_empty(
     ],
 )
 def test_replacement_preserves_mask_paths_and_default_semantics(host, module, old, new):
+    """Reject changed masks, multiplicity, spelling or default-mask selection."""
     host.baseline["containers"]["api"]["HostConfig"]["MaskedPaths"] = old
     current = copy.deepcopy(host.baseline["containers"]["api"])
     current["HostConfig"]["MaskedPaths"] = new
@@ -349,6 +353,7 @@ def test_replacement_preserves_mask_paths_and_default_semantics(host, module, ol
 def test_replacement_refuses_malformed_normalized_host_fields(
     host, module, field, value
 ):
+    """Refuse malformed normalization inputs even when both snapshots match."""
     before = host.baseline["containers"]["api"]
     before["HostConfig"][field] = value
     current = copy.deepcopy(before)
@@ -378,6 +383,7 @@ def test_replacement_refuses_malformed_normalized_host_fields(
 def test_replacement_keeps_other_host_config_changes_strict(
     host, module, field, old, new
 ):
+    """Allowed empty-DNS changes must not conceal other runtime configuration drift."""
     before = host.baseline["containers"]["api"]
     before["HostConfig"][field] = old
     current = copy.deepcopy(before)
