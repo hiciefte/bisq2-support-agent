@@ -97,6 +97,45 @@ def private_json(path: Path) -> dict:
     return value
 
 
+def replacement_host_config(config: dict) -> dict:
+    """Compare only documented Docker representation changes on replacement."""
+    require(isinstance(config, dict), "host_replacement_host_config")
+    result = dict(config)
+    # Moby buildSandboxOptions uses len > 0 for these three DNS slices:
+    # nil and [] both inherit daemon defaults. Nonempty order stays significant.
+    for field in ("Dns", "DnsOptions", "DnsSearch"):
+        if field not in result:
+            continue
+        entries = result[field]
+        require(
+            entries is None
+            or (
+                isinstance(entries, list)
+                and all(
+                    isinstance(item, str) and "\x00" not in item for item in entries
+                )
+            ),
+            "host_replacement_host_config",
+        )
+        if entries is None or entries == []:
+            result[field] = []
+    # OCI maskedPaths specifies absolute paths to hide, not an ordered policy.
+    # Keep exact strings and multiplicity; nil still differs from [] because
+    # Moby applies default masks for nil, while [] explicitly disables them.
+    if "MaskedPaths" in result and result["MaskedPaths"] is not None:
+        paths = result["MaskedPaths"]
+        require(
+            isinstance(paths, list)
+            and all(
+                isinstance(path, str) and path.startswith("/") and "\x00" not in path
+                for path in paths
+            ),
+            "host_replacement_host_config",
+        )
+        result["MaskedPaths"] = sorted(paths)
+    return result
+
+
 class CommandRunner:
     """No output forwarding; timeouts preserve uncertainty rather than retry."""
 
@@ -1754,7 +1793,8 @@ class DeploymentHost:
             "host_replacement_mounts",
         )
         require(
-            before["HostConfig"] == current["HostConfig"],
+            replacement_host_config(before["HostConfig"])
+            == replacement_host_config(current["HostConfig"]),
             "host_replacement_host_config",
         )
         old, new = json.loads(json.dumps(before["Config"])), json.loads(

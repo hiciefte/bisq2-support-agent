@@ -324,6 +324,18 @@ existing build-ID allowance is separate. Compose builder metadata may differ onl
 when the saved build evidence proves it belongs to the exact candidate image.
 These replacement rules do not relax existing-container identity hashes.
 
+Replacement comparisons also tolerate two Docker inspection representations:
+present `Dns`, `DnsOptions` and `DnsSearch` values may change between `null` and
+`[]`, and `MaskedPaths` may reorder the exact same absolute path strings.
+Missing fields, nonempty DNS order/values, changes to mask entries or multiplicity,
+and every other HostConfig field remain material. No stored snapshot is rewritten.
+Docker selects DNS overrides only for nonempty lists, so both empty forms inherit
+the same daemon settings ([Moby sandbox configuration](https://github.com/moby/moby/blob/v28.5.1/daemon/container_operations.go#L64-L77)).
+The mask comparison follows the OCI requirement that each listed absolute path
+is hidden, retaining the same entries and multiplicity ([OCI masked paths](https://github.com/opencontainers/runtime-spec/blob/v1.2.1/config-linux.md#masked-paths)).
+`MaskedPaths: null` and `MaskedPaths: []` are deliberately different: Docker
+supplies default masks only for `null` ([Moby container creation](https://github.com/moby/moby/blob/v28.5.1/daemon/create_unix.go#L32-L39)).
+
 Failed captures, partial ciphertext and diagnostics remain available for
 reconciliation. They are not successful backups. Cleanup errors propagate; an
 uncertain writer resume is not retried by an exit trap. Full Docker configuration
