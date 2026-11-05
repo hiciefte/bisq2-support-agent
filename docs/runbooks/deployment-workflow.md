@@ -135,22 +135,29 @@ the experimental CLI flag enables formatting only, not server features.
 The canonical backups stop and start Prometheus without replacing its container.
 After each successful capture, the controller records a separate process/reload
 checkpoint joined to that capture intent and canonical receipt. It requires the
-same container/configuration/mount identity, an unchanged automatic restart count,
-and process startup and successful configuration load within the capture's saved
-nanosecond timestamp window. The initial baseline remains immutable. Later process
-checks and publication use the latest verified checkpoint; a later unexpected
+same container/configuration/mount identity and the zero restart count produced by
+Docker's explicit start, including when the prior automatic restart count was
+nonzero. The checkpoint binds the exact raw receipt hash accepted by capture,
+not merely an equivalent parsed record. Process startup and successful
+configuration load must fall inside the owner's directly sampled capture call
+window. The initial baseline remains immutable. Later process checks and publication use the latest verified checkpoint; a later unexpected
 process restart or publication-time reload drift is refused. A slow initial
-configuration load after the canonical receipt remains unproved and fails closed,
-requiring reconciliation; it does not authorize a backup retry or a broader
-restart exception.
+configuration load after the accepted capture return remains unproved and fails
+closed, requiring reconciliation; it does not authorize a backup retry or a broader
+restart exception. An exclusive intent precedes the capture; a separate exclusive
+completion record joins that intent, the accepted receipt hash and wall/monotonic
+clock samples immediately around the capture call. Monotonic elapsed time must fit
+the measured wall-clock sampling envelope; this adds no timing grace to the allowed
+process/reload window. Filesystem mtimes are checked for later tampering, not used
+as clock authority, so coarse filesystem timestamps cannot move the window.
 
 Inside the existing journaled `publish_source` phase, with the scheduler paused,
 the controller writes the pinned heartbeat bytes in place, fsyncs, verifies the
 actual mounted bytes, and adopts only that blob into the index. The subsequent
 fast-forward preserves the single-file bind inode. During publication, Prometheus
 keeps its latest verified container and process: configuration validation precedes
-one HUP, followed by bounded observations requiring a newer successful reload and the exact loaded
-rule expressions. A partial write, index adoption or uncertain HUP is an attempted
+one HUP, followed by bounded observations requiring a newer successful reload
+and the exact loaded rule expressions. A partial write, index adoption or uncertain HUP is an attempted
 phase requiring reconciliation, never permission to retry.
 
 After its one ordinary scheduler resume, the controller waits for the existing

@@ -21,6 +21,24 @@ command = Path(sys.argv[0]).name
 state["calls"].append({"boundary": command, "argv": args})
 
 
+def monitoring_query_sample(expression, state):
+    """Model only the five consumed PromQL expressions with distinct timestamps."""
+    selector = (
+        'scheduler_retention_hold_observed_timestamp_seconds{job="node-exporter"}'
+    )
+    record = state["monitoring_record_timestamp"]
+    historical = selector + " @ " + format(record, ".6f")
+    samples = {
+        selector: state["monitoring_heartbeat_timestamp"],
+        "privacy_retention:verified_scheduler_hold": 1,
+        "timestamp(privacy_retention:verified_scheduler_hold)": record,
+        historical: state["monitoring_heartbeat_timestamp"],
+        "timestamp(" + historical + ")": state["monitoring_scrape_timestamp"],
+    }
+    assert expression in samples, ("unknown monitoring query", expression)
+    return samples[expression]
+
+
 def save():
     STATE.write_text(json.dumps(state, sort_keys=True))
 
@@ -50,6 +68,7 @@ def inspected(tokens):
 
 
 def docker():
+    """Model only allowlisted Docker effects and observations in synthetic state."""
     if args[0] == "ps":
         emit("\n".join(value["Id"] for value in select_containers(args)))
     elif args[0] == "inspect":
@@ -94,6 +113,11 @@ def docker():
         if args[0] == "unpause" and "monitoring_heartbeat_timestamp" in state:
             # External model of the next ordinary cron tick, not a job invocation.
             state["monitoring_heartbeat_timestamp"] = int(time.time())
+            state["monitoring_record_timestamp"] = time.time()
+            state["monitoring_scrape_timestamp"] = (
+                state["monitoring_heartbeat_timestamp"]
+                + state["monitoring_record_timestamp"]
+            ) / 2
         emit(values[0]["Id"])
     elif args[0] == "cp":
         assert args[-1] == "-"
@@ -147,11 +171,7 @@ def docker():
                 emit({"status": "success", "data": {"alerts": []}})
             elif url.path == "/api/v1/query":
                 expression = parse_qs(url.query)["query"][0]
-                sample = (
-                    1
-                    if expression == "privacy_retention:verified_scheduler_hold"
-                    else state["monitoring_heartbeat_timestamp"]
-                )
+                sample = monitoring_query_sample(expression, state)
                 emit(
                     {
                         "status": "success",

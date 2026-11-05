@@ -18,6 +18,7 @@ def preflight_capture(profile):
 
 
 def capture_backup(profile, attempt_dir, binding):
+    """Model writer restart and capture bytes; use the real canonical receipt producer."""
     from lib.lifecycle_lock import verify_inherited_lock
 
     verify_inherited_lock(
@@ -34,10 +35,8 @@ def capture_backup(profile, attempt_dir, binding):
         from datetime import datetime, timezone
         import time
 
-        # The Docker rehearsal output may be a host-backed mount with a few
-        # milliseconds of clock skew. Model the nonzero stop/start interval.
-        time.sleep(0.05)
         prometheus = state["containers"]["prometheus"]
+        prometheus["RestartCount"] = 0
         prometheus["State"]["Pid"] += 1
         prometheus["State"]["StartedAt"] = datetime.now(timezone.utc).isoformat()
         state["monitoring_reload_timestamp"] = time.time()

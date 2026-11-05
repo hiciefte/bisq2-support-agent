@@ -9,6 +9,7 @@ client/bootstrap/stdio owner/host backend, ciphertext transfer and journals run.
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import os
@@ -167,6 +168,7 @@ def container(service, install, build_id):
 
 
 def prepare(source, root, scenario):
+    """Create a disposable Git and runtime fixture with explicit external doubles."""
     monitoring = scenario == "monitoring_success"
     root.mkdir(mode=0o700, parents=True, exist_ok=False)
     candidate, install = root / "candidate", root / "install"
@@ -291,6 +293,7 @@ def prepare(source, root, scenario):
         )
     }
     if monitoring:
+        containers["prometheus"]["RestartCount"] = 3
         containers["prometheus"]["State"]["StartedAt"] = (
             datetime.now(timezone.utc) - timedelta(seconds=60)
         ).isoformat()
@@ -476,6 +479,7 @@ def invoke(candidate, env, *arguments):
 
 
 def run_case(source, root, scenario):
+    """Exercise ordinary owner/client phases and verify their durable evidence."""
     assert sys.platform == "linux", "real lifecycle ownership requires Linux /proc"
     for command in ("git", "flock", "jq", "openssl", "bash", "python3"):
         assert shutil.which(command), "missing local fixture tool: " + command
@@ -568,6 +572,24 @@ def run_case(source, root, scenario):
                 (host_operation / "host/backup-processes").glob("*.json")
             )
             assert len(checkpoints) == 2
+            for path in checkpoints:
+                checkpoint = json.loads(path.read_text())
+                phase_receipt = json.loads(
+                    (host_operation / "receipts" / path.name).read_text()
+                )
+                assert (
+                    checkpoint["proof"]["canonical_backup_sha256"]
+                    == phase_receipt["payload"]["canonical_backup_receipt_sha256"]
+                )
+                assert checkpoint["after"]["restart_count"] == 0
+            assert (
+                json.loads(
+                    (
+                        host_operation / "host/backup-processes/prechange_backup.json"
+                    ).read_text()
+                )["before"]["restart_count"]
+                == 3
+            )
             report["monitoring_backups_checkpointed"] = 2
             report["monitoring_publish_hups"] = 1
             report["monitoring_heartbeat_forced"] = False
@@ -631,6 +653,49 @@ def run_case(source, root, scenario):
 
 
 class ExternalBoundaryRegression(unittest.TestCase):
+    def test_monitoring_queries_are_exact_and_timestamps_distinct(self):
+        """Reject unknown historical queries and distinguish scrape from rule evaluation."""
+        tree = ast.parse((FIXTURES / "boundary.py").read_text())
+        function = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "monitoring_query_sample"
+        )
+        scope = {}
+        exec(
+            compile(
+                ast.Module(body=[function], type_ignores=[]), "boundary-query", "exec"
+            ),
+            scope,
+        )
+        query = scope["monitoring_query_sample"]
+        state = {
+            "monitoring_heartbeat_timestamp": 100,
+            "monitoring_scrape_timestamp": 101,
+            "monitoring_record_timestamp": 102,
+        }
+        selector = (
+            'scheduler_retention_hold_observed_timestamp_seconds{job="node-exporter"}'
+        )
+        expected = {
+            selector: 100,
+            "privacy_retention:verified_scheduler_hold": 1,
+            "timestamp(privacy_retention:verified_scheduler_hold)": 102,
+            selector + " @ 102.000000": 100,
+            "timestamp(" + selector + " @ 102.000000)": 101,
+        }
+        for expression, value in expected.items():
+            self.assertEqual(query(expression, state), value)
+        for expression in (
+            "vector(1)",
+            selector + " @ 101.000000",
+            selector + " @ 102",
+            "timestamp(" + selector + " @ 99.000000)",
+        ):
+            with self.assertRaises(AssertionError):
+                query(expression, state)
+
     def test_web_root_boundary_matches_fixed_readiness_endpoint(self):
         with tempfile.TemporaryDirectory() as parent:
             root = Path(parent)

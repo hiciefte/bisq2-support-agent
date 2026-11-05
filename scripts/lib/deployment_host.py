@@ -948,6 +948,7 @@ class DeploymentHost:
         }
 
     def _monitoring_preserved(self, containers):
+        """Require the latest proved process and the original single-file bind identity."""
         if self.plan["schema"] != "deployment-plan-v5":
             return
         require(
@@ -988,10 +989,12 @@ class DeploymentHost:
             (match[2] or "").ljust(9, "0")
         )
 
-    def _monitoring_backup_proof(self, phase, intent_sha256):
+    def _monitoring_backup_proof(self, phase, intent_sha256, canonical_receipt_sha256):
+        """Join accepted capture bytes and owner clocks; mtimes detect tampering only."""
         require(
             phase in {"prechange_backup", "postchange_backup"}
-            and is_digest(intent_sha256),
+            and is_digest(intent_sha256)
+            and is_digest(canonical_receipt_sha256),
             "host_monitoring_backup_binding",
         )
         directory = self.operation / "recovery" / phase
@@ -1000,6 +1003,7 @@ class DeploymentHost:
             path = directory / name
             before = path.lstat()
             value = read_record(path)
+            raw = path.read_bytes()
             after = path.lstat()
             require(
                 not any(p.is_symlink() for p in (path, *path.parents))
@@ -1012,9 +1016,9 @@ class DeploymentHost:
                 == (after.st_dev, after.st_ino, after.st_mtime_ns, after.st_ctime_ns),
                 "host_monitoring_backup_evidence_changed",
             )
-            return value, digest(encode(value)), before.st_mtime_ns
+            return value, digest(raw), before.st_mtime_ns
 
-        capture, capture_sha, began_ns = saved("capture-intent.json")
+        capture, capture_sha, capture_mtime = saved("capture-intent.json")
         require(
             capture
             == {
@@ -1026,7 +1030,11 @@ class DeploymentHost:
             },
             "host_monitoring_backup_binding",
         )
-        receipt, receipt_sha, finished_ns = saved("canonical-backup.json")
+        receipt, receipt_sha, receipt_mtime = saved("canonical-backup.json")
+        require(
+            receipt_sha == canonical_receipt_sha256,
+            "host_monitoring_capture_receipt_changed",
+        )
         require(
             set(receipt)
             == {
@@ -1049,18 +1057,71 @@ class DeploymentHost:
             and re.fullmatch(
                 r"bisq-support-backup-[A-Za-z0-9_.-]+\.tar\.gz\.(age|gpg)",
                 receipt["ciphertext_name"],
-            )
-            and 0 < began_ns <= finished_ns,
+            ),
             "host_monitoring_backup_receipt",
         )
+        start, start_sha, start_mtime = saved("monitoring-capture.intent.json")
+        completion, completion_sha, completion_mtime = saved(
+            "monitoring-capture.result.json"
+        )
+        require(
+            start
+            == {
+                "schema": "deployment-monitoring-capture-intent-v1",
+                "binding": capture,
+            },
+            "host_monitoring_capture_window_binding",
+        )
+        require(
+            set(completion)
+            == {
+                "schema",
+                "intent_sha256",
+                "canonical_backup_receipt_sha256",
+                "began",
+                "finished",
+            }
+            and completion["schema"] == "deployment-monitoring-capture-result-v1"
+            and completion["intent_sha256"] == digest(encode(start))
+            and completion["canonical_backup_receipt_sha256"]
+            == canonical_receipt_sha256,
+            "host_monitoring_capture_window_binding",
+        )
+        began_ns, finished_ns = self._monitoring_capture_window(completion)
         return {
             "capture_intent_sha256": capture_sha,
             "canonical_backup_sha256": receipt_sha,
+            "monitoring_capture_intent_sha256": start_sha,
+            "monitoring_capture_result_sha256": completion_sha,
+            "saved_mtimes_ns": [
+                capture_mtime,
+                receipt_mtime,
+                start_mtime,
+                completion_mtime,
+            ],
             "capture_started_ns": began_ns,
             "capture_finished_ns": finished_ns,
         }
 
+    @staticmethod
+    def _monitoring_capture_window(completion):
+        """Reject clock steps using the measured sampling envelope, not tolerance."""
+        began, finished = completion["began"], completion["finished"]
+        for sample in (began, finished):
+            require(
+                set(sample) == {"wall_before_ns", "monotonic_ns", "wall_after_ns"}
+                and all(type(v) is int and v > 0 for v in sample.values())
+                and sample["wall_before_ns"] <= sample["wall_after_ns"],
+                "host_monitoring_capture_clock",
+            )
+        elapsed = finished["monotonic_ns"] - began["monotonic_ns"]
+        lower = finished["wall_before_ns"] - began["wall_after_ns"]
+        upper = finished["wall_after_ns"] - began["wall_before_ns"]
+        require(0 < lower <= elapsed <= upper, "host_monitoring_capture_clock")
+        return began["wall_after_ns"], finished["wall_before_ns"]
+
     def _monitoring_expected_state(self):
+        """Revalidate the private checkpoint chain against its original capture proofs."""
         expected = process_identity(self.baseline["containers"]["prometheus"])
         reload_timestamp = self.baseline["monitoring"]["reload_timestamp"]
         directory = self.root / "backup-processes"
@@ -1115,13 +1176,17 @@ class DeploymentHost:
                 == immutable(self.baseline["containers"]["prometheus"]),
                 "host_monitoring_backup_checkpoint",
             )
-            proof = self._monitoring_backup_proof(phase, record["client_intent_sha256"])
+            proof = self._monitoring_backup_proof(
+                phase,
+                record["client_intent_sha256"],
+                record["proof"]["canonical_backup_sha256"],
+            )
             require(record["proof"] == proof, "host_monitoring_backup_evidence_changed")
             began = self._process_started_ns(record["after"])
             require(
                 proof["capture_started_ns"] <= began <= proof["capture_finished_ns"]
                 and began > self._process_started_ns(expected)
-                and record["after"]["restart_count"] == expected["restart_count"],
+                and record["after"]["restart_count"] == 0,
                 "host_monitoring_backup_process",
             )
             self._monitoring_backup_reload(record["reload_state"], began, proof)
@@ -1131,6 +1196,7 @@ class DeploymentHost:
 
     @staticmethod
     def _monitoring_backup_reload(state, started_ns, proof):
+        """Require the successful startup load inside the accepted capture window."""
         require(
             set(state) == {"success", "timestamp"}
             and state["success"] == 1
@@ -1144,7 +1210,10 @@ class DeploymentHost:
             "host_monitoring_backup_reload",
         )
 
-    def _monitoring_accept_backup_process(self, phase, intent_sha256):
+    def _monitoring_accept_backup_process(
+        self, phase, intent_sha256, canonical_receipt_sha256
+    ):
+        """Adopt one proved explicit start; all later checks require exact continuity."""
         if self.plan["schema"] != "deployment-plan-v5":
             return
         # The owner verified the previous process immediately before capture.
@@ -1152,7 +1221,9 @@ class DeploymentHost:
         # private evidence window; retain this checkpoint for every later check.
         previous = self._monitoring_expected_state()
         expected = previous["process"]
-        proof = self._monitoring_backup_proof(phase, intent_sha256)
+        proof = self._monitoring_backup_proof(
+            phase, intent_sha256, canonical_receipt_sha256
+        )
         current = self._inspect()["prometheus"]
         after = process_identity(current)
         began = self._process_started_ns(after)
@@ -1163,7 +1234,7 @@ class DeploymentHost:
             and not current["State"]["Restarting"]
             and proof["capture_started_ns"] <= began <= proof["capture_finished_ns"]
             and began > self._process_started_ns(expected)
-            and after["restart_count"] == expected["restart_count"],
+            and after["restart_count"] == 0,
             "host_monitoring_backup_process",
         )
         reload_state = self._monitoring_reload_state(current)
@@ -1260,6 +1331,7 @@ class DeploymentHost:
         )
 
     def _monitoring_reload(self):
+        """Publish one HUP only from the latest proved startup reload state."""
         containers = self._inspect()
         self._monitoring_mounts(containers)
         for name in (
@@ -1799,7 +1871,10 @@ class DeploymentHost:
             wait_for_route=reload_nginx,
         )
 
-    def verify_backup_resumption(self, phase, intent_sha256, started):
+    def verify_backup_resumption(
+        self, phase, intent_sha256, started, *, canonical_receipt_sha256=None
+    ):
+        """Verify resumed writers once, joining v5 to the capture payload receipt hash."""
         from .deployment_protocol import effect_guard
 
         seconds = effect_guard(
@@ -1809,12 +1884,22 @@ class DeploymentHost:
         require(is_digest(intent_sha256), "host_intent_digest")
         self.effect_until = timestamp(started) + timedelta(seconds=seconds)
         try:
-            self._verify_backup_resumption(phase, intent_sha256, started)
+            self._verify_backup_resumption(
+                phase,
+                intent_sha256,
+                started,
+                canonical_receipt_sha256=canonical_receipt_sha256,
+            )
         finally:
             self.effect_until = None
 
-    def _verify_backup_resumption(self, phase, intent_sha256, started):
-        self._monitoring_accept_backup_process(phase, intent_sha256)
+    def _verify_backup_resumption(
+        self, phase, intent_sha256, started, *, canonical_receipt_sha256=None
+    ):
+        """Persist the process proof before the separately journaled route verification."""
+        self._monitoring_accept_backup_process(
+            phase, intent_sha256, canonical_receipt_sha256
+        )
         self.verify_preservation()
         effects = self._state()
         self._prefix(phase)
