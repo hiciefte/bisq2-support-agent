@@ -82,7 +82,7 @@ jobs:
   release-ai-quality:
     name: Fresh-Answer AI Quality Gate
     needs: invalidate-pass-marker
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Matches the pinned Python 3.11.11 distribution.
     environment: release-ai-quality
     timeout-minutes: 45
     permissions:
