@@ -20,6 +20,21 @@ SLUG = r"[a-z][a-z0-9_-]{0,63}"
 COMMIT = r"[0-9a-f]{40}"
 SHA256 = r"[0-9a-f]{64}"
 IMAGE = r"sha256:[0-9a-f]{64}"
+# A carried, already-running repair, not permission to change Compose topology.
+PRESERVED_HEAP_FILES = frozenset(
+    {"docker/docker-compose.yml", "docker/bisq2-api/Dockerfile", "docker/.env.example"}
+)
+RETENTION_MONITORING_FILES = frozenset(
+    {
+        "docker/scripts/scheduler-heartbeat.sh",
+        "docker/prometheus/alert_rules.yml",
+        "docker/prometheus/tests/privacy_retention.test.yml",
+        "scripts/validate-monitoring-config.sh",
+    }
+)
+PYTHON_RUNNER_FILES = frozenset(
+    {".github/workflows/ci.yml", ".github/workflows/ai-quality-gate.yml"}
+)
 # Only this reviewed deployment capability may accompany API/web source work.
 # Other operational scripts retain the ordinary classifier's refusal.
 DEPLOYMENT_TOOLING = frozenset(
@@ -158,7 +173,13 @@ def phases_for(services: list[str], *, publish_source: bool = True) -> list[str]
 
 
 def validate_plan(plan: dict) -> None:
-    tooling = isinstance(plan, dict) and plan.get("schema") == "deployment-plan-v3"
+    monitoring = isinstance(plan, dict) and plan.get("schema") == "deployment-plan-v5"
+    heap = isinstance(plan, dict) and plan.get("schema") == "deployment-plan-v4"
+    tooling = isinstance(plan, dict) and plan.get("schema") in {
+        "deployment-plan-v3",
+        "deployment-plan-v4",
+        "deployment-plan-v5",
+    }
     _keys(
         plan,
         {
@@ -171,11 +192,20 @@ def validate_plan(plan: dict) -> None:
             "services",
             "phases",
         }
-        | ({"tooling_sha256"} if tooling else set()),
+        | ({"tooling_sha256"} if tooling else set())
+        | ({"preserved_heap_sha256"} if heap or monitoring else set())
+        | ({"monitoring_sha256", "python_runner_sha256"} if monitoring else set()),
         "release_plan_schema",
     )
     require(
-        (tooling and plan["kind"] == "selective-api-web-with-tooling-v1")
+        (monitoring and plan["kind"] == "selective-api-web-with-monitoring-v1")
+        or (heap and plan["kind"] == "selective-api-web-preserved-heap-v1")
+        or (
+            not heap
+            and not monitoring
+            and tooling
+            and plan["kind"] == "selective-api-web-with-tooling-v1"
+        )
         or (
             plan["schema"] in ["deployment-plan-v1", "deployment-plan-v2"]
             and plan["kind"] == "selective-api-web-v1"
@@ -216,7 +246,14 @@ def validate_plan(plan: dict) -> None:
         "release_source",
     )
     if tooling:
-        validate_tooling_sha256(plan["tooling_sha256"])
+        if not (heap or monitoring) or plan["tooling_sha256"] != {}:
+            validate_tooling_sha256(plan["tooling_sha256"])
+    if heap or (monitoring and plan["preserved_heap_sha256"] != {}):
+        _pins(plan["preserved_heap_sha256"], PRESERVED_HEAP_FILES)
+    if monitoring:
+        _pins(plan["monitoring_sha256"], RETENTION_MONITORING_FILES)
+        if plan["python_runner_sha256"] != {}:
+            _pins(plan["python_runner_sha256"], PYTHON_RUNNER_FILES)
 
 
 def validate_tooling_sha256(tooling: object) -> None:
@@ -386,7 +423,13 @@ def _validate_recovery(recovery: dict) -> None:
 def validate_approval(approval: dict, plan: dict, profile: dict) -> None:
     validate_plan(plan)
     validate_profile(profile)
-    tooling = plan["schema"] == "deployment-plan-v3"
+    heap = plan["schema"] in {"deployment-plan-v4", "deployment-plan-v5"}
+    monitoring = plan["schema"] == "deployment-plan-v5"
+    tooling = plan["schema"] in {
+        "deployment-plan-v3",
+        "deployment-plan-v4",
+        "deployment-plan-v5",
+    }
     _keys(
         approval,
         {
@@ -402,12 +445,22 @@ def validate_approval(approval: dict, plan: dict, profile: dict) -> None:
             "data_compatible_rollback",
             "policy",
         }
-        | ({"tooling_sha256"} if tooling else set()),
+        | ({"tooling_sha256"} if tooling else set())
+        | ({"preserved_heap_sha256"} if heap else set())
+        | ({"monitoring_sha256", "python_runner_sha256"} if monitoring else set()),
         "approval_schema",
     )
     require(
         approval["schema"]
-        == ("deployment-approval-v3" if tooling else "deployment-approval-v2")
+        == (
+            "deployment-approval-v5"
+            if monitoring
+            else (
+                "deployment-approval-v4"
+                if heap
+                else "deployment-approval-v3" if tooling else "deployment-approval-v2"
+            )
+        )
         and approval["plan_sha256"] == canonical_sha256(plan)
         and approval["profile_sha256"] == canonical_sha256(profile)
         and profile["name"] == plan["profile"],
@@ -416,6 +469,20 @@ def validate_approval(approval: dict, plan: dict, profile: dict) -> None:
     if tooling:
         require(
             approval["tooling_sha256"] == plan["tooling_sha256"], "approval_tooling"
+        )
+    if heap:
+        require(
+            approval["preserved_heap_sha256"] == plan["preserved_heap_sha256"],
+            "approval_preserved_heap",
+        )
+    if monitoring:
+        require(
+            approval["monitoring_sha256"] == plan["monitoring_sha256"],
+            "approval_monitoring",
+        )
+        require(
+            approval["python_runner_sha256"] == plan["python_runner_sha256"],
+            "approval_python_runner",
         )
     require(
         isinstance(approval["operator"], str)
@@ -475,7 +542,13 @@ def effect_guard(
     """Recheck the immutable binding and time window immediately before an effect."""
     validate_approval(approval, plan, profile)
     require(
-        plan["schema"] in {"deployment-plan-v2", "deployment-plan-v3"},
+        plan["schema"]
+        in {
+            "deployment-plan-v2",
+            "deployment-plan-v3",
+            "deployment-plan-v4",
+            "deployment-plan-v5",
+        },
         "effect_plan_version",
     )
     require(phase in plan["phases"], "unknown_phase")
@@ -587,6 +660,7 @@ def _validate_payload(phase: str, payload: dict, plan: dict) -> None:
         )
         flags = ["validated"]
     elif phase == "resume_scheduler":
+        monitoring = plan["schema"] == "deployment-plan-v5"
         _keys(
             payload,
             {
@@ -595,7 +669,8 @@ def _validate_payload(phase: str, payload: dict, plan: dict) -> None:
                 "original_pause_restored",
                 "job_config_preserved",
                 "unrelated_preserved",
-            },
+            }
+            | ({"monitoring_heartbeat_observed"} if monitoring else set()),
             "receipt_payload",
         )
         require(_match(payload["scheduler_id"], SHA256), "receipt_identity")
@@ -605,7 +680,11 @@ def _validate_payload(phase: str, payload: dict, plan: dict) -> None:
             "job_config_preserved",
             "unrelated_preserved",
         ]
+        if monitoring:
+            flags.append("monitoring_heartbeat_observed")
     elif phase == "publish_source":
+        heap = bool(plan.get("preserved_heap_sha256"))
+        monitoring = plan["schema"] == "deployment-plan-v5"
         _keys(
             payload,
             {
@@ -614,7 +693,13 @@ def _validate_payload(phase: str, payload: dict, plan: dict) -> None:
                 "previous_commit",
                 "source_clean",
                 "unrelated_preserved",
-            },
+            }
+            | ({"preserved_heap_reconciled"} if heap else set())
+            | (
+                {"monitoring_files_verified", "prometheus_reload_verified"}
+                if monitoring
+                else set()
+            ),
             "receipt_payload",
         )
         require(
@@ -625,6 +710,10 @@ def _validate_payload(phase: str, payload: dict, plan: dict) -> None:
             "receipt_source",
         )
         flags = ["source_clean", "unrelated_preserved"]
+        if heap:
+            flags.append("preserved_heap_reconciled")
+        if monitoring:
+            flags.extend(["monitoring_files_verified", "prometheus_reload_verified"])
     elif phase in {"prechange_backup", "postchange_backup"}:
         _keys(
             payload,

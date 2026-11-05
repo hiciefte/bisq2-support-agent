@@ -281,7 +281,13 @@ def bindings(
         profile, approval = read_record(profile_path), read_record(approval_path)
         validate_approval(approval, journal.plan, profile)
         require(
-            journal.plan["schema"] in {"deployment-plan-v2", "deployment-plan-v3"},
+            journal.plan["schema"]
+            in {
+                "deployment-plan-v2",
+                "deployment-plan-v3",
+                "deployment-plan-v4",
+                "deployment-plan-v5",
+            },
             "effect_plan_version",
         )
         # Interrupted snapshot publication is preserved; a repeat apply never overwrites it.

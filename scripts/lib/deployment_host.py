@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import json
+import math
 import os
 import re
 import signal
@@ -23,6 +24,7 @@ from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
 from typing import Callable, cast
+from urllib.parse import quote
 
 from .deployment_journal import (
     JournalError,
@@ -239,7 +241,13 @@ class DeploymentHost:
             "host_operation_root",
         )
         require(
-            plan["schema"] in {"deployment-plan-v2", "deployment-plan-v3"},
+            plan["schema"]
+            in {
+                "deployment-plan-v2",
+                "deployment-plan-v3",
+                "deployment-plan-v4",
+                "deployment-plan-v5",
+            },
             "host_plan_version",
         )
         for path in (operation, self.install, self.candidate):
@@ -359,9 +367,20 @@ class DeploymentHost:
         )
 
     def _source(self, published=False):
-        from deploy_release import changed_paths, classify_services, tooling_hashes
+        from deploy_release import (
+            changed_paths,
+            classify_services,
+            monitoring_hashes,
+            preserved_heap_hashes,
+            python_runner_hashes,
+            tooling_hashes,
+        )
+
+        from .deployment_protocol import DEPLOYMENT_TOOLING
 
         source = self.plan["source"]
+        heap = bool(self.plan.get("preserved_heap_sha256"))
+        monitoring = self.plan["schema"] == "deployment-plan-v5"
         for path, prefix in (
             (self.install, "candidate" if published else "previous"),
             (self.candidate, "candidate"),
@@ -374,12 +393,15 @@ class DeploymentHost:
                 self._git(path, "rev-parse", "HEAD^{tree}") == source[prefix + "_tree"],
                 "host_source_tree",
             )
-            require(
-                not self._git(
-                    path, "status", "--porcelain=v1", "--untracked-files=normal"
-                ),
-                "host_source_dirty",
-            )
+            if heap and path == self.install and not published:
+                self._heap_worktree()
+            else:
+                require(
+                    not self._git(
+                        path, "status", "--porcelain=v1", "--untracked-files=normal"
+                    ),
+                    "host_source_dirty",
+                )
             flags = self._git(path, "ls-files", "-v").splitlines()
             require(
                 all(line.startswith("H ") for line in flags), "host_source_index_flags"
@@ -390,21 +412,71 @@ class DeploymentHost:
         require(
             digest(encode(paths)) == source["changed_paths_sha256"], "host_source_diff"
         )
-        tooling = self.plan["schema"] == "deployment-plan-v3"
+        tooling = self.plan["schema"] in {
+            "deployment-plan-v3",
+            "deployment-plan-v4",
+            "deployment-plan-v5",
+        }
         require(
-            classify_services(paths, include_deployment_tooling=tooling)
+            classify_services(
+                paths,
+                include_deployment_tooling=tooling,
+                preserve_bisq2_heap_repair=heap,
+                include_retention_monitoring=monitoring,
+                include_python_runner_pins=bool(self.plan.get("python_runner_sha256")),
+            )
             == self.plan["services"],
             "host_source_scope",
         )
         if tooling:
-            require(
+            actual_tooling = (
                 tooling_hashes(self.candidate, source["candidate_commit"], paths)
-                == self.plan["tooling_sha256"],
+                if self.plan["tooling_sha256"]
+                or any(p in DEPLOYMENT_TOOLING for p in paths)
+                else {}
+            )
+            require(
+                actual_tooling == self.plan["tooling_sha256"],
                 "host_source_tooling",
             )
             require(
                 self.approval["tooling_sha256"] == self.plan["tooling_sha256"],
                 "approval_tooling",
+            )
+        if heap:
+            require(
+                preserved_heap_hashes(
+                    self.candidate,
+                    source["previous_commit"],
+                    source["candidate_commit"],
+                    paths,
+                )
+                == self.plan["preserved_heap_sha256"]
+                == self.approval["preserved_heap_sha256"],
+                "host_preserved_heap",
+            )
+        if monitoring:
+            require(
+                monitoring_hashes(self.candidate, source["candidate_commit"], paths)
+                == self.plan["monitoring_sha256"]
+                == self.approval["monitoring_sha256"],
+                "host_monitoring_source",
+            )
+            runner_pins = (
+                python_runner_hashes(
+                    self.candidate,
+                    source["previous_commit"],
+                    source["candidate_commit"],
+                    paths,
+                )
+                if self.plan["python_runner_sha256"]
+                else {}
+            )
+            require(
+                runner_pins
+                == self.plan["python_runner_sha256"]
+                == self.approval["python_runner_sha256"],
+                "host_python_runner_source",
             )
         self._git(
             self.candidate,
@@ -416,6 +488,665 @@ class DeploymentHost:
         self._git(
             self.install, "cat-file", "-e", source["candidate_commit"] + "^{commit}"
         )
+
+    def _heap_worktree(self):
+        """Only one unstaged candidate-identical Compose repair may pre-exist."""
+        name = "docker/docker-compose.yml"
+        path = self.install / name
+        require(
+            self._git(
+                self.install,
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=normal",
+                "-z",
+            )
+            == "M " + name + "\0"
+            and not self._git(self.install, "diff", "--cached", "--name-only"),
+            "host_heap_source_dirty",
+        )
+        require(
+            not any(p.is_symlink() for p in (path, *path.parents))
+            and path.is_file()
+            and path.stat().st_size <= 1024 * 1024
+            and stat.S_IMODE(path.stat().st_mode) == 0o644
+            and path.stat().st_nlink == 1
+            and digest(path.read_bytes()) == self.plan["preserved_heap_sha256"][name],
+            "host_heap_file_changed",
+        )
+
+    def _heap_runtime(self, containers):
+        if not self.plan.get("preserved_heap_sha256"):
+            return
+        require("bisq2-api" in containers, "host_heap_node_missing")
+        node = containers["bisq2-api"]
+        pairs = [item.split("=", 1) for item in node["Config"]["Env"]]
+        require(all(len(p) == 2 for p in pairs), "host_heap_environment")
+        env = dict(pairs)
+        require(
+            len(env) == len(pairs)
+            and env.get("JAVA_OPTS") == "-Xmx2g -XX:+ExitOnOutOfMemoryError"
+            and node["HostConfig"]["Memory"] == 4294967296
+            and node["HostConfig"]["RestartPolicy"]["Name"] == "always",
+            "host_heap_runtime",
+        )
+
+    def _container_file(self, container, filename, label):
+        raw = self._run(["docker", "cp", container["Id"] + ":" + filename, "-"], label)
+        with tarfile.open(fileobj=io.BytesIO(raw), mode="r:") as archive:
+            members = archive.getmembers()
+            require(
+                len(members) == 1
+                and members[0].isfile()
+                and members[0].size <= 1024 * 1024,
+                "host_monitoring_file",
+            )
+            return archive.extractfile(members[0]).read()
+
+    def _monitoring_file(self, name):
+        path = self.install / name
+        require(
+            not any(p.is_symlink() for p in (path, *path.parents)),
+            "host_monitoring_symlink",
+        )
+        with path.open("rb") as stream:
+            info = os.fstat(stream.fileno())
+            require(
+                stat.S_ISREG(info.st_mode)
+                and info.st_nlink == 1
+                and info.st_size <= 1024 * 1024,
+                "host_monitoring_file",
+            )
+            raw = stream.read()
+        return {
+            "inode": info.st_ino,
+            "device": info.st_dev,
+            "mode": stat.S_IMODE(info.st_mode),
+            "uid": info.st_uid,
+            "gid": info.st_gid,
+            "sha256": digest(raw),
+        }
+
+    @staticmethod
+    def _metric(raw, name):
+        # Exactly one unlabeled local metric. Neither missing nor NaN is success.
+        values = re.findall(
+            rb"^" + re.escape(name.encode()) + rb" ([^\s]+)$", raw, re.MULTILINE
+        )
+        require(len(values) == 1, "host_monitoring_metric")
+        value = float(values[0])
+        require(math.isfinite(value) and value >= 0, "host_monitoring_metric")
+        return value
+
+    def _monitoring_reload_state(self, prometheus):
+        raw = self._run(
+            [
+                "docker",
+                "exec",
+                prometheus["Id"],
+                "/bin/wget",
+                "-qO-",
+                "http://127.0.0.1:9090/metrics",
+            ],
+            "monitoring-reload-state",
+        )
+        return {
+            "success": self._metric(raw, "prometheus_config_last_reload_successful"),
+            "timestamp": self._metric(
+                raw, "prometheus_config_last_reload_success_timestamp_seconds"
+            ),
+        }
+
+    def _monitoring_expected_rules(self, prometheus, raw):
+        # This capability intentionally accepts the checked-in indentation and
+        # plain/literal expressions only; it is not a permissive YAML parser.
+        text = raw.decode("utf-8")
+        blocks = re.split(r"(?m)^      - (alert|record): ([A-Za-z0-9_:]+)\n", text)
+        wanted = {
+            "privacy_retention:verified_scheduler_hold",
+            "PrivacyRetentionHeld",
+            "PrivacyRetentionHoldInvalid",
+            "PrivacyRetentionMetricsMissing",
+            "PrivacyRetentionJobStale",
+            "PrivacyRetentionLogMetricsMissing",
+            "PrivacyRetentionLogJobStale",
+            "PrivacyRetentionWindowExceeded",
+        }
+        expected = {}
+        for index in range(1, len(blocks), 3):
+            kind, name, body = blocks[index : index + 3]
+            if name not in wanted:
+                continue
+            require(name not in expected, "host_monitoring_rule_duplicate")
+            match = re.search(r"(?m)^        expr: ([^\n]+)\n", body)
+            require(match is not None, "host_monitoring_rule_expression")
+            expression = match.group(1)
+            if expression == "|":
+                lines = []
+                for line in body[match.end() :].splitlines():
+                    if not line.startswith("          "):
+                        break
+                    lines.append(line[10:])
+                expression = "\n".join(lines)
+            require(
+                bool(expression) and expression not in {">", "|-", "|+"},
+                "host_monitoring_rule_expression",
+            )
+            formatted = (
+                self._run(
+                    [
+                        "docker",
+                        "exec",
+                        prometheus["Id"],
+                        "/bin/promtool",
+                        "--experimental",
+                        "promql",
+                        "format",
+                        expression,
+                    ],
+                    "monitoring-rule-format",
+                )
+                .decode()
+                .strip()
+            )
+            expected[name] = {
+                "query": formatted,
+                "type": "recording" if kind == "record" else "alerting",
+            }
+        require(set(expected) == wanted, "host_monitoring_rule_set")
+        return expected
+
+    def _monitoring_loaded_rules(self, prometheus):
+        raw = self._run(
+            [
+                "docker",
+                "exec",
+                prometheus["Id"],
+                "/bin/wget",
+                "-qO-",
+                "http://127.0.0.1:9090/api/v1/rules",
+            ],
+            "monitoring-loaded-rules",
+        )
+        response = json.loads(raw)
+        require(response.get("status") == "success", "host_monitoring_loaded_rules")
+        groups = response.get("data", {}).get("groups", [])
+        require(
+            isinstance(groups, list) and 1 <= len(groups) <= 100,
+            "host_monitoring_loaded_rules",
+        )
+        rules = [rule for group in groups for rule in group.get("rules", [])]
+        require(len(rules) <= 1000, "host_monitoring_loaded_rules")
+        wanted = {
+            "privacy_retention:verified_scheduler_hold",
+            "PrivacyRetentionHeld",
+            "PrivacyRetentionHoldInvalid",
+            "PrivacyRetentionMetricsMissing",
+            "PrivacyRetentionJobStale",
+            "PrivacyRetentionLogMetricsMissing",
+            "PrivacyRetentionLogJobStale",
+            "PrivacyRetentionWindowExceeded",
+        }
+        selected = [rule for rule in rules if rule.get("name") in wanted]
+        require(
+            len(selected) == len(wanted) and {r["name"] for r in selected} == wanted,
+            "host_monitoring_loaded_rules",
+        )
+        require(
+            all(r.get("health") in {"ok", "unknown"} for r in selected),
+            "host_monitoring_loaded_rules",
+        )
+        if any(r.get("health") != "ok" for r in selected):
+            return None
+        for rule in selected:
+            name = rule["name"]
+            if name == "privacy_retention:verified_scheduler_hold":
+                require(rule.get("type") == "recording", "host_monitoring_loaded_rules")
+            else:
+                require(
+                    rule.get("type") == "alerting"
+                    and rule.get("labels", {}).get("severity")
+                    == ("warning" if name == "PrivacyRetentionHeld" else "critical"),
+                    "host_monitoring_loaded_rules",
+                )
+            query = rule.get("query", "")
+            require(
+                isinstance(query, str) and bool(query), "host_monitoring_loaded_rules"
+            )
+            formatted = (
+                self._run(
+                    [
+                        "docker",
+                        "exec",
+                        prometheus["Id"],
+                        "/bin/promtool",
+                        "--experimental",
+                        "promql",
+                        "format",
+                        query,
+                    ],
+                    "monitoring-loaded-rule-format",
+                )
+                .decode()
+                .strip()
+            )
+            require(
+                {"query": formatted, "type": rule["type"]}
+                == self.baseline["monitoring"]["expected_rules"][name],
+                "host_monitoring_loaded_expression",
+            )
+            if name in {
+                "PrivacyRetentionMetricsMissing",
+                "PrivacyRetentionJobStale",
+                "PrivacyRetentionLogMetricsMissing",
+                "PrivacyRetentionLogJobStale",
+            }:
+                require(
+                    "unless on () privacy_retention:verified_scheduler_hold" in query,
+                    "host_monitoring_loaded_rules",
+                )
+            if name == "PrivacyRetentionWindowExceeded":
+                require(
+                    "privacy_retention:verified_scheduler_hold" not in query,
+                    "host_monitoring_loaded_rules",
+                )
+        return digest(
+            encode(
+                [
+                    {k: r.get(k) for k in ("name", "type", "query", "labels")}
+                    for r in sorted(selected, key=lambda r: r["name"])
+                ]
+            )
+        )
+
+    def _monitoring_query(self, prometheus, expression):
+        url = "http://127.0.0.1:9090/api/v1/query?query=" + quote(expression, safe="")
+        value = json.loads(
+            self._run(
+                ["docker", "exec", prometheus["Id"], "/bin/wget", "-qO-", url],
+                "monitoring-query",
+            )
+        )
+        require(
+            value.get("status") == "success"
+            and value.get("data", {}).get("resultType") == "vector",
+            "host_monitoring_query",
+        )
+        rows = value["data"].get("result")
+        require(isinstance(rows, list) and len(rows) <= 1, "host_monitoring_query")
+        if not rows:
+            return None
+        pair = rows[0].get("value")
+        require(isinstance(pair, list) and len(pair) == 2, "host_monitoring_query")
+        timestamp_value, metric_value = map(float, pair)
+        require(
+            math.isfinite(timestamp_value)
+            and math.isfinite(metric_value)
+            and timestamp_value >= 0,
+            "host_monitoring_query",
+        )
+        return {"timestamp": timestamp_value, "value": metric_value}
+
+    def _monitoring_scraped_hold(self, prometheus, heartbeat):
+        observed = self._monitoring_query(
+            prometheus,
+            'scheduler_retention_hold_observed_timestamp_seconds{job="node-exporter"}',
+        )
+        hold = self._monitoring_query(
+            prometheus, "privacy_retention:verified_scheduler_hold"
+        )
+        hold_sample = self._monitoring_query(
+            prometheus, "timestamp(privacy_retention:verified_scheduler_hold)"
+        )
+        if (
+            observed is None
+            or hold is None
+            or hold_sample is None
+            or observed["value"] < heartbeat
+            or not 0 <= time.time() - observed["value"] < 180
+            or hold["value"] != 1
+            or not heartbeat <= hold_sample["value"] <= time.time()
+        ):
+            return None
+        # Later scrapes must not invalidate a correctly evaluated recording.
+        # Prove the sample that was available at that recording's actual time,
+        # rather than compare its timestamp with the most recent scrape.
+        at = format(hold_sample["value"], ".6f")
+        selector = (
+            'scheduler_retention_hold_observed_timestamp_seconds{job="node-exporter"}'
+            + " @ "
+            + at
+        )
+        consumed = self._monitoring_query(prometheus, selector)
+        consumed_sample = self._monitoring_query(
+            prometheus, "timestamp(" + selector + ")"
+        )
+        if (
+            consumed is None
+            or consumed_sample is None
+            or not heartbeat <= consumed["value"] <= hold_sample["value"]
+            or not heartbeat <= consumed_sample["value"] <= hold_sample["value"]
+        ):
+            return None
+        raw = self._run(
+            [
+                "docker",
+                "exec",
+                prometheus["Id"],
+                "/bin/wget",
+                "-qO-",
+                "http://127.0.0.1:9090/api/v1/alerts",
+            ],
+            "monitoring-alert-state",
+        )
+        value = json.loads(raw)
+        require(value.get("status") == "success", "host_monitoring_alerts")
+        alerts = value.get("data", {}).get("alerts")
+        require(
+            isinstance(alerts, list) and len(alerts) <= 1000, "host_monitoring_alerts"
+        )
+        targets = {
+            "PrivacyRetentionMetricsMissing",
+            "PrivacyRetentionJobStale",
+            "PrivacyRetentionLogMetricsMissing",
+            "PrivacyRetentionLogJobStale",
+        }
+        if any(alert.get("labels", {}).get("alertname") in targets for alert in alerts):
+            return None
+        return {
+            "scraped_heartbeat_timestamp": observed["value"],
+            "hold_recording_sample_timestamp": hold_sample["value"],
+            "consumed_heartbeat_timestamp": consumed["value"],
+            "consumed_scrape_timestamp": consumed_sample["value"],
+            "held_job_stale_alerts_inactive": True,
+        }
+
+    def _monitoring_mounts(self, containers):
+        expected = [
+            (
+                "scheduler",
+                "docker/scripts/scheduler-heartbeat.sh",
+                "/scripts/scheduler-heartbeat.sh",
+            ),
+            ("prometheus", "docker/prometheus", "/etc/prometheus"),
+        ]
+        for service, name, target in expected:
+            require(service in containers, "host_monitoring_service")
+            mounts = containers[service]["Mounts"]
+            matches = [m for m in mounts if m.get("Destination") == target]
+            require(
+                len(matches) == 1
+                and matches[0].get("Type") == "bind"
+                and matches[0].get("Source") == str(self.install / name),
+                "host_monitoring_mount",
+            )
+        for service, name, target in [
+            (
+                "scheduler",
+                "docker/scripts/scheduler-heartbeat.sh",
+                "/scripts/scheduler-heartbeat.sh",
+            ),
+            (
+                "prometheus",
+                "docker/prometheus/alert_rules.yml",
+                "/etc/prometheus/alert_rules.yml",
+            ),
+        ]:
+            actual = self._container_file(
+                containers[service], target, "monitoring-mounted-file"
+            )
+            require(
+                digest(actual) == self._monitoring_file(name)["sha256"],
+                "host_monitoring_mount_bytes",
+            )
+
+    def _monitoring_baseline(self, containers):
+        require(
+            not containers["scheduler"]["State"]["Paused"],
+            "host_monitoring_originally_paused",
+        )
+        self._monitoring_mounts(containers)
+        script = self.candidate / "docker/scripts/scheduler-heartbeat.sh"
+        rules = self.candidate / "docker/prometheus/alert_rules.yml"
+        self._run(["bash", "-n", str(script)], "monitoring-shell-check")
+        # No-argument promtool check rules consumes stdin without writing files.
+        self._run(
+            [
+                "docker",
+                "exec",
+                "-i",
+                containers["prometheus"]["Id"],
+                "/bin/promtool",
+                "check",
+                "rules",
+            ],
+            "monitoring-rules-check",
+            input_bytes=rules.read_bytes(),
+        )
+        reload_state = self._monitoring_reload_state(containers["prometheus"])
+        require(
+            reload_state["success"] == 1 and reload_state["timestamp"] > 0,
+            "host_monitoring_reload_state",
+        )
+        metrics = self._container_file(
+            containers["scheduler"],
+            "/var/lib/node_exporter/textfile_collector/scheduler-heartbeat.prom",
+            "monitoring-heartbeat-before",
+        )
+        heartbeat = self._metric(metrics, "scheduler_heartbeat_timestamp_seconds")
+        require(0 <= time.time() - heartbeat < 180, "host_monitoring_heartbeat_stale")
+        return {
+            "heartbeat_file": self._monitoring_file(
+                "docker/scripts/scheduler-heartbeat.sh"
+            ),
+            "reload_timestamp": reload_state["timestamp"],
+            "heartbeat_timestamp": heartbeat,
+            "expected_rules": self._monitoring_expected_rules(
+                containers["prometheus"], rules.read_bytes()
+            ),
+        }
+
+    def _monitoring_preserved(self, containers):
+        if self.plan["schema"] != "deployment-plan-v5":
+            return
+        require(
+            process_identity(containers["prometheus"])
+            == process_identity(self.baseline["containers"]["prometheus"]),
+            "host_monitoring_process_changed",
+        )
+        before = self.baseline["monitoring"]["heartbeat_file"]
+        current = self._monitoring_file("docker/scripts/scheduler-heartbeat.sh")
+        require(
+            all(
+                current[k] == before[k]
+                for k in ("inode", "device", "mode", "uid", "gid")
+            ),
+            "host_monitoring_inode_changed",
+        )
+        self._monitoring_mounts(containers)
+
+    def _monitoring_publish_heartbeat(self):
+        current = self._inspect()
+        self._preserved(current)
+        require(
+            current["scheduler"]["State"]["Paused"],
+            "host_monitoring_scheduler_not_paused",
+        )
+        before = self.baseline["monitoring"]["heartbeat_file"]
+        name = "docker/scripts/scheduler-heartbeat.sh"
+        require(
+            self._monitoring_file(name) == before, "host_monitoring_heartbeat_changed"
+        )
+        raw = (self.candidate / name).read_bytes()
+        require(
+            digest(raw) == self.plan["monitoring_sha256"][name],
+            "host_monitoring_candidate",
+        )
+        fd = os.open(self.install / name, os.O_WRONLY | os.O_NOFOLLOW)
+        try:
+            info = os.fstat(fd)
+            require(
+                (
+                    info.st_ino,
+                    info.st_dev,
+                    stat.S_IMODE(info.st_mode),
+                    info.st_uid,
+                    info.st_gid,
+                    info.st_nlink,
+                )
+                == (
+                    before["inode"],
+                    before["device"],
+                    before["mode"],
+                    before["uid"],
+                    before["gid"],
+                    1,
+                ),
+                "host_monitoring_inode_changed",
+            )
+            offset = 0
+            while offset < len(raw):
+                count = os.write(fd, raw[offset:])
+                require(count > 0, "host_monitoring_write")
+                offset += count
+            os.ftruncate(fd, len(raw))
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        self._monitoring_mounts(self._inspect())
+        blob = self._git(
+            self.install,
+            "rev-parse",
+            self.plan["source"]["candidate_commit"] + ":" + name,
+        )
+        require(bool(re.fullmatch(r"[0-9a-f]{40}", blob)), "host_monitoring_blob")
+        self._git(
+            self.install, "update-index", "--cacheinfo", "100755," + blob + "," + name
+        )
+
+    def _monitoring_reload(self):
+        containers = self._inspect()
+        self._monitoring_mounts(containers)
+        for name in (
+            "docker/scripts/scheduler-heartbeat.sh",
+            "docker/prometheus/alert_rules.yml",
+        ):
+            require(
+                self._monitoring_file(name)["sha256"]
+                == self.plan["monitoring_sha256"][name],
+                "host_monitoring_published_bytes",
+            )
+        prometheus = containers["prometheus"]
+        before = self._monitoring_reload_state(prometheus)
+        require(
+            before["success"] == 1
+            and before["timestamp"] == self.baseline["monitoring"]["reload_timestamp"],
+            "host_monitoring_reload_drift",
+        )
+        self._run(
+            [
+                "docker",
+                "exec",
+                prometheus["Id"],
+                "/bin/promtool",
+                "check",
+                "config",
+                "/etc/prometheus/prometheus.yml",
+            ],
+            "monitoring-config-check",
+        )
+        self._run(
+            ["docker", "kill", "--signal", "HUP", prometheus["Id"]], "monitoring-reload"
+        )
+        deadline = time.monotonic() + self.host["readiness_timeout_seconds"]
+        while True:
+            state = self._monitoring_reload_state(prometheus)
+            if state["success"] == 1 and state["timestamp"] > before["timestamp"]:
+                self._preserved(self._inspect())
+                rules_sha256 = self._monitoring_loaded_rules(prometheus)
+                if rules_sha256 is not None:
+                    private_bytes(
+                        self.root / "monitoring-reload.private.json", encode(state)
+                    )
+                    private_bytes(
+                        self.root / "monitoring-loaded-rules.private.json",
+                        encode({"sha256": rules_sha256}),
+                    )
+                    return
+            require(time.monotonic() < deadline, "host_monitoring_reload_failed")
+            time.sleep(1)
+
+    def _monitoring_observe_heartbeat(self, resumed_at):
+        deadline = time.monotonic() + self.host["readiness_timeout_seconds"]
+        while True:
+            current = self._inspect()
+            self._preserved(current)
+            raw = self._container_file(
+                current["scheduler"],
+                "/var/lib/node_exporter/textfile_collector/scheduler-heartbeat.prom",
+                "monitoring-heartbeat-after",
+            )
+            heartbeat = self._metric(raw, "scheduler_heartbeat_timestamp_seconds")
+            hold_names = (
+                "scheduler_retention_hold_active",
+                "scheduler_retention_hold_invalid",
+                "scheduler_retention_hold_cutoff_timestamp_seconds",
+                "scheduler_retention_hold_observed_timestamp_seconds",
+            )
+            # A cron invocation paused before its timestamp assignment can finish
+            # once with the old format. Wait for the next ordinary invocation;
+            # partially present or contradictory new proof still fails closed.
+            has_hold_fields = any(
+                re.search(rb"^" + name.encode() + rb"(?:[ {]|$)", raw, re.MULTILINE)
+                for name in hold_names
+            )
+            if (
+                heartbeat > self.baseline["monitoring"]["heartbeat_timestamp"]
+                and heartbeat >= resumed_at
+                and has_hold_fields
+            ):
+                require(
+                    self._metric(raw, "scheduler_retention_hold_active") == 1
+                    and self._metric(raw, "scheduler_retention_hold_invalid") == 0
+                    and self._metric(
+                        raw, "scheduler_retention_hold_cutoff_timestamp_seconds"
+                    )
+                    > 0
+                    and self._metric(
+                        raw, "scheduler_retention_hold_observed_timestamp_seconds"
+                    )
+                    == heartbeat
+                    and 0 <= time.time() - heartbeat < 180,
+                    "host_monitoring_hold_proof",
+                )
+                reload_state = self._monitoring_reload_state(current["prometheus"])
+                saved_reload = private_json(
+                    self.root / "monitoring-reload.private.json"
+                )
+                require(
+                    reload_state == saved_reload and reload_state["success"] == 1,
+                    "host_monitoring_reload_drift",
+                )
+                scraped = self._monitoring_scraped_hold(
+                    current["prometheus"], heartbeat
+                )
+                if scraped is not None:
+                    private_bytes(
+                        self.root / "monitoring-heartbeat.private.json",
+                        encode(
+                            {
+                                "timestamp": heartbeat,
+                                "ordinary_heartbeat_observed": True,
+                                "hold_proof_verified": True,
+                                **scraped,
+                            }
+                        ),
+                    )
+                    return
+            require(
+                time.monotonic() < deadline, "host_monitoring_heartbeat_not_observed"
+            )
+            time.sleep(2)
 
     def _inspect(self):
         ids = (
@@ -936,7 +1667,9 @@ class DeploymentHost:
         return result | {"active_marker_retired": True}
 
     def _preserved(self, containers, *, allow_unready=frozenset()):
+        self._heap_runtime(containers)
         require(self.baseline is not None, "host_baseline_missing")
+        self._monitoring_preserved(containers)
         original = self.baseline["containers"]
         require(set(containers) == set(original), "host_service_set_changed")
         for service, before in original.items():
@@ -1106,6 +1839,8 @@ class DeploymentHost:
                 "protected_data": self._preserved_data(containers),
                 "scheduler_jobs": self._scheduler_jobs(containers["scheduler"]),
             }
+            if self.plan["schema"] == "deployment-plan-v5":
+                self.baseline["monitoring"] = self._monitoring_baseline(containers)
             for service in sorted(set(self.plan["services"]) | {"api"}):
                 if service == "api":
                     values = dict(
@@ -1514,18 +2249,49 @@ class DeploymentHost:
     def _publish(self):
         source = self.plan["source"]
         self._source()
+        heap = bool(self.plan.get("preserved_heap_sha256"))
+        monitoring = self.plan["schema"] == "deployment-plan-v5"
+        if heap:
+            # The effect journal already owns this once-only publication. Adopt
+            # only the reviewed candidate-identical blob, without rewriting the
+            # live Compose file or staging any unrelated working-tree content.
+            name = "docker/docker-compose.yml"
+            blob = self._git(
+                self.install, "rev-parse", source["candidate_commit"] + ":" + name
+            )
+            require(bool(re.fullmatch(r"[0-9a-f]{40}", blob)), "host_heap_blob")
+            self._heap_worktree()
+            self._git(
+                self.install,
+                "update-index",
+                "--cacheinfo",
+                "100644," + blob + "," + name,
+            )
+        if monitoring:
+            self._monitoring_publish_heartbeat()
         self._git(
             self.install, "merge", "--ff-only", "--no-edit", source["candidate_commit"]
         )
         self._source(published=True)
+        if heap or monitoring:
+            self._configuration()
+        if monitoring:
+            self._monitoring_reload()
         self._preserved(self._inspect())
-        return {
+        result = {
             "candidate_commit": source["candidate_commit"],
             "candidate_tree": source["candidate_tree"],
             "previous_commit": source["previous_commit"],
             "source_clean": True,
             "unrelated_preserved": True,
         }
+        if heap:
+            result["preserved_heap_reconciled"] = True
+        if monitoring:
+            result.update(
+                monitoring_files_verified=True, prometheus_reload_verified=True
+            )
+        return result
 
     def restore_availability(self, phase: str):
         """Restore only a proven failed switch, never resume the failed rollout.
@@ -1672,6 +2438,7 @@ class DeploymentHost:
             current["scheduler"]["State"]["Paused"] is True, "host_scheduler_not_paused"
         )
         self._api_ready(current, effects)
+        resumed_at = int(time.time())
         if effects["pause_scheduler"]["paused_by_session"]:
             self._run(["docker", "unpause", before["Id"]], "unpause", 30)
         current = self._inspect()
@@ -1690,13 +2457,17 @@ class DeploymentHost:
             == self.baseline["scheduler_jobs"],
             "host_scheduler_jobs_changed",
         )
-        return {
+        result = {
             "scheduler_id": before["Id"],
             "original_process_preserved": True,
             "original_pause_restored": True,
             "job_config_preserved": True,
             "unrelated_preserved": True,
         }
+        if self.plan["schema"] == "deployment-plan-v5":
+            self._monitoring_observe_heartbeat(resumed_at)
+            result["monitoring_heartbeat_observed"] = True
+        return result
 
     def effect(self, phase: str, intent_sha256: str) -> dict:
         from .deployment_protocol import effect_guard

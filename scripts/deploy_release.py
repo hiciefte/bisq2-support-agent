@@ -26,7 +26,14 @@ from lib.deployment_journal import (
     require,
     timestamp,
 )
-from lib.deployment_protocol import DEPLOYMENT_TOOLING, phases_for, validate_plan
+from lib.deployment_protocol import (
+    DEPLOYMENT_TOOLING,
+    PRESERVED_HEAP_FILES,
+    PYTHON_RUNNER_FILES,
+    RETENTION_MONITORING_FILES,
+    phases_for,
+    validate_plan,
+)
 
 
 def full_commit(value: object) -> bool:
@@ -117,11 +124,22 @@ def changed_paths(repository: Path, previous: str, candidate: str) -> list[str]:
 
 
 def classify_services(
-    paths: list[str], *, include_deployment_tooling: bool = False
+    paths: list[str],
+    *,
+    include_deployment_tooling: bool = False,
+    preserve_bisq2_heap_repair: bool = False,
+    include_retention_monitoring: bool = False,
+    include_python_runner_pins: bool = False,
 ) -> list[str]:
     """A strict source-only subset of update.sh's selective rebuild rules."""
     selected = set()
     for path in paths:
+        if include_python_runner_pins and path in PYTHON_RUNNER_FILES:
+            continue
+        if include_retention_monitoring and path in RETENTION_MONITORING_FILES:
+            continue
+        if preserve_bisq2_heap_repair and path in PRESERVED_HEAP_FILES:
+            continue
         if include_deployment_tooling and path in DEPLOYMENT_TOOLING:
             continue
         if path.startswith(
@@ -170,6 +188,123 @@ def classify_services(
             raise JournalError("unsupported_change_scope")
     require(bool(selected), "no_service_source_changes")
     return sorted(selected)
+
+
+def preserved_heap_hashes(
+    repository: Path, previous: str, candidate: str, paths: list[str]
+) -> dict[str, str]:
+    """Require only the fixed heap repair in all three carried source files."""
+    require(PRESERVED_HEAP_FILES <= set(paths), "preserved_heap_scope")
+    edits = {
+        "docker/docker-compose.yml": (
+            b"      - JAVA_OPTS=-Xmx1g\n",
+            b"      # Leave room within the 4G limit for native memory, threads and Tor.\n"
+            b"      - JAVA_OPTS=${BISQ2_JAVA_OPTS:--Xmx2g -XX:+ExitOnOutOfMemoryError}\n",
+        ),
+        "docker/bisq2-api/Dockerfile": (
+            b'ENV JAVA_OPTS="-Xmx1g"\n',
+            b'ENV JAVA_OPTS="-Xmx2g -XX:+ExitOnOutOfMemoryError"\n',
+        ),
+        "docker/.env.example": (
+            b"BISQ_USER_RATE_LIMIT_ENABLED=true\n",
+            b"BISQ_USER_RATE_LIMIT_ENABLED=true\n"
+            b"# JVM options for the containerized Bisq2 node (not the support API).\n"
+            b"# Keep heap below its 4G container limit; retain exit-on-OOM for Docker recovery.\n"
+            b'BISQ2_JAVA_OPTS="-Xmx2g -XX:+ExitOnOutOfMemoryError"\n',
+        ),
+    }
+    pins = {}
+    for path in sorted(PRESERVED_HEAP_FILES):
+        contents = []
+        for revision in (previous, candidate):
+            entry = local_git(repository, "ls-tree", "-z", revision, "--", path)
+            require(
+                bool(
+                    re.fullmatch(
+                        rb"100644 blob [0-9a-f]{40}\t"
+                        + re.escape(path.encode())
+                        + rb"\0",
+                        entry,
+                    )
+                ),
+                "preserved_heap_entry",
+            )
+            contents.append(local_git(repository, "show", revision + ":" + path))
+        before, after = edits[path]
+        require(
+            contents[0].count(before) == 1
+            and contents[0].replace(before, after) == contents[1],
+            "preserved_heap_content",
+        )
+        pins[path] = digest(contents[1])
+    return pins
+
+
+def monitoring_hashes(
+    repository: Path, candidate: str, paths: list[str]
+) -> dict[str, str]:
+    require(RETENTION_MONITORING_FILES <= set(paths), "monitoring_source_scope")
+    pins = {}
+    for path in sorted(RETENTION_MONITORING_FILES):
+        entry = local_git(repository, "ls-tree", "-z", candidate, "--", path)
+        mode = b"100755" if path.endswith(".sh") else b"100644"
+        require(
+            bool(
+                re.fullmatch(
+                    mode + rb" blob [0-9a-f]{40}\t" + re.escape(path.encode()) + rb"\0",
+                    entry,
+                )
+            ),
+            "monitoring_source_entry",
+        )
+        pins[path] = digest(local_git(repository, "show", candidate + ":" + path))
+    return pins
+
+
+def python_runner_hashes(
+    repository: Path, previous: str, candidate: str, paths: list[str]
+) -> dict[str, str]:
+    require(PYTHON_RUNNER_FILES <= set(paths), "python_runner_scope")
+    selected = {
+        ".github/workflows/ci.yml": {"lint-and-test", "staff-alignment-offline"},
+        ".github/workflows/ai-quality-gate.yml": {"release-ai-quality"},
+    }
+    pins = {}
+    for path in sorted(PYTHON_RUNNER_FILES):
+        contents = []
+        for revision in (previous, candidate):
+            entry = local_git(repository, "ls-tree", "-z", revision, "--", path)
+            require(
+                bool(
+                    re.fullmatch(
+                        rb"100644 blob [0-9a-f]{40}\t"
+                        + re.escape(path.encode())
+                        + rb"\0",
+                        entry,
+                    )
+                ),
+                "python_runner_entry",
+            )
+            contents.append(local_git(repository, "show", revision + ":" + path))
+        job = None
+        replacements = []
+        rendered = []
+        for line in contents[0].splitlines(keepends=True):
+            match = re.fullmatch(rb"  ([A-Za-z0-9_-]+):\n", line)
+            if match:
+                job = match.group(1).decode()
+            if job in selected[path] and line == b"    runs-on: ubuntu-latest\n":
+                replacements.append(job)
+                line = b"    runs-on: ubuntu-24.04 # Matches the pinned Python 3.11.11 distribution.\n"
+            rendered.append(line)
+        require(
+            len(replacements) == len(selected[path])
+            and set(replacements) == selected[path]
+            and b"".join(rendered) == contents[1],
+            "python_runner_content",
+        )
+        pins[path] = digest(contents[1])
+    return pins
 
 
 def tooling_hashes(
@@ -265,17 +400,37 @@ def prepare(args: argparse.Namespace) -> dict:
     source["changed_paths_sha256"] = digest(encode(paths))
     services = sorted(args.services.split(","))
     include_tooling = getattr(args, "include_deployment_tooling", False)
+    preserve_heap = getattr(args, "preserve_bisq2_heap_repair", False)
+    monitoring = getattr(args, "include_retention_monitoring", False)
+    runner_pins = getattr(args, "include_python_runner_pins", False)
+    require(
+        not runner_pins or monitoring, "python_runner_requires_monitoring_capability"
+    )
     require(
         services
-        == classify_services(paths, include_deployment_tooling=include_tooling),
+        == classify_services(
+            paths,
+            include_deployment_tooling=include_tooling,
+            preserve_bisq2_heap_repair=preserve_heap,
+            include_retention_monitoring=monitoring,
+            include_python_runner_pins=runner_pins,
+        ),
         "service_selection_mismatch",
     )
     plan = {
-        "schema": "deployment-plan-v3" if include_tooling else "deployment-plan-v2",
+        "schema": (
+            "deployment-plan-v4"
+            if preserve_heap
+            else "deployment-plan-v3" if include_tooling else "deployment-plan-v2"
+        ),
         "kind": (
-            "selective-api-web-with-tooling-v1"
-            if include_tooling
-            else "selective-api-web-v1"
+            "selective-api-web-preserved-heap-v1"
+            if preserve_heap
+            else (
+                "selective-api-web-with-tooling-v1"
+                if include_tooling
+                else "selective-api-web-v1"
+            )
         ),
         "created_at": created_at,
         "deadline": args.deadline,
@@ -286,6 +441,24 @@ def prepare(args: argparse.Namespace) -> dict:
     }
     if include_tooling:
         plan["tooling_sha256"] = tooling_hashes(repository, args.commit, paths)
+    if preserve_heap:
+        plan.setdefault("tooling_sha256", {})
+        plan["kind"] = "selective-api-web-preserved-heap-v1"
+        plan["preserved_heap_sha256"] = preserved_heap_hashes(
+            repository, args.previous, args.commit, paths
+        )
+    if monitoring:
+        plan.update(
+            schema="deployment-plan-v5", kind="selective-api-web-with-monitoring-v1"
+        )
+        plan.setdefault("tooling_sha256", {})
+        plan.setdefault("preserved_heap_sha256", {})
+        plan["monitoring_sha256"] = monitoring_hashes(repository, args.commit, paths)
+        plan["python_runner_sha256"] = (
+            python_runner_hashes(repository, args.previous, args.commit, paths)
+            if runner_pins
+            else {}
+        )
     validate_plan(plan)
     save_plan(args.operation, repository, plan)
     return inspect_status(args.operation)
@@ -297,7 +470,12 @@ def inspect_status(operation: Path) -> dict:
     return {
         "schema": "deployment-status-v1",
         "execution_supported": journal.plan["schema"]
-        in {"deployment-plan-v2", "deployment-plan-v3"},
+        in {
+            "deployment-plan-v2",
+            "deployment-plan-v3",
+            "deployment-plan-v4",
+            "deployment-plan-v5",
+        },
         "runtime_binding": "not_assessed",
         "deadline_expired": timestamp(now()) >= timestamp(journal.plan["deadline"]),
         "journal": journal.status(),
@@ -321,6 +499,21 @@ def main() -> int:
         "--include-deployment-tooling",
         action="store_true",
         help="Include only the fixed deployment tooling capability with exact blob pins",
+    )
+    plan.add_argument(
+        "--preserve-bisq2-heap-repair",
+        action="store_true",
+        help="Reconcile only the exact already-applied Bisq2 heap repair without replacing the node",
+    )
+    plan.add_argument(
+        "--include-retention-monitoring",
+        action="store_true",
+        help="Publish only the pinned retention heartbeat/rules capability without recreating services",
+    )
+    plan.add_argument(
+        "--include-python-runner-pins",
+        action="store_true",
+        help="Carry only the three reviewed Python job runner pins; requires the monitoring capability",
     )
     plan.add_argument(
         "--profile", required=True, help="Protected profile name, never secret contents"

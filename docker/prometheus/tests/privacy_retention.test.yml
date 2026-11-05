@@ -1,0 +1,488 @@
+# Checked with promtool test rules; these samples never contact services.
+rule_files:
+- ../alert_rules.yml
+evaluation_interval: 30s
+tests:
+- name: complete fresh hold suppresses missing metrics without claiming success
+  interval: 1m
+  input_series:
+  - &id001
+    series: up{job="node-exporter",instance="node-exporter:9100"}
+    values: 1+0x40
+  - &id002
+    series: scheduler_retention_hold_active{job="node-exporter",instance="node-exporter:9100"}
+    values: 1+0x40
+  - &id003
+    series: scheduler_heartbeat_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+60x40
+  - &id004
+    series: scheduler_retention_hold_observed_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+60x40
+  - &id005
+    series: scheduler_retention_hold_cutoff_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 1000+0x40
+  - series: scheduler_retention_hold_invalid{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+0x40
+  promql_expr_test:
+  - expr: count(privacy_retention:verified_scheduler_hold) or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+  - expr: count(ALERTS{alertname="PrivacyRetentionMetricsMissing",alertstate="firing"})
+      or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+  - expr: count(ALERTS{alertname="PrivacyRetentionHeld",alertstate="firing",severity="warning"})
+      or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+  - expr: count(privacy_retention_last_success_timestamp_seconds) or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+  - expr: count(ALERTS{alertname="PrivacyRetentionLogMetricsMissing",alertstate="firing"})
+      or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+- name: missing hold proof produces one missing-metrics incident
+  interval: 1m
+  input_series: []
+  promql_expr_test:
+  - expr: count(privacy_retention:verified_scheduler_hold) or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+  - expr: count(ALERTS{alertname="PrivacyRetentionMetricsMissing",alertstate="firing"})
+      or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+  - expr: count(ALERTS{alertname="PrivacyRetentionLogMetricsMissing",alertstate="firing"})
+      or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+- name: exporter scrape fails
+  interval: 1m
+  input_series:
+  - series: up{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+0x40
+  - series: scheduler_retention_hold_active{job="node-exporter",instance="node-exporter:9100"}
+    values: 1+0x40
+  - series: scheduler_heartbeat_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+60x40
+  - series: scheduler_retention_hold_observed_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+60x40
+  - series: scheduler_retention_hold_cutoff_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 1000+0x40
+  - series: scheduler_retention_hold_invalid{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+0x40
+  promql_expr_test:
+  - expr: count(privacy_retention:verified_scheduler_hold) or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+  - expr: count(ALERTS{alertname="PrivacyRetentionMetricsMissing",alertstate="firing"})
+      or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+- name: heartbeat is stale
+  interval: 1m
+  input_series:
+  - series: up{job="node-exporter",instance="node-exporter:9100"}
+    values: 1+0x40
+  - series: scheduler_retention_hold_active{job="node-exporter",instance="node-exporter:9100"}
+    values: 1+0x40
+  - series: scheduler_heartbeat_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+0x40
+  - series: scheduler_retention_hold_observed_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+60x40
+  - series: scheduler_retention_hold_cutoff_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 1000+0x40
+  - series: scheduler_retention_hold_invalid{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+0x40
+  promql_expr_test:
+  - expr: count(privacy_retention:verified_scheduler_hold) or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+  - expr: count(ALERTS{alertname="PrivacyRetentionMetricsMissing",alertstate="firing"})
+      or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+- name: hold observation is stale
+  interval: 1m
+  input_series:
+  - series: up{job="node-exporter",instance="node-exporter:9100"}
+    values: 1+0x40
+  - series: scheduler_retention_hold_active{job="node-exporter",instance="node-exporter:9100"}
+    values: 1+0x40
+  - series: scheduler_heartbeat_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+60x40
+  - series: scheduler_retention_hold_observed_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+0x40
+  - series: scheduler_retention_hold_cutoff_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 1000+0x40
+  - series: scheduler_retention_hold_invalid{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+0x40
+  promql_expr_test:
+  - expr: count(privacy_retention:verified_scheduler_hold) or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+  - expr: count(ALERTS{alertname="PrivacyRetentionMetricsMissing",alertstate="firing"})
+      or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+- name: heartbeat is in future
+  interval: 1m
+  input_series:
+  - series: up{job="node-exporter",instance="node-exporter:9100"}
+    values: 1+0x40
+  - series: scheduler_retention_hold_active{job="node-exporter",instance="node-exporter:9100"}
+    values: 1+0x40
+  - series: scheduler_heartbeat_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 3600+60x40
+  - series: scheduler_retention_hold_observed_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+60x40
+  - series: scheduler_retention_hold_cutoff_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 1000+0x40
+  - series: scheduler_retention_hold_invalid{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+0x40
+  promql_expr_test:
+  - expr: count(privacy_retention:verified_scheduler_hold) or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+  - expr: count(ALERTS{alertname="PrivacyRetentionMetricsMissing",alertstate="firing"})
+      or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+- name: hold observation is in future
+  interval: 1m
+  input_series:
+  - series: up{job="node-exporter",instance="node-exporter:9100"}
+    values: 1+0x40
+  - series: scheduler_retention_hold_active{job="node-exporter",instance="node-exporter:9100"}
+    values: 1+0x40
+  - series: scheduler_heartbeat_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+60x40
+  - series: scheduler_retention_hold_observed_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 3600+60x40
+  - series: scheduler_retention_hold_cutoff_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 1000+0x40
+  - series: scheduler_retention_hold_invalid{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+0x40
+  promql_expr_test:
+  - expr: count(privacy_retention:verified_scheduler_hold) or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+  - expr: count(ALERTS{alertname="PrivacyRetentionMetricsMissing",alertstate="firing"})
+      or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+- name: invalid or partial hold
+  interval: 1m
+  input_series:
+  - series: up{job="node-exporter",instance="node-exporter:9100"}
+    values: 1+0x40
+  - series: scheduler_retention_hold_active{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+0x40
+  - series: scheduler_heartbeat_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+60x40
+  - series: scheduler_retention_hold_observed_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+60x40
+  - series: scheduler_retention_hold_cutoff_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 1000+0x40
+  - series: scheduler_retention_hold_invalid{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+0x40
+  promql_expr_test:
+  - expr: count(privacy_retention:verified_scheduler_hold) or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+  - expr: count(ALERTS{alertname="PrivacyRetentionMetricsMissing",alertstate="firing"})
+      or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+- name: extra exporter cannot borrow another hold
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - series: up{job="node-exporter",instance="other:9100"}
+    values: 1+0x40
+  - series: scheduler_retention_hold_invalid{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+0x40
+  promql_expr_test:
+  - expr: count(privacy_retention:verified_scheduler_hold) or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+  - expr: count(ALERTS{alertname="PrivacyRetentionMetricsMissing",alertstate="firing"})
+      or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+- name: held jobs distinguish real overdue data and independent relay
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - series: privacy_retention_last_success_timestamp_seconds{job="api",store="feedback"}
+    values: -90000+0x40
+  - series: privacy_retention_log_last_success_timestamp_seconds{job="node-exporter"}
+    values: -90000+0x40
+  - series: privacy_retention_oldest_age_seconds{job="api",store="feedback"}
+    values: 200+0x40
+  - series: privacy_retention_window_seconds{job="api",store="feedback"}
+    values: 100+0x40
+  - series: privacy_retention_last_success_timestamp_seconds{job="matrix-alert-relay",store="matrix_alert_relay_session"}
+    values: -90000+0x40
+  - series: scheduler_retention_hold_invalid{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+0x40
+  promql_expr_test:
+  - expr: count(privacy_retention:verified_scheduler_hold) or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+  - expr: count(ALERTS{alertname="PrivacyRetentionMetricsMissing",alertstate="firing"})
+      or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+  - expr: count(ALERTS{alertname="PrivacyRetentionJobStale",alertstate="firing"})
+      or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+  - expr: count(ALERTS{alertname="PrivacyRetentionLogJobStale",alertstate="firing"})
+      or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+  - expr: count(ALERTS{alertname="PrivacyRetentionWindowExceeded",alertstate="firing"})
+      or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+  - expr: count(ALERTS{alertname="MatrixAlertRelayRetentionStale",alertstate="firing"})
+      or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+- name: unguarded stale jobs remain critical
+  interval: 1m
+  input_series:
+  - series: privacy_retention_last_success_timestamp_seconds{job="api",store="feedback"}
+    values: -90000+0x40
+  - series: privacy_retention_log_last_success_timestamp_seconds{job="node-exporter"}
+    values: -90000+0x40
+  - series: privacy_retention_oldest_age_seconds{job="api",store="feedback"}
+    values: 200+0x40
+  - series: privacy_retention_window_seconds{job="api",store="feedback"}
+    values: 100+0x40
+  - series: privacy_retention_last_success_timestamp_seconds{job="matrix-alert-relay",store="matrix_alert_relay_session"}
+    values: -90000+0x40
+  promql_expr_test:
+  - expr: count(privacy_retention:verified_scheduler_hold) or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+  - expr: count(ALERTS{alertname="PrivacyRetentionMetricsMissing",alertstate="firing"})
+      or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+  - expr: count(ALERTS{alertname="PrivacyRetentionJobStale",alertstate="firing"})
+      or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+  - expr: count(ALERTS{alertname="PrivacyRetentionLogJobStale",alertstate="firing"})
+      or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+  - expr: count(ALERTS{alertname="PrivacyRetentionWindowExceeded",alertstate="firing"})
+      or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+  - expr: count(ALERTS{alertname="MatrixAlertRelayRetentionStale",alertstate="firing"})
+      or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+- name: seven missing groups produce one alert with truthful count
+  interval: 1m
+  input_series: []
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: PrivacyRetentionMetricsMissing
+    exp_alerts:
+    - exp_labels:
+        severity: critical
+        component: privacy
+      exp_annotations:
+        summary: Privacy-retention metrics are missing
+        description: 7 required store-group success or per-store age/window metric
+          groups are absent or incomplete.
+        runbook_url: docs/runbooks/privacy-retention.md
+- name: missing cutoff proof
+  interval: 1m
+  input_series:
+  - series: up{job="node-exporter",instance="node-exporter:9100"}
+    values: 1+0x40
+  - series: scheduler_retention_hold_active{job="node-exporter",instance="node-exporter:9100"}
+    values: 1+0x40
+  - series: scheduler_heartbeat_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+60x40
+  - series: scheduler_retention_hold_observed_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+60x40
+  - series: scheduler_retention_hold_invalid{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+0x40
+  promql_expr_test:
+  - expr: count(privacy_retention:verified_scheduler_hold) or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+  - expr: count(ALERTS{alertname="PrivacyRetentionMetricsMissing",alertstate="firing"})
+      or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+- name: missing invalid-state proof
+  interval: 1m
+  input_series:
+  - series: up{job="node-exporter",instance="node-exporter:9100"}
+    values: 1+0x40
+  - series: scheduler_retention_hold_active{job="node-exporter",instance="node-exporter:9100"}
+    values: 1+0x40
+  - series: scheduler_heartbeat_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+60x40
+  - series: scheduler_retention_hold_observed_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+60x40
+  - series: scheduler_retention_hold_cutoff_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 1000+0x40
+  promql_expr_test:
+  - expr: count(privacy_retention:verified_scheduler_hold) or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+  - expr: count(ALERTS{alertname="PrivacyRetentionMetricsMissing",alertstate="firing"})
+      or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+- name: contradictory invalid-state proof
+  interval: 1m
+  input_series:
+  - series: up{job="node-exporter",instance="node-exporter:9100"}
+    values: 1+0x40
+  - series: scheduler_retention_hold_active{job="node-exporter",instance="node-exporter:9100"}
+    values: 1+0x40
+  - series: scheduler_heartbeat_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+60x40
+  - series: scheduler_retention_hold_observed_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+60x40
+  - series: scheduler_retention_hold_cutoff_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 1000+0x40
+  - series: scheduler_retention_hold_invalid{job="node-exporter",instance="node-exporter:9100"}
+    values: 1+0x40
+  promql_expr_test:
+  - expr: count(privacy_retention:verified_scheduler_hold) or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+  - expr: count(ALERTS{alertname="PrivacyRetentionMetricsMissing",alertstate="firing"})
+      or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+  - expr: count(ALERTS{alertname="PrivacyRetentionHoldInvalid",alertstate="firing",severity="critical"})
+      or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+- name: real retention failures remain critical during valid hold
+  interval: 1m
+  input_series:
+  - series: up{job="node-exporter",instance="node-exporter:9100"}
+    values: 1+0x40
+  - series: scheduler_retention_hold_active{job="node-exporter",instance="node-exporter:9100"}
+    values: 1+0x40
+  - series: scheduler_heartbeat_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+60x40
+  - series: scheduler_retention_hold_observed_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+60x40
+  - series: scheduler_retention_hold_cutoff_timestamp_seconds{job="node-exporter",instance="node-exporter:9100"}
+    values: 1000+0x40
+  - series: scheduler_retention_hold_invalid{job="node-exporter",instance="node-exporter:9100"}
+    values: 0+0x40
+  - series: privacy_retention_failures_total{job="api",store="feedback"}
+    values: 0+1x40
+  promql_expr_test:
+  - expr: count(ALERTS{alertname="PrivacyRetentionFailures",alertstate="firing",severity="critical"})
+      or vector(0)
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 1

@@ -11,7 +11,7 @@ jobs:
   lint-and-test:
     name: Lint, Type Check & Test
     if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Matches the pinned Python 3.11.11 distribution.
     permissions:
       contents: read
 
@@ -209,7 +209,7 @@ jobs:
 
   staff-alignment-offline:
     name: Offline Staff-Alignment Gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Matches the pinned Python 3.11.11 distribution.
     permissions:
       contents: read
 

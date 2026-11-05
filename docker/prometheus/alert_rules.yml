@@ -248,6 +248,46 @@ groups:
   - name: privacy_retention_alerts
     interval: 30s
     rules:
+      # The scheduler observes its actual six-entry guard on every heartbeat.
+      # Missing, stale, duplicate-exporter or failed-scrape proof fails closed.
+      - record: privacy_retention:verified_scheduler_hold
+        expr: |
+          (
+            (scheduler_retention_hold_active{job="node-exporter"} == 1)
+            and on (job, instance) (scheduler_retention_hold_invalid{job="node-exporter"} == 0)
+            and on (job, instance) (scheduler_retention_hold_cutoff_timestamp_seconds{job="node-exporter"} > 0)
+            and on (job, instance) (up{job="node-exporter"} == 1)
+            and on (job, instance) ((time() - scheduler_heartbeat_timestamp_seconds{job="node-exporter"}) >= 0)
+            and on (job, instance) ((time() - scheduler_heartbeat_timestamp_seconds{job="node-exporter"}) < 180)
+            and on (job, instance) ((time() - scheduler_retention_hold_observed_timestamp_seconds{job="node-exporter"}) >= 0)
+            and on (job, instance) ((time() - scheduler_retention_hold_observed_timestamp_seconds{job="node-exporter"}) < 180)
+          )
+          and on () (count(up{job="node-exporter"}) == 1)
+
+      - alert: PrivacyRetentionHeld
+        expr: |
+          scheduler_retention_hold_cutoff_timestamp_seconds{job="node-exporter"}
+          and on (job, instance) privacy_retention:verified_scheduler_hold
+        for: 15m
+        labels:
+          severity: warning
+          component: privacy
+        annotations:
+          summary: "Privacy retention is deliberately held for Staff-trial preservation"
+          description: "The six selected jobs are intentionally disabled, including retention. Original trial cutoff: {{ $value | humanizeTimestamp }}. No retention success or compliance is established. The next authorized lifecycle owns this hold; do not run retention to clear the warning."
+          runbook_url: "docs/runbooks/privacy-retention.md"
+
+      - alert: PrivacyRetentionHoldInvalid
+        expr: scheduler_retention_hold_invalid{job="node-exporter"} == 1
+        for: 5m
+        labels:
+          severity: critical
+          component: privacy
+        annotations:
+          summary: "Staff-trial retention hold cannot be verified"
+          description: "The scheduler crontab is unreadable or its six selected guards are inconsistent, incomplete or duplicated. Retention missing/stale alerts remain enabled."
+          runbook_url: "docs/runbooks/privacy-retention.md"
+
       - alert: PrivacyRetentionWindowExceeded
         expr: max by (store) (privacy_retention_oldest_age_seconds) > on (store) max by (store) (privacy_retention_window_seconds)
         for: 15m
@@ -261,35 +301,40 @@ groups:
 
       - alert: PrivacyRetentionMetricsMissing
         expr: |
-          absent(privacy_retention_last_success_timestamp_seconds{job="api",store="feedback"})
-          or absent(privacy_retention_last_success_timestamp_seconds{job="api",store="escalations"})
-          or absent(privacy_retention_last_success_timestamp_seconds{job="api",store="training"})
-          or absent(privacy_retention_last_success_timestamp_seconds{job="api",store="translations"})
-          or absent(privacy_retention_last_success_timestamp_seconds{job="api",store="processed_ids"})
-          or absent(privacy_retention_last_success_timestamp_seconds{job="api",store="file_artifacts"})
-          or absent(privacy_retention_oldest_age_seconds{job="api"})
-          or absent(privacy_retention_window_seconds{job="api"})
-          or (
-            privacy_retention_oldest_age_seconds{job="api"}
-            unless on (job, instance, store)
-            privacy_retention_window_seconds{job="api"}
-          )
-          or (
-            privacy_retention_window_seconds{job="api"}
-            unless on (job, instance, store)
-            privacy_retention_oldest_age_seconds{job="api"}
-          )
+          count(
+            absent(privacy_retention_last_success_timestamp_seconds{job="api",store="feedback"})
+            or absent(privacy_retention_last_success_timestamp_seconds{job="api",store="escalations"})
+            or absent(privacy_retention_last_success_timestamp_seconds{job="api",store="training"})
+            or absent(privacy_retention_last_success_timestamp_seconds{job="api",store="translations"})
+            or absent(privacy_retention_last_success_timestamp_seconds{job="api",store="processed_ids"})
+            or absent(privacy_retention_last_success_timestamp_seconds{job="api",store="file_artifacts"})
+            or absent(privacy_retention_oldest_age_seconds{job="api"})
+            or absent(privacy_retention_window_seconds{job="api"})
+            or (
+              privacy_retention_oldest_age_seconds{job="api"}
+              unless on (job, instance, store)
+              privacy_retention_window_seconds{job="api"}
+            )
+            or (
+              privacy_retention_window_seconds{job="api"}
+              unless on (job, instance, store)
+              privacy_retention_oldest_age_seconds{job="api"}
+            )
+          ) > 0
+          unless on () privacy_retention:verified_scheduler_hold
         for: 15m
         labels:
           severity: critical
           component: privacy
         annotations:
           summary: "Privacy-retention metrics are missing"
-          description: "At least one required store-group success or per-store age/window series is absent."
+          description: "{{ $value }} required store-group success or per-store age/window metric groups are absent or incomplete."
           runbook_url: "docs/runbooks/privacy-retention.md"
 
       - alert: PrivacyRetentionJobStale
-        expr: (time() - privacy_retention_last_success_timestamp_seconds{job="api"}) > 90000
+        expr: |
+          ((time() - privacy_retention_last_success_timestamp_seconds{job="api"}) > 90000)
+          unless on () privacy_retention:verified_scheduler_hold
         for: 15m
         labels:
           severity: critical
@@ -301,20 +346,25 @@ groups:
 
       - alert: PrivacyRetentionLogMetricsMissing
         expr: |
-          absent(privacy_retention_log_last_success_timestamp_seconds{job="node-exporter"})
-          or absent(privacy_retention_oldest_age_seconds{job="node-exporter",store="application_logs"})
-          or absent(privacy_retention_window_seconds{job="node-exporter",store="application_logs"})
+          count(
+            absent(privacy_retention_log_last_success_timestamp_seconds{job="node-exporter"})
+            or absent(privacy_retention_oldest_age_seconds{job="node-exporter",store="application_logs"})
+            or absent(privacy_retention_window_seconds{job="node-exporter",store="application_logs"})
+          ) > 0
+          unless on () privacy_retention:verified_scheduler_hold
         for: 15m
         labels:
           severity: critical
           component: privacy
         annotations:
           summary: "Bind-mounted log-retention metrics are missing"
-          description: "The log-retention success or age/window telemetry is absent."
+          description: "{{ $value }} required log-retention success or age/window metric groups are absent."
           runbook_url: "docs/runbooks/privacy-retention.md"
 
       - alert: PrivacyRetentionLogJobStale
-        expr: (time() - privacy_retention_log_last_success_timestamp_seconds{job="node-exporter"}) > 90000
+        expr: |
+          ((time() - privacy_retention_log_last_success_timestamp_seconds{job="node-exporter"}) > 90000)
+          unless on () privacy_retention:verified_scheduler_hold
         for: 15m
         labels:
           severity: critical

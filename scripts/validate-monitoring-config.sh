@@ -18,6 +18,12 @@ docker run --rm \
     check rules /etc/prometheus/alert_rules.yml
 
 docker run --rm \
+    --entrypoint promtool \
+    --volume "$PROMETHEUS_CONFIG_DIR:/etc/prometheus:ro" \
+    prom/prometheus:v3.9.1 \
+    test rules /etc/prometheus/tests/privacy_retention.test.yml
+
+docker run --rm \
     --volume "$PROMETHEUS_CONFIG_DIR/blackbox.yml:/etc/blackbox_exporter/config.yml:ro" \
     prom/blackbox-exporter:v0.25.0 \
     --config.file=/etc/blackbox_exporter/config.yml \
