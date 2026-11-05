@@ -114,6 +114,44 @@ job through node-exporter. `MatrixAlertRelayRetentionMetricsMissing` and
 `PrivacyRetentionFailures` means the labeled store group failed while the job
 continued with the remaining groups.
 
+### Staff-trial preservation holds
+
+The canonical Staff-trial lifecycle deliberately disables six scheduled entries,
+including application retention at startup and daily, and daily log retention.
+Its `false && : <trial-id> <cutoff> &&` guards remain after the trial cutoff until
+the next separately authorized lifecycle replaces them. Do not run retention,
+rotate an identity, or recreate the scheduler to silence an alert during this
+hold.
+
+The existing minute heartbeat reads the actual root crontab and exports
+`scheduler_retention_hold_active`, `scheduler_retention_hold_invalid`,
+`scheduler_retention_hold_cutoff_timestamp_seconds`, and
+`scheduler_retention_hold_observed_timestamp_seconds`. A hold is recognized only
+when all six exact entries have the same valid trial ID and cutoff. Missing,
+duplicated, changed, or additional unguarded selected entries refuse the
+exception. This inspection neither executes jobs nor changes the crontab and
+does not publish retention-success timestamps.
+
+Only a recognized hold with a successful node-exporter scrape and heartbeat and
+inspection ages below three minutes replaces API/log missing-metric and
+stale-job notifications with `PrivacyRetentionHeld` (warning). Missing proof,
+future timestamps, stale telemetry, and multiple exporter targets fail closed.
+`PrivacyRetentionHoldInvalid` reports an unreadable or inconsistent guard.
+Missing metric groups are reported as one incident with their count, rather
+than several identical notifications. Actual recorded retention failures,
+overdue data, and the independent Matrix alert-relay retention checks remain
+critical. The hold warning uses the existing twelve-hour warning repeat route;
+it is not a retention-compliance or data-age assessment.
+
+During deployment, verify the heartbeat script bytes visible inside the running
+scheduler: the script is a single-file bind mount, so replacing its host path
+atomically can leave the container using the previous inode. Preserve the guard
+and scheduler identity; use the reviewed deployment procedure to materialize the
+script on that existing mount without recreating the scheduler. After reloading
+the Prometheus rules, observe the next ordinary heartbeat and scrape. Confirm
+the hold warning, unchanged guard, and resolved expected missing/stale alerts.
+Do not manufacture a heartbeat or retention success as acceptance evidence.
+
 ## Triage
 
 1. Run a dry run and identify the failing allowlisted store label in API logs.
