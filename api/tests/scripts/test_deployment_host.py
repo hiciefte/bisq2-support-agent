@@ -43,11 +43,19 @@ def container(service, digit, install):
                 "com.docker.compose.project": "fixture",
                 "com.docker.compose.project.working_dir": str(install / "docker"),
                 "com.docker.compose.config-hash": "old",
+                "com.docker.compose.version": "2.39.4",
             },
             "Cmd": ["fixture"],
         },
         "Mounts": [{"Source": "/fixture/data", "Destination": "/data", "RW": True}],
-        "HostConfig": {"NetworkMode": "fixture_default", "Binds": ["fixture"]},
+        "HostConfig": {
+            "NetworkMode": "fixture_default",
+            "Binds": ["fixture"],
+            "Dns": [],
+            "DnsOptions": [],
+            "DnsSearch": [],
+            "MaskedPaths": ["/proc/kcore", "/sys/firmware"],
+        },
         "State": {
             "Running": True,
             "Paused": False,
@@ -266,6 +274,127 @@ def test_replacement_rejects_runtime_drift_or_third_image(host, module, field):
         host._replacement("api", current, host.baseline["containers"]["api"]["Image"])
 
 
+@pytest.mark.parametrize("reverse", [False, True])
+def test_replacement_accepts_only_equivalent_dns_and_mask_representations(
+    host, reverse
+):
+    """Accept equivalent Docker representations without changing either snapshot."""
+    before = host.baseline["containers"]["api"]
+    current = copy.deepcopy(before)
+    for field in ("Dns", "DnsOptions", "DnsSearch"):
+        target = before if reverse else current
+        target["HostConfig"][field] = None
+    current["HostConfig"]["MaskedPaths"].reverse()
+    originals = copy.deepcopy((before, current))
+    host._replacement("api", current, current["Image"])
+    assert (before, current) == originals
+
+
+@pytest.mark.parametrize("field", ["Dns", "DnsOptions", "DnsSearch"])
+@pytest.mark.parametrize(
+    "old,new",
+    [
+        ([], ["first"]),
+        (None, ["first"]),
+        (["first", "second"], ["second", "first"]),
+        (["first"], ["other"]),
+        (["first"], ["first", "first"]),
+    ],
+)
+def test_replacement_preserves_nonempty_dns_values_order_and_multiplicity(
+    host, module, field, old, new
+):
+    """Reject changes to populated DNS overrides, including order and duplicates."""
+    host.baseline["containers"]["api"]["HostConfig"][field] = old
+    current = copy.deepcopy(host.baseline["containers"]["api"])
+    current["HostConfig"][field] = new
+    with pytest.raises(module.JournalError, match="host_replacement_host_config"):
+        host._replacement("api", current, current["Image"])
+
+
+@pytest.mark.parametrize("field", ["Dns", "DnsOptions", "DnsSearch", "MaskedPaths"])
+@pytest.mark.parametrize("side", ["original", "replacement"])
+@pytest.mark.parametrize("value", [None, []])
+def test_replacement_does_not_equate_absent_host_fields_with_empty(
+    host, module, field, side, value
+):
+    """Keep a missing inspection field distinct from explicit null or empty."""
+    before = host.baseline["containers"]["api"]
+    before["HostConfig"][field] = value
+    current = copy.deepcopy(before)
+    target = before if side == "original" else current
+    del target["HostConfig"][field]
+    with pytest.raises(module.JournalError, match="host_replacement_host_config"):
+        host._replacement("api", current, current["Image"])
+
+
+@pytest.mark.parametrize(
+    "old,new",
+    [
+        (None, []),
+        ([], None),
+        (["/proc/kcore"], []),
+        (["/proc/kcore"], ["/proc/keys"]),
+        (["/proc/kcore"], ["/proc/kcore", "/proc/keys"]),
+        (["/proc/kcore"], ["/proc/kcore", "/proc/kcore"]),
+        (["/proc/kcore"], ["/proc/./kcore"]),
+    ],
+)
+def test_replacement_preserves_mask_paths_and_default_semantics(host, module, old, new):
+    """Reject changed masks, multiplicity, spelling or default-mask selection."""
+    host.baseline["containers"]["api"]["HostConfig"]["MaskedPaths"] = old
+    current = copy.deepcopy(host.baseline["containers"]["api"])
+    current["HostConfig"]["MaskedPaths"] = new
+    with pytest.raises(module.JournalError, match="host_replacement_host_config"):
+        host._replacement("api", current, current["Image"])
+
+
+@pytest.mark.parametrize("field", ["Dns", "DnsOptions", "DnsSearch", "MaskedPaths"])
+@pytest.mark.parametrize("value", ["", {}, False, [None], ["/path\x00"]])
+def test_replacement_refuses_malformed_normalized_host_fields(
+    host, module, field, value
+):
+    """Refuse malformed normalization inputs even when both snapshots match."""
+    before = host.baseline["containers"]["api"]
+    before["HostConfig"][field] = value
+    current = copy.deepcopy(before)
+    with pytest.raises(module.JournalError, match="host_replacement_host_config"):
+        host._replacement("api", current, current["Image"])
+
+
+@pytest.mark.parametrize(
+    "field,old,new",
+    [
+        ("MaskedPaths", ["relative/path"], ["relative/path"]),
+        ("Privileged", False, True),
+        ("ReadonlyRootfs", True, False),
+        ("NetworkMode", "fixture_default", "host"),
+        ("Memory", 1024, 2048),
+        ("CapAdd", ["CHOWN", "SETUID"], ["SETUID", "CHOWN"]),
+        ("SecurityOpt", ["no-new-privileges"], []),
+        ("ReadonlyPaths", ["/proc/sys", "/proc/irq"], ["/proc/irq", "/proc/sys"]),
+        ("Binds", ["first", "second"], ["second", "first"]),
+        (
+            "FutureField",
+            {"nested": ["first", "second"]},
+            {"nested": ["second", "first"]},
+        ),
+    ],
+)
+def test_replacement_keeps_other_host_config_changes_strict(
+    host, module, field, old, new
+):
+    """Allowed empty-DNS changes must not conceal other runtime configuration drift."""
+    before = host.baseline["containers"]["api"]
+    before["HostConfig"][field] = old
+    current = copy.deepcopy(before)
+    current["HostConfig"][field] = new
+    # Allowed representation changes must not conceal a material difference.
+    current["HostConfig"]["Dns"] = None
+    with pytest.raises(module.JournalError, match="host_replacement_host_config"):
+        host._replacement("api", current, current["Image"])
+
+
 def test_replacement_environment_order_and_build_id_only_may_change(host, module):
     host.baseline["containers"]["api"]["Config"]["Env"] += ["TOKEN=a=b", "EMPTY="]
     current = copy.deepcopy(host.baseline["containers"]["api"])
@@ -277,6 +406,67 @@ def test_replacement_environment_order_and_build_id_only_may_change(host, module
     ]
     host._replacement("api", current, current["Image"])
     current["Config"]["Env"][0] = "DATA_DIR=/different"
+    with pytest.raises(module.JournalError, match="host_replacement_configuration"):
+        host._replacement("api", current, current["Image"])
+
+
+def test_replacement_accepts_only_generated_compose_version_metadata(host):
+    """Allow a different Compose tool version without mutating saved Config."""
+    before = host.baseline["containers"]["api"]
+    current = copy.deepcopy(before)
+    current["Config"]["Labels"]["com.docker.compose.version"] = "2.40.1"
+    originals = copy.deepcopy((before, current))
+    host._replacement("api", current, current["Image"])
+    assert (before, current) == originals
+
+
+@pytest.mark.parametrize("side", ["original", "replacement"])
+@pytest.mark.parametrize("value", [None, "", "2.40.1\x00", 2401, [], "2.40", "v2.40.1"])
+def test_replacement_refuses_malformed_compose_version_metadata(
+    host, module, side, value
+):
+    """Only present numeric tool-version strings qualify for the metadata waiver."""
+    before = host.baseline["containers"]["api"]
+    current = copy.deepcopy(before)
+    target = before if side == "original" else current
+    target["Config"]["Labels"]["com.docker.compose.version"] = value
+    with pytest.raises(module.JournalError, match="host_compose_version_metadata"):
+        host._replacement("api", current, current["Image"])
+
+
+@pytest.mark.parametrize("side", ["original", "replacement"])
+def test_replacement_refuses_missing_compose_version_metadata(host, module, side):
+    """Do not equate a missing Compose-version label with a populated label."""
+    before = host.baseline["containers"]["api"]
+    current = copy.deepcopy(before)
+    target = before if side == "original" else current
+    del target["Config"]["Labels"]["com.docker.compose.version"]
+    with pytest.raises(module.JournalError, match="host_compose_version_metadata"):
+        host._replacement("api", current, current["Image"])
+
+
+@pytest.mark.parametrize(
+    "field,change",
+    [
+        ("Labels", {"com.docker.compose.service": "other"}),
+        ("Labels", {"com.docker.compose.project": "other"}),
+        ("Labels", {"com.docker.compose.project.working_dir": "/other"}),
+        ("Labels", {"com.docker.compose.unrecognized": "other"}),
+        ("Labels", {"custom.label": "other"}),
+        ("Env", ["BUILD_ID=build-ccccccc", "DATA_DIR=/other"]),
+        ("Cmd", ["other"]),
+    ],
+)
+def test_compose_version_change_does_not_hide_other_config_drift(
+    host, module, field, change
+):
+    """Keep other labels, environment and runtime settings strict during recreation."""
+    current = copy.deepcopy(host.baseline["containers"]["api"])
+    current["Config"]["Labels"]["com.docker.compose.version"] = "2.40.1"
+    if field == "Labels":
+        current["Config"][field].update(change)
+    else:
+        current["Config"][field] = change
     with pytest.raises(module.JournalError, match="host_replacement_configuration"):
         host._replacement("api", current, current["Image"])
 
@@ -514,9 +704,13 @@ def install_phase_command_models(host, module, monkeypatch):
                 replacement["Config"]["Hostname"] = replacement["Id"][:12]
                 replacement["Config"]["Env"][0] = "BUILD_ID=build-aaaaaaa"
                 replacement["Config"]["Env"].reverse()
+                for field in ("Dns", "DnsOptions", "DnsSearch"):
+                    replacement["HostConfig"][field] = None
+                replacement["HostConfig"]["MaskedPaths"].reverse()
                 replacement["Config"]["Labels"][
                     "com.docker.compose.image.builder"
                 ] = "classic"
+                replacement["Config"]["Labels"]["com.docker.compose.version"] = "2.40.1"
                 state[service] = replacement
         return base_shell(action, *args, **kwargs)
 
@@ -667,6 +861,12 @@ def failed_switch(
     host.fixture_state[service]["Image"] = "sha256:" + "a" * 64
     host.fixture_state[service]["Config"]["Image"] = "sha256:" + "a" * 64
     host.fixture_state[service]["Config"]["Env"].reverse()
+    for field in ("Dns", "DnsOptions", "DnsSearch"):
+        host.fixture_state[service]["HostConfig"][field] = None
+    host.fixture_state[service]["HostConfig"]["MaskedPaths"].reverse()
+    host.fixture_state[service]["Config"]["Labels"][
+        "com.docker.compose.version"
+    ] = "2.40.1"
     if builder_metadata:
         host.fixture_state[service]["Config"]["Labels"][
             "com.docker.compose.image.builder"
