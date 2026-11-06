@@ -10,7 +10,56 @@ export interface StaffContextMetadata {
     candidate_conversation_ids?: number[];
     pending_candidate_ids?: number[];
     staff_activity_snapshot?: ReviewContextMessage[];
+    staff_activity_decision?: StaffActivityDecision;
     moderation_context_snapshot?: ReviewContextMessage[];
+}
+
+interface StaffActivityDecision {
+    phase: "pre_generation" | "pre_root" | "pre_note";
+    reason: "staff_active" | "staff_context_membership_unresolved";
+    basis: "incident_member" | "native_relation" | "escalation_service_unavailable" | "incident_membership_unresolved";
+    trigger_in_snapshot: boolean;
+    discussion_reason: string | null;
+    final_route_reason: string;
+    coverage: "bounded_snapshot" | "discussion_unavailable";
+}
+
+function staffActivityDecision(
+    value: unknown,
+    routeReason: string,
+    messages: ReviewContextMessage[],
+): StaffActivityDecision | undefined {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const record = value as Record<string, unknown>;
+    const fields = [
+        "version", "phase", "reason", "basis", "trigger_event_sha256",
+        "trigger_in_snapshot", "discussion_reason", "final_route_reason", "coverage",
+    ];
+    if (Object.keys(record).length !== fields.length || fields.some((key) => !Object.hasOwn(record, key))) {
+        return undefined;
+    }
+    const { phase, reason, basis, trigger_in_snapshot, discussion_reason, final_route_reason, coverage } = record;
+    if (
+        record.version !== 1 ||
+        (phase !== "pre_generation" && phase !== "pre_root" && phase !== "pre_note") ||
+        (reason !== "staff_active" && reason !== "staff_context_membership_unresolved") ||
+        (basis !== "incident_member" && basis !== "native_relation" &&
+            basis !== "escalation_service_unavailable" && basis !== "incident_membership_unresolved") ||
+        typeof record.trigger_event_sha256 !== "string" ||
+        !/^[a-f0-9]{64}$/.test(record.trigger_event_sha256) ||
+        typeof trigger_in_snapshot !== "boolean" ||
+        (discussion_reason !== null && discussion_reason !== "source_followup_antecedent_unavailable" &&
+            discussion_reason !== "source_discussion_capacity_reached" && discussion_reason !== "source_context_changed") ||
+        (coverage !== "bounded_snapshot" && coverage !== "discussion_unavailable") ||
+        (reason === "staff_active") !== (basis === "incident_member" || basis === "native_relation") ||
+        (coverage === "discussion_unavailable") !== (discussion_reason !== null) ||
+        (coverage === "discussion_unavailable" && (trigger_in_snapshot || messages.length > 0)) ||
+        (trigger_in_snapshot && !messages.some((message) => message.role === "staff")) ||
+        final_route_reason !== (discussion_reason ?? reason) ||
+        final_route_reason !== routeReason
+    ) return undefined;
+    // Validate the trigger fingerprint but never expose it as display metadata.
+    return { phase, reason, basis, trigger_in_snapshot, discussion_reason, final_route_reason, coverage };
 }
 
 interface ReviewContextMessage {
@@ -72,6 +121,7 @@ function matrixLink(value: unknown): string | null {
 export function staffContextMetadata(metadata?: Record<string, unknown> | null): StaffContextMetadata | null {
     if (!isStaffContextCase(metadata) || !metadata) return null;
     const text = (key: string) => typeof metadata[key] === "string" ? metadata[key] as string : "";
+    const staffMessages = reviewContextMessages(metadata.staff_activity_snapshot);
     return {
         context_status: text("context_status"),
         context_reason: text("context_reason"),
@@ -83,7 +133,10 @@ export function staffContextMetadata(metadata?: Record<string, unknown> | null):
         generation_question: text("incident_generation_question"),
         candidate_conversation_ids: caseIds(metadata.candidate_conversation_ids),
         pending_candidate_ids: caseIds(metadata.conversation_pending_candidate_ids),
-        staff_activity_snapshot: reviewContextMessages(metadata.staff_activity_snapshot),
+        staff_activity_snapshot: staffMessages,
+        staff_activity_decision: staffActivityDecision(
+            metadata.staff_activity_decision, text("context_reason"), staffMessages,
+        ),
         moderation_context_snapshot: reviewContextMessages(metadata.moderation_context_snapshot),
     };
 }

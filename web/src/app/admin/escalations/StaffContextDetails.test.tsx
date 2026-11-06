@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { staffContextMetadata } from "@/lib/staff-context";
 import { StaffContextDetails } from "./StaffContextDetails";
 
@@ -97,4 +97,150 @@ test("moderation review displays its observation instead of an older staff hold"
     expect(screen.getByText("Synthetic moderation context")).toBeInTheDocument();
     expect(screen.queryByText("Older staff hold")).not.toBeInTheDocument();
     expect(screen.getByText(/needs human moderation review/)).toBeInTheDocument();
+});
+
+const triggerFingerprint = "a".repeat(64);
+const confirmedDecision = {
+    version: 1,
+    phase: "pre_generation",
+    reason: "staff_active",
+    basis: "incident_member",
+    trigger_event_sha256: triggerFingerprint,
+    trigger_in_snapshot: true,
+    discussion_reason: null,
+    final_route_reason: "staff_active",
+    coverage: "bounded_snapshot",
+};
+
+function decisionContext(decision: unknown = confirmedDecision, overrides: Record<string, unknown> = {}) {
+    return staffContextMetadata({
+        response_kind: "public_context",
+        context_status: "deferred",
+        context_reason: "staff_active",
+        staff_activity_snapshot: [
+            { role: "staff", speaker: "participant-1", content: "Synthetic Staff clarification" },
+        ],
+        staff_activity_decision: decision,
+        ...overrides,
+    })!;
+}
+
+test.each([
+    ["incident_member", "Staff activity was linked to a confirmed incident member."],
+    ["native_relation", "Staff activity was linked through a native reply or thread."],
+])("confirmed %s decision stays distinct from observed text", (basis, explanation) => {
+    const context = decisionContext({ ...confirmedDecision, basis });
+    const { container } = render(<StaffContextDetails context={context} />);
+    const decision = screen.getByRole("region", { name: "Recorded Staff association" });
+    expect(within(decision).getByRole("heading", { name: "Confirmed Staff association" })).toBeInTheDocument();
+    expect(within(decision).getByText(explanation)).toBeInTheDocument();
+    expect(within(decision).getByText("Recorded before AI generation.")).toBeInTheDocument();
+    expect(within(decision).getByText(/triggering Staff turn is included/)).toBeInTheDocument();
+    expect(within(decision).queryByText("Synthetic Staff clarification")).not.toBeInTheDocument();
+    expect(screen.getByText("Synthetic Staff clarification")).toBeInTheDocument();
+    expect(container).not.toHaveTextContent(triggerFingerprint);
+    expect(context.staff_activity_decision).not.toHaveProperty("trigger_event_sha256");
+});
+
+test.each([
+    ["escalation_service_unavailable", "The conversation lookup was unavailable, so Staff association could not be confirmed."],
+    ["incident_membership_unresolved", "The available evidence did not confirm which conversation the Staff turn belonged to."],
+])("unresolved %s decision explains the missing trigger without inventing ownership", (basis, explanation) => {
+    const context = decisionContext({
+        ...confirmedDecision,
+        phase: "pre_note",
+        reason: "staff_context_membership_unresolved",
+        basis,
+        trigger_in_snapshot: false,
+        final_route_reason: "staff_context_membership_unresolved",
+    }, {
+        context_reason: "staff_context_membership_unresolved",
+        staff_activity_snapshot: [{ role: "user", speaker: "requester", content: "Synthetic update" }],
+    });
+    render(<StaffContextDetails context={context} />);
+    expect(screen.getByRole("heading", { name: "Unresolved Staff association" })).toBeInTheDocument();
+    expect(screen.getByText(explanation)).toBeInTheDocument();
+    expect(screen.getByText("Recorded before posting the Staff note.")).toBeInTheDocument();
+    expect(screen.getByText(/does not include the triggering Staff turn/)).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Confirmed Staff association" })).not.toBeInTheDocument();
+});
+
+test.each([
+    "source_followup_antecedent_unavailable",
+    "source_discussion_capacity_reached",
+    "source_context_changed",
+])("unavailable discussion retains the distinct association decision for %s", (discussionReason) => {
+    const context = decisionContext({
+        ...confirmedDecision,
+        phase: "pre_root",
+        trigger_in_snapshot: false,
+        discussion_reason: discussionReason,
+        final_route_reason: discussionReason,
+        coverage: "discussion_unavailable",
+    }, { context_reason: discussionReason, staff_activity_snapshot: [] });
+    render(<StaffContextDetails context={context} />);
+    expect(screen.getByRole("heading", { name: "Confirmed Staff association" })).toBeInTheDocument();
+    expect(screen.getByText("Recorded before opening the Staff thread.")).toBeInTheDocument();
+    expect(screen.getByText(/observed conversation could not be saved/)).toBeInTheDocument();
+    expect(screen.queryByText("Conversation observed when the reply was held")).not.toBeInTheDocument();
+});
+
+test.each([
+    null,
+    [],
+    "staff_active",
+    { ...confirmedDecision, version: 2 },
+    { ...confirmedDecision, version: "1" },
+    { ...confirmedDecision, phase: "after_delivery" },
+    { ...confirmedDecision, reason: "arbitrary_reason" },
+    { ...confirmedDecision, basis: "nearby_staff" },
+    { ...confirmedDecision, basis: "incident_membership_unresolved" },
+    { ...confirmedDecision, trigger_event_sha256: "$raw-event:example.test" },
+    { ...confirmedDecision, trigger_event_sha256: "a".repeat(63) },
+    { ...confirmedDecision, trigger_in_snapshot: "true" },
+    { ...confirmedDecision, discussion_reason: "unknown_reason" },
+    { ...confirmedDecision, discussion_reason: "source_context_changed" },
+    { ...confirmedDecision, final_route_reason: "source_context_changed" },
+    { ...confirmedDecision, coverage: "complete" },
+    { ...confirmedDecision, coverage: "discussion_unavailable" },
+    { ...confirmedDecision, extra: "unexpected-field" },
+    { ...confirmedDecision, trigger_event_sha256: undefined },
+])("malformed audit %# is ignored without changing the observed discussion", (audit) => {
+    const context = decisionContext(audit);
+    render(<StaffContextDetails context={context} />);
+    expect(context.staff_activity_decision).toBeUndefined();
+    expect(screen.queryByRole("region", { name: "Recorded Staff association" })).not.toBeInTheDocument();
+    expect(screen.getByText("Synthetic Staff clarification")).toBeInTheDocument();
+});
+
+test("partial, stale and snapshot-inconsistent audit records are ignored", () => {
+    const partial: Partial<typeof confirmedDecision> = { ...confirmedDecision };
+    delete partial.phase;
+    expect(decisionContext(partial).staff_activity_decision).toBeUndefined();
+    expect(decisionContext(confirmedDecision, { context_reason: "moderation_review_required" }).staff_activity_decision).toBeUndefined();
+    expect(decisionContext(confirmedDecision, { staff_activity_snapshot: [] }).staff_activity_decision).toBeUndefined();
+    expect(decisionContext(confirmedDecision, {
+        staff_activity_snapshot: [{ role: "staff", speaker: "requester", content: "Invalid attribution" }],
+    }).staff_activity_decision).toBeUndefined();
+    expect(decisionContext({
+        ...confirmedDecision,
+        trigger_in_snapshot: false,
+        discussion_reason: "source_context_changed",
+        final_route_reason: "source_context_changed",
+        coverage: "discussion_unavailable",
+    }, { context_reason: "source_context_changed" }).staff_activity_decision).toBeUndefined();
+});
+
+test("old Staff holds have no invented audit explanation", () => {
+    const context = staffContextMetadata({
+        response_kind: "public_context",
+        context_reason: "staff_active",
+        staff_activity_snapshot: [
+            { role: "staff", speaker: "participant-1", content: "Synthetic Staff clarification" },
+        ],
+    })!;
+    expect(context.staff_activity_decision).toBeUndefined();
+    render(<StaffContextDetails context={context} />);
+    expect(screen.queryByRole("region", { name: "Recorded Staff association" })).not.toBeInTheDocument();
+    expect(screen.getByText("Synthetic Staff clarification")).toBeInTheDocument();
 });

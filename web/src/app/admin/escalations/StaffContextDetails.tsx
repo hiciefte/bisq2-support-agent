@@ -16,6 +16,18 @@ export function StaffContextDetails({ context }: { context: StaffContextMetadata
     const reviewMessages = context.context_reason === "moderation_review_required"
         ? context.moderation_context_snapshot
         : context.staff_activity_snapshot;
+    const decision = context.staff_activity_decision;
+    const decisionBasis = {
+        incident_member: "Staff activity was linked to a confirmed incident member.",
+        native_relation: "Staff activity was linked through a native reply or thread.",
+        escalation_service_unavailable: "The conversation lookup was unavailable, so Staff association could not be confirmed.",
+        incident_membership_unresolved: "The available evidence did not confirm which conversation the Staff turn belonged to.",
+    };
+    const decisionPhase = {
+        pre_generation: "Recorded before AI generation.",
+        pre_root: "Recorded before opening the Staff thread.",
+        pre_note: "Recorded before posting the Staff note.",
+    };
     return (
         <section aria-label="Staff context delivery" className="space-y-3 rounded-lg border border-border bg-muted/20 p-4">
             <div className="flex flex-wrap items-center gap-2">
@@ -27,6 +39,22 @@ export function StaffContextDetails({ context }: { context: StaffContextMetadata
                 internal review decision; it cannot publish a reply to the public room.
             </p>
             {context.context_reason && <p className="text-sm">{staffContextReasonLabel(context.context_reason)}</p>}
+            {decision ? (
+                <section aria-label="Recorded Staff association" className="max-w-prose space-y-1 text-sm">
+                    <h4 className="font-medium">
+                        {decision.reason === "staff_active" ? "Confirmed Staff association" : "Unresolved Staff association"}
+                    </h4>
+                    <p>{decisionBasis[decision.basis]}</p>
+                    <p className="text-muted-foreground">{decisionPhase[decision.phase]}</p>
+                    <p className="text-muted-foreground">
+                        {decision.coverage === "discussion_unavailable"
+                            ? "The observed conversation could not be saved. Its absence does not establish that no Staff turn occurred."
+                            : decision.trigger_in_snapshot
+                                ? "The triggering Staff turn is included in the bounded observed conversation."
+                                : "The bounded observation does not include the triggering Staff turn; the saved discussion alone cannot explain this hold."}
+                    </p>
+                </section>
+            ) : null}
             {Boolean(reviewMessages?.length) && (
                 <details className="space-y-2 text-sm">
                     <summary className="cursor-pointer font-medium">Conversation observed when the reply was held</summary>

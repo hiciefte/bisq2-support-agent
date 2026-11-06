@@ -14,7 +14,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote
 
 import aiosqlite
@@ -34,6 +34,7 @@ from app.channels.staff_assist.context_incidents import (
     context_only,
     continuation,
     diagnostic_link,
+    diagnostic_progress,
     gratitude_only,
     helper_turn,
     incident_question,
@@ -41,6 +42,7 @@ from app.channels.staff_assist.context_incidents import (
     quoted_question,
     speaker_labels,
 )
+from app.channels.staff_assist.context_retrieval import build_retrieval_query
 from app.channels.staff_assist.context_trial import (
     ContextTrial,
     ContextTrialStore,
@@ -109,6 +111,20 @@ class _SourceContextSnapshot:
     events: dict[str, str] | None = None
     messages: tuple[RoomMessage, ...] = ()
     visible_ids: frozenset[str] = frozenset()
+    confirmed_retrieval_messages: tuple[RoomMessage, ...] = ()
+    staff_activity_decision: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class _StaffActivityDecision:
+    reason: Literal["staff_active", "staff_context_membership_unresolved"]
+    basis: Literal[
+        "incident_member",
+        "native_relation",
+        "escalation_service_unavailable",
+        "incident_membership_unresolved",
+    ]
+    trigger_event_id: str
 
 
 def select_public_evidence(documents: list[Any]) -> list[PublicEvidence]:
@@ -156,13 +172,23 @@ def select_public_evidence(documents: list[Any]) -> list[PublicEvidence]:
 
 
 def _staff_activity_metadata(
-    reason: str | None, messages: list[RoomMessage]
+    reason: str | None,
+    messages: list[RoomMessage],
+    snapshot: _SourceContextSnapshot,
+    phase: Literal["pre_generation", "pre_root", "pre_note"],
 ) -> dict[str, Any]:
-    if reason not in {"staff_active", "staff_context_membership_unresolved"}:
+    if snapshot.staff_activity_decision is None:
         return {}
     # Observation-time review context, never a replacement for model-input
     # provenance or proof that an unthreaded neighbor belongs to this incident.
-    return {"staff_activity_snapshot": [message.model_dump() for message in messages]}
+    return {
+        "staff_activity_snapshot": [message.model_dump() for message in messages],
+        "staff_activity_decision": {
+            **snapshot.staff_activity_decision,
+            "phase": phase,
+            "final_route_reason": reason,
+        },
+    }
 
 
 class ContextReviewStore:
@@ -385,7 +411,12 @@ class MatrixContextRuntime:
         if incoming.channel_metadata.get("replaces_event_id") or context_only(question):
             return False
         classification = getattr(incoming, "classification", None)
-        if classification is not None and not classification.should_process:
+        progress_update = diagnostic_progress(question)
+        if (
+            classification is not None
+            and not classification.should_process
+            and not progress_update
+        ):
             return False
         # Do not assume a native reply is standalone when its incident was not
         # captured: the reply fallback has already been removed from its text.
@@ -404,7 +435,12 @@ class MatrixContextRuntime:
             incoming, self._trial.trial_id if self._trial else None
         )
         unresolved_quote = quoted_question(question) is not None
-        provisional = helper_turn(question) or bool(candidate_ids) or unresolved_quote
+        provisional = (
+            helper_turn(question)
+            or progress_update
+            or bool(candidate_ids)
+            or unresolved_quote
+        )
         case = await service.create_escalation(
             EscalationCreate(
                 message_id="matrix-context:" + _digest([room_id, incoming.message_id]),
@@ -479,7 +515,7 @@ class MatrixContextRuntime:
                 status="deferred",
                 reason=(
                     "conversation_membership_unresolved"
-                    if candidate_ids or unresolved_quote
+                    if candidate_ids or unresolved_quote or progress_update
                     else "conversation_helper_only"
                 ),
             )
@@ -701,7 +737,9 @@ class MatrixContextRuntime:
                 case_id,
                 status="deferred",
                 reason=reason,
-                **_staff_activity_metadata(reason, snapshot),
+                **_staff_activity_metadata(
+                    reason, snapshot, source_snapshot, "pre_generation"
+                ),
             )
             return False
         rag = self.runtime.rag_service
@@ -732,8 +770,11 @@ class MatrixContextRuntime:
                     raise PublicationSuppressed(reason)
             return retriever.retrieve_with_scores(query)
 
+        retrieval_query = build_retrieval_query(
+            question, source_snapshot.confirmed_retrieval_messages
+        )
         documents, _ = await rag._run_retriever_call(
-            rag.retriever, retrieve_documents, question
+            rag.retriever, retrieve_documents, retrieval_query
         )
         if not await self._case_is_open(case_id) or not is_staff_context_enabled(
             policy_service, "matrix"
@@ -771,7 +812,7 @@ class MatrixContextRuntime:
             llm_wiki_loader=getattr(rag, "llm_wiki_loader", None),
             llm_wiki_dir=getattr(self.runtime.settings, "LLM_WIKI_DIR_PATH", None),
         )
-        resolved = await resolver.resolve(question=question, documents=documents)
+        resolved = await resolver.resolve(question=retrieval_query, documents=documents)
         if not await self._case_is_open(case_id) or not is_staff_context_enabled(
             policy_service, "matrix"
         ):
@@ -792,6 +833,7 @@ class MatrixContextRuntime:
         )
         evidence_json = [entry.model_dump() for entry in evidence]
         versions: dict[str, Any] = {
+            "retrieval_query_version": _digest(retrieval_query),
             "evidence_version": _digest(evidence_json),
             "evidence_snapshot": evidence_json,
             "generation_version": _digest(STAFF_CONTEXT_PROMPT),
@@ -919,7 +961,9 @@ class MatrixContextRuntime:
                 case_id,
                 status="deferred",
                 reason=reason or "review_or_policy_changed",
-                **_staff_activity_metadata(reason, current_snapshot),
+                **_staff_activity_metadata(
+                    reason, current_snapshot, source_snapshot, "pre_root"
+                ),
             )
             return False
         room_id = incoming.channel_metadata["room_id"]
@@ -1010,7 +1054,9 @@ class MatrixContextRuntime:
                     case_id,
                     status="deferred",
                     reason=reason or "review_changed",
-                    **_staff_activity_metadata(reason, current_snapshot),
+                    **_staff_activity_metadata(
+                        reason, current_snapshot, source_snapshot, "pre_note"
+                    ),
                 )
                 return False
             result = await self._send_if_open(
@@ -1193,6 +1239,10 @@ class MatrixContextRuntime:
             resolve_allowed_context_source_rooms,
         )
 
+        if snapshot is not None:
+            # Each read has its own decision; publication must not reuse an
+            # earlier hold or replace the frozen generation selection.
+            snapshot.staff_activity_decision = None
         if incoming.channel_metadata[
             "room_id"
         ] not in resolve_allowed_context_source_rooms(self.runtime.settings):
@@ -1295,14 +1345,37 @@ class MatrixContextRuntime:
                 and getattr(item, "event_id", None) not in incident_ids
             ):
                 return [], "source_context_changed"
-        staff_reason = await self._staff_activity_reason(
+        staff_decision = await self._staff_activity_reason(
             incoming, before, after, resolver, cooldown, incident_ids
         )
-        if staff_reason:
+        if staff_decision:
+            held_snapshot = _SourceContextSnapshot()
             discussion, reason = self._source_discussion(
-                incoming, event, before, after, saved, resolver, staff_review=True
+                incoming,
+                event,
+                before,
+                after,
+                saved,
+                resolver,
+                snapshot=held_snapshot,
+                staff_review=True,
             )
-            return discussion, reason or staff_reason
+            if snapshot is not None:
+                snapshot.staff_activity_decision = {
+                    "version": 1,
+                    "reason": staff_decision.reason,
+                    "basis": staff_decision.basis,
+                    "trigger_event_sha256": hashlib.sha256(
+                        staff_decision.trigger_event_id.encode()
+                    ).hexdigest(),
+                    "trigger_in_snapshot": staff_decision.trigger_event_id
+                    in (held_snapshot.events or {}),
+                    "discussion_reason": reason,
+                    "coverage": (
+                        "discussion_unavailable" if reason else "bounded_snapshot"
+                    ),
+                }
+            return discussion, reason or staff_decision.reason
         if snapshot is not None and snapshot.events is not None:
             # Recheck the exact events used for generation. Room activity and
             # selection age/capacity must not replace that evidence, while an
@@ -1415,6 +1488,27 @@ class MatrixContextRuntime:
                 ]
                 if own_texts and continuation(text, "\n".join(own_texts)):
                     return [], "incident_updated_after_generation"
+                if own_texts and diagnostic_progress(text):
+                    service = self.runtime.resolve_optional("escalation_service")
+                    if service is not None:
+                        incidents = ContextIncidentStore(service.repository.db_path)
+                        trial_id = self._trial.trial_id if self._trial else None
+                        current_case, _ = await incidents.find(incoming, trial_id)
+                        candidate = incoming.model_copy(
+                            update={
+                                "message_id": event_id,
+                                "question": text,
+                                "user": incoming.user.model_copy(
+                                    update={"user_id": sender}
+                                ),
+                                "channel_metadata": {
+                                    "room_id": incoming.channel_metadata["room_id"]
+                                },
+                            }
+                        )
+                        member_case, _ = await incidents.find(candidate, trial_id)
+                        if current_case is not None and member_case == current_case:
+                            return [], "incident_updated_after_generation"
             return list(snapshot.messages), None
         return self._source_discussion(
             incoming, event, before, after, saved, resolver, snapshot=snapshot
@@ -1428,7 +1522,7 @@ class MatrixContextRuntime:
         resolver: Any,
         cooldown: int,
         incident_ids: set[str],
-    ) -> str | None:
+    ) -> _StaffActivityDecision | None:
         """Use intake membership, not room proximity, for human activity holds."""
         now = datetime.now(timezone.utc).timestamp()
         active = [
@@ -1445,7 +1539,11 @@ class MatrixContextRuntime:
             return None
         service = self.runtime.resolve_optional("escalation_service")
         if service is None:
-            return "staff_context_membership_unresolved"
+            return _StaffActivityDecision(
+                "staff_context_membership_unresolved",
+                "escalation_service_unavailable",
+                str(getattr(active[0], "event_id", "")),
+            )
         incidents = ContextIncidentStore(service.repository.db_path)
         trial_id = self._trial.trial_id if self._trial else None
         current_case, _ = await incidents.find(incoming, trial_id)
@@ -1455,7 +1553,7 @@ class MatrixContextRuntime:
             or incoming.channel_metadata.get("reply_to_event_id")
             or incoming.message_id
         }
-        unresolved = False
+        unresolved: _StaffActivityDecision | None = None
         for item in active:
             text = sanitize_question(context_text(item))
             relations = context_relationships(item)
@@ -1475,7 +1573,11 @@ class MatrixContextRuntime:
             member_case, _ = await incidents.find(candidate, trial_id)
             if member_case is not None:
                 if current_case is not None and member_case == current_case:
-                    return "staff_active"
+                    return _StaffActivityDecision(
+                        "staff_active",
+                        "incident_member",
+                        str(getattr(item, "event_id", "")),
+                    )
                 # A positively identified other incident does not block this one.
                 if current_case is not None:
                     continue
@@ -1492,7 +1594,11 @@ class MatrixContextRuntime:
             while target and target not in seen:
                 if target in targets:
                     if compatible(text, incoming.question):
-                        return "staff_active"
+                        return _StaffActivityDecision(
+                            "staff_active",
+                            "native_relation",
+                            str(getattr(item, "event_id", "")),
+                        )
                     target = None
                     break
                 seen.add(target)
@@ -1515,8 +1621,13 @@ class MatrixContextRuntime:
                 continue
             if relations.get("thread_root_event_id") not in (None, *targets):
                 continue
-            unresolved = True
-        return "staff_context_membership_unresolved" if unresolved else None
+            if unresolved is None:
+                unresolved = _StaffActivityDecision(
+                    "staff_context_membership_unresolved",
+                    "incident_membership_unresolved",
+                    str(getattr(item, "event_id", "")),
+                )
+        return unresolved
 
     def _source_discussion(
         self,
@@ -1596,6 +1707,7 @@ class MatrixContextRuntime:
                 break
 
         candidates: dict[str, tuple[str, str]] = {}
+        linkable_ids = {incoming.message_id, *captured}
         for item in timeline:
             event_id = getattr(item, "event_id", None)
             if not event_id or event_id == incoming.message_id:
@@ -1635,6 +1747,8 @@ class MatrixContextRuntime:
             ):
                 continue
             text = sanitize_question(context_text(item))
+            if text:
+                linkable_ids.add(event_id)
             if text and (
                 not context_only(text)
                 or (resolver.is_staff(sender) and not gratitude_only(text))
@@ -1642,6 +1756,50 @@ class MatrixContextRuntime:
                 candidates[event_id] = (sender, text)
 
         required = set(captured)
+        # Prompt neighbors remain possibly unrelated. Retrieval may use only
+        # verified members and compatible explicit chains, never scoped_ids or
+        # all requester messages merely because they are nearby.
+        confirmed_ids = set(captured)
+        retrieval_roots = {incoming.message_id, *captured}
+        retrieval_proofs = {key: {key} for key in retrieval_roots}
+        if not new_issue(incoming.question):
+            target = native_root
+            seen: set[str] = set()
+            native_path = {incoming.message_id}
+            while target and target not in seen and target in linkable_ids:
+                seen.add(target)
+                antecedent = visible[target]
+                text = sanitize_question(context_text(antecedent))
+                if new_issue(text) or not compatible(text, incoming.question):
+                    break
+                retrieval_roots.add(target)
+                native_path.add(target)
+                retrieval_proofs.setdefault(target, set(native_path))
+                related = context_relationships(antecedent)
+                target = related.get("thread_root_event_id") or related.get(
+                    "reply_to_event_id"
+                )
+        for _ in timeline:
+            previous_size = len(retrieval_roots)
+            for item in timeline:
+                related = context_relationships(item)
+                target = related.get("thread_root_event_id") or related.get(
+                    "reply_to_event_id"
+                )
+                text = sanitize_question(context_text(item))
+                if (
+                    target in retrieval_roots
+                    and getattr(item, "event_id", None) in linkable_ids
+                    and getattr(item, "event_id", None) not in retrieval_roots
+                    and not new_issue(text)
+                    and compatible(text, incoming.question)
+                ):
+                    event_id = item.event_id
+                    retrieval_roots.add(event_id)
+                    retrieval_proofs[event_id] = retrieval_proofs[target] | {event_id}
+            if len(retrieval_roots) == previous_size:
+                break
+        confirmed_ids.update(retrieval_roots & candidates.keys())
         if staff_review:
             # A held review must retain its bounded Staff clarification rather
             # than let nearer optional chatter displace the relevant evidence.
@@ -1682,6 +1840,10 @@ class MatrixContextRuntime:
             if not antecedents or (not member_context and len(antecedents) != 1):
                 return [], "source_followup_antecedent_unavailable"
             required.update(antecedents)
+            # Only the unique diagnostic antecedent or verified membership
+            # establishes this edge; Staff-review requirements do not.
+            if not native_root:
+                confirmed_ids.update(antecedents)
         if (
             len(required) > 10
             or sum(len(candidates[key][1]) for key in required) > 4000
@@ -1707,6 +1869,8 @@ class MatrixContextRuntime:
             ),
         )
         messages = []
+        retrieval_messages = []
+        retrieval_proof_ids: set[str] = set()
         for event_id in dict.fromkeys(
             getattr(item, "event_id", None) for item in timeline
         ):
@@ -1726,8 +1890,13 @@ class MatrixContextRuntime:
                     speaker=speakers[sender],
                 )
             )
+            if event_id in confirmed_ids and sender == owner:
+                retrieval_messages.append(messages[-1])
+                retrieval_proof_ids.update(retrieval_proofs.get(event_id, {event_id}))
         if snapshot is not None:
-            selected_ids = selected | {incoming.message_id}
+            # ACK text need not enter the prompt, but a native edge through it
+            # is part of the retrieval proof and must still survive revalidation.
+            selected_ids = selected | {incoming.message_id} | retrieval_proof_ids
             if any(
                 sum(getattr(item, "event_id", None) == key for item in timeline) != 1
                 for key in selected_ids
@@ -1740,5 +1909,6 @@ class MatrixContextRuntime:
                 for key in selected_ids
             }
             snapshot.messages = tuple(messages)
+            snapshot.confirmed_retrieval_messages = tuple(retrieval_messages)
             snapshot.visible_ids = frozenset(key for key in visible if key)
         return messages, None

@@ -81,6 +81,48 @@ def new_issue(text: str) -> bool:
     )
 
 
+def diagnostic_progress(text: str) -> bool:
+    """Narrow transaction-check results, never an independent support question.
+
+    These reports remain meaningful incident facts. Unlike acknowledgements,
+    an unmatched report must be retained for Admin without starting generation.
+    """
+    if new_issue(text) or "?" in text or quoted_question(text):
+        return False
+    text = text.strip().rstrip(".! ")
+    transaction = r"(?:(?:the|my|our) )?(?:(?:deposit|payout) )?transaction"
+    subject = rf"(?:{transaction}|(?:the|my|our) (?:deposit|payout)|it)"
+    count = r"\d{1,6} confirmations?"
+    return bool(
+        re.fullmatch(
+            rf"(?:{count}|confirmations?: \d{{1,6}}|"
+            rf"(?:i (?:see|have)|{subject} (?:has|shows)) (?:now )?{count}|"
+            rf"{subject} (?:is|was) (?:now |still )?"
+            r"(?:confirmed|unconfirmed|pending|paid(?: out)?)|"
+            rf"i checked {transaction}(?: in (?:the|an?) (?:block )?explorer)?"
+            rf"(?: and|[;,]) (?:it (?:is|was) (?:now |still )?"
+            rf"(?:confirmed|unconfirmed|pending|paid(?: out)?)|it has {count}))",
+            text,
+            re.I,
+        )
+    )
+
+
+def _progress_matches(text: str, previous: str) -> bool:
+    """A unique requester incident also needs a compatible transaction subject."""
+    product = explicit_product(text)
+    return bool(
+        diagnostic_progress(text)
+        and compatible(text, previous)
+        and (not product or product == explicit_product(previous))
+        and re.search(
+            r"\b(?:trade|wallet|deposit|payout|transaction|confirmations?)\b",
+            previous,
+            re.I,
+        )
+    )
+
+
 def helper_question(text: str) -> bool:
     """Conservative second-person diagnostic turn, not a general how-to request."""
     return bool(
@@ -201,7 +243,27 @@ def helper_turn(text: str) -> bool:
     if standalone_request(text) or quoted_question(text):
         return False
     text = re.sub(r"^(?:also|and)\b[\s,:;-]*", "", text.strip(), flags=re.I)
-    return bool(_advisory_start(text) or re.match(r"(?:if|when) you\b", text, re.I))
+    # Only complete paths rooted in a known UI menu are advice. Ordinary
+    # slash-separated data, quoted errors and paths with a personal request
+    # remain outside this narrow helper rule.
+    navigation = bool(
+        not re.search(
+            r"\b(?:i|my|me|we|our|error|failed|fails|cannot|broken|stuck)\b",
+            text,
+            re.I,
+        )
+        and re.fullmatch(
+            r"(?:settings|preferences|account|wallet|funds|help|trades?)"
+            r"(?:\s*(?:->|→|>|»|/)\s*[a-z][a-z0-9 ()-]{0,49}){1,5}[.!]?",
+            text,
+            re.I,
+        )
+    )
+    return bool(
+        navigation
+        or _advisory_start(text)
+        or re.match(r"(?:if|when) you\b", text, re.I)
+    )
 
 
 def compatible(text: str, previous: str) -> bool:
@@ -492,9 +554,18 @@ class ContextIncidentStore:
                 if (
                     can_continue
                     and (own_texts or owner == incoming.user.user_id)
-                    and continuation(
-                        incoming.question,
-                        "\n".join(own_texts) if own_texts else question,
+                    and (
+                        continuation(
+                            incoming.question,
+                            "\n".join(own_texts) if own_texts else question,
+                        )
+                        or (
+                            requester == incoming.user.user_id
+                            and _progress_matches(
+                                incoming.question,
+                                "\n".join(own_texts) if own_texts else question,
+                            )
+                        )
                     )
                 ):
                     candidates.append(case_id)
@@ -533,7 +604,7 @@ class ContextIncidentStore:
         independent_request = standalone_request(text)
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute(
-                "SELECT id, channel_metadata, question, created_at FROM escalations "
+                "SELECT id, channel_metadata, question, created_at, user_id FROM escalations "
                 "WHERE channel='matrix' AND status IN ('pending', 'in_review') "
                 "AND json_extract(channel_metadata, '$.response_kind')='public_context' "
                 "AND json_extract(channel_metadata, '$.room_id')=? "
@@ -548,7 +619,7 @@ class ContextIncidentStore:
         words = set(re.findall(r"[a-z]{4,}", text.lower())) - ignored
         matches = []
         now = datetime.now(timezone.utc)
-        for case_id, raw, previous, created_at in rows:
+        for case_id, raw, previous, created_at, owner in rows:
             saved = json.loads(raw or "{}")
             age = (now - datetime.fromisoformat(created_at)).total_seconds()
             idle = (
@@ -568,6 +639,13 @@ class ContextIncidentStore:
                 continue
             messages = saved.get("incident_messages", [])
             requester = saved.get("conversation_requester_id")
+            if not requester and saved.get("conversation_membership") != "provisional":
+                requester = owner
+            own_texts = [
+                message["text"]
+                for message in messages
+                if message.get("sender_id") == incoming.user.user_id
+            ]
             known_helper = (
                 saved.get("conversation_membership") == "confirmed"
                 and requester
@@ -577,7 +655,16 @@ class ContextIncidentStore:
                     for message in messages
                 )
             )
-            if known_helper and not independent_request:
+            progress_owner = requester == incoming.user.user_id or (
+                not requester
+                and owner == incoming.user.user_id
+                and diagnostic_progress(previous)
+            )
+            if progress_owner and _progress_matches(
+                text, "\n".join(own_texts) if own_texts else previous
+            ):
+                matches.append(case_id)
+            elif known_helper and not independent_request:
                 matches.append(case_id)
             elif (
                 dependent
