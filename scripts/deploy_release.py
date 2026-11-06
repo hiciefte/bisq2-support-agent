@@ -176,6 +176,7 @@ def classify_services(
                 "web/public/",
             )
         ) or path in {
+            "docker/web/Dockerfile",
             "web/package.json",
             "web/package-lock.json",
             "web/yarn.lock",
