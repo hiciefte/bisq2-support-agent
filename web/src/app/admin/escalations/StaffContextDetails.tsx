@@ -45,7 +45,6 @@ export function StaffContextDetails({ context }: { context: StaffContextMetadata
                     <p className="font-medium">Unresolved progress reports</p>
                     <p>These reports are collected for review. They have not been confirmed as one incident, and no AI reply is generated from this queue.</p>
                     {context.incident_context_overflow && <p>Only the first and most recent reports are retained here. Review the source conversation for the missing reports.</p>}
-                    {context.candidate_conversation_overflow && <p>The possible earlier cases shown are limited; other connections may need review.</p>}
                 </div>
             )}
             {decision ? (
@@ -84,7 +83,8 @@ export function StaffContextDetails({ context }: { context: StaffContextMetadata
                 </details>
             )}
             {(Boolean(context.candidate_conversation_ids?.length) ||
-                Boolean(context.pending_candidate_ids?.length)) && (
+                Boolean(context.pending_candidate_ids?.length) ||
+                context.candidate_conversation_overflow || context.pending_candidate_overflow) && (
                 <div
                     role="status"
                     className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm"
@@ -101,6 +101,7 @@ export function StaffContextDetails({ context }: { context: StaffContextMetadata
                             <CaseLinks ids={context.candidate_conversation_ids ?? []} />
                         </p>
                     )}
+                    {context.candidate_conversation_overflow && <p>The possible earlier cases shown are limited; other connections may need review.</p>}
                     {Boolean(context.pending_candidate_ids?.length) && (
                         <p>
                             Later messages awaiting review:{" "}

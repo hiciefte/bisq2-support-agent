@@ -23,6 +23,7 @@ test("shows possible connections without asserting common ownership or approval"
         context_status: "deferred",
         context_reason: "conversation_membership_unresolved",
         candidate_conversation_ids: [42, 42, 43, "private-id", -1, 2.5, null],
+        candidate_conversation_overflow: true,
         conversation_pending_candidate_ids: [45],
         conversation_pending_candidate_overflow: true,
     });
@@ -32,6 +33,8 @@ test("shows possible connections without asserting common ownership or approval"
     expect(screen.getByRole("link", { name: "Review case #42" })).toHaveAttribute("href", "/admin/escalations?search=%2342");
     expect(screen.getByRole("link", { name: "Review case #45" })).toHaveAttribute("href", "/admin/escalations?search=%2345");
     expect(screen.getByText(/Additional later messages could not be linked here/)).toBeInTheDocument();
+    expect(screen.getByText(/other connections may need review/)).toBeInTheDocument();
+    expect(screen.queryByText("Unresolved progress reports")).not.toBeInTheDocument();
     expect(screen.getByText(/connection has not been confirmed/)).toBeInTheDocument();
     expect(screen.getByText(/no new AI reply was generated for this message/)).toBeInTheDocument();
     expect(screen.queryByText(/private-id/)).not.toBeInTheDocument();
