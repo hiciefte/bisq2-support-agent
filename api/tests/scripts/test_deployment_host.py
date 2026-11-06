@@ -304,6 +304,7 @@ def test_replacement_accepts_only_equivalent_dns_and_mask_representations(
 def test_replacement_accepts_independent_bind_order_without_changing_snapshots(
     host, service, reverse, binds
 ):
+    """Independent bind permutations preserve the complete observed snapshots."""
     before = host.baseline["containers"][service]
     before["HostConfig"]["Binds"] = list(reversed(binds)) if reverse else binds
     before["Mounts"] = [
@@ -348,6 +349,7 @@ def test_replacement_accepts_independent_bind_order_without_changing_snapshots(
     ],
 )
 def test_replacement_keeps_unproven_bind_order_strict(host, module, binds):
+    """Ambiguous or order-sensitive binds never receive the equivalence exception."""
     before = host.baseline["containers"]["api"]
     before["HostConfig"]["Binds"] = binds
     current = copy.deepcopy(before)
@@ -377,6 +379,7 @@ def test_replacement_keeps_unproven_bind_order_strict(host, module, binds):
 def test_replacement_keeps_bind_sources_options_and_multiplicity_exact(
     host, module, replacement
 ):
+    """A real bind change remains a configuration mismatch."""
     before = host.baseline["containers"]["api"]
     before["HostConfig"]["Binds"] = [
         "fixture-data:/data:rw",
@@ -391,6 +394,7 @@ def test_replacement_keeps_bind_sources_options_and_multiplicity_exact(
 def test_replacement_bind_order_exception_cannot_hide_resolved_mount_drift(
     host, module
 ):
+    """Resolved mount equality is mandatory even for reordered ordinary binds."""
     before = host.baseline["containers"]["api"]
     before["HostConfig"]["Binds"] = ["fixture-a:/data", "fixture-b:/other"]
     current = copy.deepcopy(before)
@@ -402,6 +406,7 @@ def test_replacement_bind_order_exception_cannot_hide_resolved_mount_drift(
 
 @pytest.mark.parametrize("old,new", [(None, []), ([], None)])
 def test_replacement_keeps_null_and_empty_binds_distinct(host, module, old, new):
+    """Null and explicit empty bind configurations remain distinct."""
     before = host.baseline["containers"]["api"]
     before["HostConfig"]["Binds"] = old
     current = copy.deepcopy(before)

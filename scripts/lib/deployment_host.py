@@ -103,6 +103,7 @@ def _order_independent_binds(value: object) -> object:
         return value
 
     def canonical_absolute(path: str) -> bool:
+        """Reject relative paths, root, and ambiguous path components."""
         return path.startswith("/") and all(
             part not in {"", ".", ".."} for part in path.split("/")[1:]
         )
