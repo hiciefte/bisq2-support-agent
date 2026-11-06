@@ -290,6 +290,131 @@ def test_replacement_accepts_only_equivalent_dns_and_mask_representations(
     assert (before, current) == originals
 
 
+@pytest.mark.parametrize("host", [True], indirect=True)
+@pytest.mark.parametrize("service", ["api", "matrix-alert-relay"])
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize(
+    "binds",
+    [
+        ["fixture-data:/data:rw", "fixture-secret:/run/fixture-secrets:ro"],
+        ["/fixture/data:/data", "/fixture/secret:/run/fixture-secrets:ro"],
+        ["fixture-data:/data:rw", "fixture-other:/database:rw"],
+    ],
+)
+def test_replacement_accepts_independent_bind_order_without_changing_snapshots(
+    host, service, reverse, binds
+):
+    """Independent bind permutations preserve the complete observed snapshots."""
+    before = host.baseline["containers"][service]
+    before["HostConfig"]["Binds"] = list(reversed(binds)) if reverse else binds
+    before["Mounts"] = [
+        {"Source": "/fixture/" + str(index), "Destination": entry.split(":")[1]}
+        for index, entry in enumerate(binds)
+    ]
+    current = copy.deepcopy(before)
+    current["HostConfig"]["Binds"].reverse()
+    current["Mounts"].reverse()
+    snapshots = copy.deepcopy((before, current))
+    host._replacement(service, current, current["Image"])
+    assert (before, current) == snapshots
+
+
+@pytest.mark.parametrize(
+    "binds",
+    [
+        ["fixture-a:/data", "fixture-b:/data/nested"],
+        ["fixture-a:/data", "fixture-b:/data"],
+        ["fixture-a:/", "fixture-b:/data"],
+        ["fixture-a:/data/", "fixture-b:/other"],
+        ["fixture-a://data", "fixture-b:/other"],
+        ["fixture-a:/data/./nested", "fixture-b:/other"],
+        ["fixture-a:/data/../nested", "fixture-b:/other"],
+        ["fixture-a:relative", "fixture-b:/other"],
+        ["first", "second"],
+        ["", "fixture-b:/other"],
+        ["fixture-a:/data\x00", "fixture-b:/other"],
+        ["fixture-a:/data\n", "fixture-b:/other"],
+        [None, "fixture-b:/other"],
+        ["./relative:/data", "fixture-b:/other"],
+        ["/fixture/../data:/data", "fixture-b:/other"],
+        ["/fixture//data:/data", "fixture-b:/other"],
+        [":/data", "fixture-b:/other"],
+        ["fixture-a:/data:", "fixture-b:/other"],
+        ["fixture-a:/data:ro:extra", "fixture-b:/other"],
+        ["fixture-a:/data:ro,z", "fixture-b:/other"],
+        ["fixture-a:/data:Z", "fixture-b:/other"],
+        ["fixture-a:/data:rshared", "fixture-b:/other"],
+        ["fixture-a:/data:unknown", "fixture-b:/other"],
+        ["fixture-a:/data", "fixture-a:/data", "fixture-b:/other"],
+    ],
+)
+def test_replacement_keeps_unproven_bind_order_strict(host, module, binds):
+    """Ambiguous or order-sensitive binds never receive the equivalence exception."""
+    before = host.baseline["containers"]["api"]
+    before["HostConfig"]["Binds"] = binds
+    current = copy.deepcopy(before)
+    current["HostConfig"]["Binds"].reverse()
+    snapshots = copy.deepcopy((before, current))
+    assert module.replacement_host_config(before["HostConfig"])["Binds"] == binds
+    with pytest.raises(module.JournalError, match="host_replacement_host_config"):
+        host._replacement("api", current, current["Image"])
+    assert (before, current) == snapshots
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        ["fixture-other:/data:rw", "fixture-secret:/run/fixture-secrets:ro"],
+        ["fixture-data:/data:ro", "fixture-secret:/run/fixture-secrets:ro"],
+        ["fixture-data:/data", "fixture-secret:/run/fixture-secrets:ro"],
+        ["fixture-data:/other:rw", "fixture-secret:/run/fixture-secrets:ro"],
+        ["fixture-data:/data:rw"],
+        [
+            "fixture-data:/data:rw",
+            "fixture-secret:/run/fixture-secrets:ro",
+            "fixture-secret:/run/fixture-secrets:ro",
+        ],
+    ],
+)
+def test_replacement_keeps_bind_sources_options_and_multiplicity_exact(
+    host, module, replacement
+):
+    """A real bind change remains a configuration mismatch."""
+    before = host.baseline["containers"]["api"]
+    before["HostConfig"]["Binds"] = [
+        "fixture-data:/data:rw",
+        "fixture-secret:/run/fixture-secrets:ro",
+    ]
+    current = copy.deepcopy(before)
+    current["HostConfig"]["Binds"] = replacement
+    with pytest.raises(module.JournalError, match="host_replacement_host_config"):
+        host._replacement("api", current, current["Image"])
+
+
+def test_replacement_bind_order_exception_cannot_hide_resolved_mount_drift(
+    host, module
+):
+    """Resolved mount equality is mandatory even for reordered ordinary binds."""
+    before = host.baseline["containers"]["api"]
+    before["HostConfig"]["Binds"] = ["fixture-a:/data", "fixture-b:/other"]
+    current = copy.deepcopy(before)
+    current["HostConfig"]["Binds"].reverse()
+    current["Mounts"][0]["RW"] = False
+    with pytest.raises(module.JournalError, match="host_replacement_mounts"):
+        host._replacement("api", current, current["Image"])
+
+
+@pytest.mark.parametrize("old,new", [(None, []), ([], None)])
+def test_replacement_keeps_null_and_empty_binds_distinct(host, module, old, new):
+    """Null and explicit empty bind configurations remain distinct."""
+    before = host.baseline["containers"]["api"]
+    before["HostConfig"]["Binds"] = old
+    current = copy.deepcopy(before)
+    current["HostConfig"]["Binds"] = new
+    with pytest.raises(module.JournalError, match="host_replacement_host_config"):
+        host._replacement("api", current, current["Image"])
+
+
 @pytest.mark.parametrize("field", ["Dns", "DnsOptions", "DnsSearch"])
 @pytest.mark.parametrize(
     "old,new",
@@ -312,7 +437,9 @@ def test_replacement_preserves_nonempty_dns_values_order_and_multiplicity(
         host._replacement("api", current, current["Image"])
 
 
-@pytest.mark.parametrize("field", ["Dns", "DnsOptions", "DnsSearch", "MaskedPaths"])
+@pytest.mark.parametrize(
+    "field", ["Dns", "DnsOptions", "DnsSearch", "MaskedPaths", "Binds"]
+)
 @pytest.mark.parametrize("side", ["original", "replacement"])
 @pytest.mark.parametrize("value", [None, []])
 def test_replacement_does_not_equate_absent_host_fields_with_empty(
