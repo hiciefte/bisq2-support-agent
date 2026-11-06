@@ -9,6 +9,10 @@ export interface StaffContextMetadata {
     generation_question?: string;
     candidate_conversation_ids?: number[];
     pending_candidate_ids?: number[];
+    progress_review_queue?: boolean;
+    incident_context_overflow?: boolean;
+    candidate_conversation_overflow?: boolean;
+    pending_candidate_overflow?: boolean;
     staff_activity_snapshot?: ReviewContextMessage[];
     staff_activity_decision?: StaffActivityDecision;
     moderation_context_snapshot?: ReviewContextMessage[];
@@ -24,10 +28,12 @@ interface StaffActivityDecision {
     coverage: "bounded_snapshot" | "discussion_unavailable";
 }
 
+/** Validate saved decision evidence without asserting coverage lost in sanitization. */
 function staffActivityDecision(
     value: unknown,
     routeReason: string,
     messages: ReviewContextMessage[],
+    snapshotComplete: boolean,
 ): StaffActivityDecision | undefined {
     if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
     const record = value as Record<string, unknown>;
@@ -54,7 +60,7 @@ function staffActivityDecision(
         (reason === "staff_active") !== (basis === "incident_member" || basis === "native_relation") ||
         (coverage === "discussion_unavailable") !== (discussion_reason !== null) ||
         (coverage === "discussion_unavailable" && (trigger_in_snapshot || messages.length > 0)) ||
-        (trigger_in_snapshot && !messages.some((message) => message.role === "staff")) ||
+        (trigger_in_snapshot && (!snapshotComplete || !messages.some((message) => message.role === "staff"))) ||
         final_route_reason !== (discussion_reason ?? reason) ||
         final_route_reason !== routeReason
     ) return undefined;
@@ -68,6 +74,7 @@ interface ReviewContextMessage {
     content: string;
 }
 
+/** Retain bounded, attributed turns using the server's Unicode character budget. */
 function reviewContextMessages(value: unknown): ReviewContextMessage[] {
     if (!Array.isArray(value)) return [];
     const result: ReviewContextMessage[] = [];
@@ -82,9 +89,12 @@ function reviewContextMessages(value: unknown): ReviewContextMessage[] {
             !/^(?:requester|participant-[1-9][0-9]?)$/.test(speaker) ||
             (role === "user") !== (speaker === "requester")
         ) continue;
-        if (content.length > remaining) break;
+        // Python's saved snapshot budget counts Unicode code points, not UTF-16 units.
+        if (content.length > remaining * 2) break;
+        const characters = Array.from(content).length;
+        if (characters > remaining) break;
         result.push({ role, speaker, content });
-        remaining -= content.length;
+        remaining -= characters;
     }
     return result;
 }
@@ -118,6 +128,7 @@ function matrixLink(value: unknown): string | null {
     }
 }
 
+/** Expose validated review metadata; never infer membership from a review hint. */
 export function staffContextMetadata(metadata?: Record<string, unknown> | null): StaffContextMetadata | null {
     if (!isStaffContextCase(metadata) || !metadata) return null;
     const text = (key: string) => typeof metadata[key] === "string" ? metadata[key] as string : "";
@@ -133,9 +144,15 @@ export function staffContextMetadata(metadata?: Record<string, unknown> | null):
         generation_question: text("incident_generation_question"),
         candidate_conversation_ids: caseIds(metadata.candidate_conversation_ids),
         pending_candidate_ids: caseIds(metadata.conversation_pending_candidate_ids),
+        progress_review_queue: metadata.progress_review_queue === true,
+        incident_context_overflow: metadata.incident_context_overflow === true,
+        candidate_conversation_overflow: metadata.candidate_conversation_overflow === true,
+        pending_candidate_overflow: metadata.conversation_pending_candidate_overflow === true,
         staff_activity_snapshot: staffMessages,
         staff_activity_decision: staffActivityDecision(
             metadata.staff_activity_decision, text("context_reason"), staffMessages,
+            Array.isArray(metadata.staff_activity_snapshot) &&
+                staffMessages.length === metadata.staff_activity_snapshot.length,
         ),
         moderation_context_snapshot: reviewContextMessages(metadata.moderation_context_snapshot),
     };

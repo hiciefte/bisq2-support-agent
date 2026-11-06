@@ -50,6 +50,9 @@ async def runtime_case(tmp_path):
         STATUS,
         "I checked the payout transaction in an explorer; it has 47 confirmations.",
         "The payout transaction is still pending.",
+        "My Bisq 1 payout transaction is confirmed.",
+        "The Bisq 2 transaction has 47 confirmations.",
+        "My Bisq Easy payout is still pending.",
     ],
 )
 def test_progress_is_substantive_without_being_a_new_question(text):
@@ -96,6 +99,38 @@ async def test_status_and_count_join_one_requester_incident_and_reservation(
     assert COUNT in case.channel_metadata["incident_generation_question"]
     bundle.llm.invoke.assert_called_once()
     assert reservations(bundle) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("product", ["Bisq 1", "Bisq 2"])
+async def test_qualified_progress_keeps_product_ownership(runtime_case, product):
+    bundle = runtime_case
+    hold_worker(bundle)
+    await bundle.engine.process(
+        incoming(bundle, "$root", "My Bisq 1 payout is stuck."), bundle.channel
+    )
+    await bundle.engine.process(
+        incoming(bundle, "$progress", f"My {product} payout transaction is confirmed."),
+        bundle.channel,
+    )
+    cases, count = await bundle.repository.list_escalations(EscalationFilters())
+    assert count == (1 if product == "Bisq 1" else 2)
+    if product == "Bisq 1":
+        assert len(cases[0].channel_metadata["incident_messages"]) == 2
+    else:
+        assert all(
+            len(case.channel_metadata["incident_messages"]) == 1 for case in cases
+        )
+    await bundle.engine.close()
+    assert reservations(bundle) == 0
+
+
+@pytest.mark.parametrize(
+    "failure", ["Connection refused", "Not responding", "Not working", "Timed out"]
+)
+def test_navigation_failure_is_not_helper_advice(failure):
+    assert not context_incidents.helper_turn(f"Settings > Network > {failure}")
+    assert context_incidents.helper_turn(MENU)
 
 
 @pytest.mark.asyncio
@@ -156,23 +191,20 @@ async def test_two_same_requester_incidents_keep_ambiguous_count_for_admin(
 
 
 @pytest.mark.asyncio
-async def test_orphan_status_and_count_have_review_hints_without_confirming_membership(
+async def test_orphan_status_and_count_share_review_queue_without_confirming_membership(
     runtime_case,
 ):
     bundle = runtime_case
     await bundle.engine.process(incoming(bundle, "$status", STATUS), bundle.channel)
     original = await saved_case(bundle)
     await bundle.engine.process(incoming(bundle, "$count", COUNT), bundle.channel)
-    cases, count = await bundle.repository.list_escalations(EscalationFilters())
-    assert count == 2
-    followup = next(case for case in cases if case.id != original.id)
-    assert followup.channel_metadata["candidate_conversation_ids"] == [original.id]
-    assert all(
-        case.channel_metadata["conversation_membership"] == "provisional"
-        and "conversation_requester_id" not in case.channel_metadata
-        and len(case.channel_metadata["incident_messages"]) == 1
-        for case in cases
-    )
+    followup = await saved_case(bundle)
+    assert followup.id == original.id
+    assert followup.channel_metadata["progress_review_queue"] is True
+    assert followup.channel_metadata["conversation_membership"] == "provisional"
+    assert "conversation_requester_id" not in followup.channel_metadata
+    assert len(followup.channel_metadata["incident_messages"]) == 2
+    assert not followup.channel_metadata.get("candidate_conversation_ids")
     assert reservations(bundle) == 0
     bundle.retrieve.assert_not_called()
     bundle.llm.invoke.assert_not_called()

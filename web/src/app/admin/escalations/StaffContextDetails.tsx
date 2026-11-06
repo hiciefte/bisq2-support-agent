@@ -12,6 +12,7 @@ function CaseLinks({ ids }: { ids: number[] }) {
     ));
 }
 
+/** Explain delivery and review evidence without presenting a hold as resolution. */
 export function StaffContextDetails({ context }: { context: StaffContextMetadata }) {
     const reviewMessages = context.context_reason === "moderation_review_required"
         ? context.moderation_context_snapshot
@@ -39,6 +40,14 @@ export function StaffContextDetails({ context }: { context: StaffContextMetadata
                 internal review decision; it cannot publish a reply to the public room.
             </p>
             {context.context_reason && <p className="text-sm">{staffContextReasonLabel(context.context_reason)}</p>}
+            {context.progress_review_queue && (
+                <div role="status" className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
+                    <p className="font-medium">Unresolved progress reports</p>
+                    <p>These reports are collected for review. They have not been confirmed as one incident, and no AI reply is generated from this queue.</p>
+                    {context.incident_context_overflow && <p>Only the first and most recent reports are retained here. Review the source conversation for the missing reports.</p>}
+                    {context.candidate_conversation_overflow && <p>The possible earlier cases shown are limited; other connections may need review.</p>}
+                </div>
+            )}
             {decision ? (
                 <section aria-label="Recorded Staff association" className="max-w-prose space-y-1 text-sm">
                     <h4 className="font-medium">
@@ -98,6 +107,7 @@ export function StaffContextDetails({ context }: { context: StaffContextMetadata
                             <CaseLinks ids={context.pending_candidate_ids ?? []} />
                         </p>
                     )}
+                    {context.pending_candidate_overflow && <p>Additional later messages could not be linked here. Review the source conversation before responding.</p>}
                 </div>
             )}
             {context.late_update_requires_review && (

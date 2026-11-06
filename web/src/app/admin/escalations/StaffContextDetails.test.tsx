@@ -2,6 +2,21 @@ import { render, screen, within } from "@testing-library/react";
 import { staffContextMetadata } from "@/lib/staff-context";
 import { StaffContextDetails } from "./StaffContextDetails";
 
+test("progress review queues disclose unconfirmed membership and omitted coverage", () => {
+    const context = staffContextMetadata({
+        response_kind: "public_context",
+        progress_review_queue: true,
+        incident_context_overflow: true,
+        candidate_conversation_overflow: true,
+    });
+    render(<StaffContextDetails context={context!} />);
+    expect(screen.getByText("Unresolved progress reports")).toBeInTheDocument();
+    expect(screen.getByText(/not been confirmed as one incident/)).toBeInTheDocument();
+    expect(screen.getByText(/first and most recent reports/)).toBeInTheDocument();
+    expect(screen.getByText(/other connections may need review/)).toBeInTheDocument();
+    expect(staffContextMetadata({ response_kind: "public_context", progress_review_queue: "true" })?.progress_review_queue).toBe(false);
+});
+
 test("shows possible connections without asserting common ownership or approval", () => {
     const context = staffContextMetadata({
         response_kind: "public_context",
@@ -9,12 +24,14 @@ test("shows possible connections without asserting common ownership or approval"
         context_reason: "conversation_membership_unresolved",
         candidate_conversation_ids: [42, 42, 43, "private-id", -1, 2.5, null],
         conversation_pending_candidate_ids: [45],
+        conversation_pending_candidate_overflow: true,
     });
     expect(context).not.toBeNull();
     render(<StaffContextDetails context={context!} />);
     expect(screen.getByText("Possible earlier cases:").parentElement).toHaveTextContent("Possible earlier cases: #42, #43");
     expect(screen.getByRole("link", { name: "Review case #42" })).toHaveAttribute("href", "/admin/escalations?search=%2342");
     expect(screen.getByRole("link", { name: "Review case #45" })).toHaveAttribute("href", "/admin/escalations?search=%2345");
+    expect(screen.getByText(/Additional later messages could not be linked here/)).toBeInTheDocument();
     expect(screen.getByText(/connection has not been confirmed/)).toBeInTheDocument();
     expect(screen.getByText(/no new AI reply was generated for this message/)).toBeInTheDocument();
     expect(screen.queryByText(/private-id/)).not.toBeInTheDocument();
@@ -243,4 +260,31 @@ test("old Staff holds have no invented audit explanation", () => {
     render(<StaffContextDetails context={context} />);
     expect(screen.queryByRole("region", { name: "Recorded Staff association" })).not.toBeInTheDocument();
     expect(screen.getByText("Synthetic Staff clarification")).toBeInTheDocument();
+});
+
+test("snapshot uses the backend Unicode budget and retains the last Staff turn", () => {
+    const context = decisionContext(confirmedDecision, {
+        staff_activity_snapshot: [
+            { role: "staff", speaker: "participant-1", content: "x".repeat(3998) },
+            { role: "staff", speaker: "participant-2", content: "👍👍" },
+        ],
+    });
+    expect(context.staff_activity_snapshot).toHaveLength(2);
+    expect(context.staff_activity_decision?.trigger_in_snapshot).toBe(true);
+});
+
+test.each([
+    { role: "staff", speaker: "participant-2", content: "x".repeat(4000) },
+    { role: "staff", speaker: "requester", content: "Invalid attribution" },
+])("discarded turns prevent an unsupported trigger-inclusion claim", (lastTurn) => {
+    const context = decisionContext(confirmedDecision, {
+        staff_activity_snapshot: [
+            { role: "staff", speaker: "participant-1", content: "Earlier Staff turn" },
+            lastTurn,
+        ],
+    });
+    expect(context.staff_activity_snapshot).toHaveLength(1);
+    expect(context.staff_activity_decision).toBeUndefined();
+    render(<StaffContextDetails context={context} />);
+    expect(screen.queryByText(/triggering Staff turn is included/)).not.toBeInTheDocument();
 });

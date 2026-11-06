@@ -30,32 +30,66 @@ _CONTEXT_HEADER = "\n\nConfirmed requester context:\n"
 _QUOTED_VALUE = r'"[^"]*(?:"|$)' r"|'[^']*(?:'|$)" r"|`[^`]*(?:`|$)"
 _MATRIX_TOKEN_RE = re.compile(PII_LOGGING_PATTERNS["matrix_token"])
 _ASSIGNMENT = r"\b[\"']?\s*[:=]\s*"
-_SEED_VALUE_RE = re.compile(
-    r"(?P<label>\b(?:mnemonic|seed[ _-]?phrase|wallet[ _-]?seed)"
-    + _ASSIGNMENT
-    + rf")(?P<value>{_QUOTED_VALUE}|[^;.!?]+)",
-    re.IGNORECASE,
+_CREDENTIAL_LABEL = (
+    r"\b(?:password|passwd|pwd|secret|(?:access[ _-]?)?token|"
+    r"api[ _-]?key|private[ _-]?key|mnemonic|seed[ _-]?phrase|wallet[ _-]?seed)"
 )
+# Unquoted values can contain spaces and punctuation within a word. Stop at a
+# sentence/field boundary, not the first word of a multiword credential.
+_UNQUOTED_VALUE = r"(?:(?!;|[.!?](?:\s|$)|\n---\n)[\s\S])+"
 _CREDENTIAL_VALUE_RE = re.compile(
-    r"(?P<label>\b(?:password|passwd|pwd|secret|(?:access[ _-]?)?token|"
-    r"api[ _-]?key|private[ _-]?key)"
-    + _ASSIGNMENT
-    + rf")(?P<value>{_QUOTED_VALUE}|[^\s,;]+)",
+    rf"(?P<label>{_CREDENTIAL_LABEL}{_ASSIGNMENT})"
+    rf"(?P<value>{_QUOTED_VALUE}|{_UNQUOTED_VALUE})",
+    re.IGNORECASE,
+)
+_NATURAL_CREDENTIAL_RE = re.compile(
+    rf"(?P<label>{_CREDENTIAL_LABEL}\s+is\s+)"
+    rf"(?P<value>{_QUOTED_VALUE}|{_UNQUOTED_VALUE})",
+    re.IGNORECASE,
+)
+_DIAGNOSTIC_STATE = (
+    r"(?:incorrect|wrong|invalid|missing|lost|rejected|expired|unavailable|"
+    r"not (?:accepted|working|recognized|valid|available))"
+    r"(?:\s+(?:only\s+)?(?:when|after|before|on|in|by|for|during|since|until|"
+    r"with|without)\b[\s\S]*)?"
+)
+_DIAGNOSTIC_STATE_RE = re.compile(_DIAGNOSTIC_STATE, re.IGNORECASE)
+_DIAGNOSTIC_QUERY_PREFIX_RE = re.compile(
+    r"\b(?:why|when|how)\s+(?:is|was)\s+(?:my|the|this)\s*$", re.IGNORECASE
+)
+_DIAGNOSTIC_QUERY_SUFFIX_RE = re.compile(
+    rf"(?P<secret>.+?)(?P<diagnostic>\s+{_DIAGNOSTIC_STATE})$",
     re.IGNORECASE,
 )
 
 
-def _sanitize(text: str) -> str:
-    text = PIIDetector().redact(text)
+def _sanitize(text: str, *, replacement: str = "[REDACTED]") -> str:
+    """Withhold identifiers and complete credential values before retrieval."""
+    text = PIIDetector().redact(text, replacement=replacement)
     for pattern in (_SECRET_TOKEN_RE, _MATRIX_TOKEN_RE):
-        text = pattern.sub("[REDACTED]", text)
+        text = pattern.sub(replacement, text)
+
+    def redact_value(match: re.Match[str]) -> str:
+        """Keep safe diagnostic predicates while removing disclosed values."""
+        value = match.group("value")
+        if match.re is _NATURAL_CREDENTIAL_RE and _DIAGNOSTIC_STATE_RE.fullmatch(
+            value.strip()
+        ):
+            return match.group(0)
+        suffix = ""
+        # In "Why is my token=... rejected?", the final predicate describes
+        # the failure. Preserve it only in that explicit question construction.
+        if _DIAGNOSTIC_QUERY_PREFIX_RE.search(match.string[: match.start()]):
+            diagnostic = _DIAGNOSTIC_QUERY_SUFFIX_RE.fullmatch(value)
+            if diagnostic:
+                suffix = diagnostic.group("diagnostic")
+        return f"{match.group('label')}{replacement}{suffix}"
+
     # Topic words such as "token" or "seed phrase" belong in support queries.
-    # Redact an actual assigned value without removing the subject of a request.
-    # Natural "is" clauses can contain diagnostic negation, not a secret value.
-    # Seed payloads may contain multiple words. Keep the entire value out of
-    # retrieval; a token-only assignment matcher would leak the remaining words.
-    for pattern in (_SEED_VALUE_RE, _CREDENTIAL_VALUE_RE):
-        text = pattern.sub(lambda match: f"{match.group('label')}[REDACTED]", text)
+    # Natural disclosures and assignments redact whole values; a narrowly
+    # recognized diagnostic predicate such as "is incorrect" remains useful.
+    for pattern in (_NATURAL_CREDENTIAL_RE, _CREDENTIAL_VALUE_RE):
+        text = pattern.sub(redact_value, text)
     return text.replace("@", "＠").strip()
 
 
@@ -83,7 +117,13 @@ def build_retrieval_query(
     does not fit, omit it instead of cutting off its qualifiers. The existing
     request contract bounds the focal question itself at 4000 characters.
     """
+    if len(question) > MAX_RETRIEVAL_QUERY_CHARS:
+        raise ValueError("The complete focal query must fit the request bound")
     focal = _sanitize(question)
+    if len(focal) > MAX_RETRIEVAL_QUERY_CHARS:
+        # A short secret can expand to [REDACTED]. A one-character marker keeps
+        # every nonsecret focal condition within the existing request bound.
+        focal = _sanitize(question, replacement="*")
     if not focal or len(focal) > MAX_RETRIEVAL_QUERY_CHARS:
         raise ValueError("The complete focal query must fit the request bound")
 

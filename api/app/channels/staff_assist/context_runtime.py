@@ -177,6 +177,7 @@ def _staff_activity_metadata(
     snapshot: _SourceContextSnapshot,
     phase: Literal["pre_generation", "pre_root", "pre_note"],
 ) -> dict[str, Any]:
+    """Record the observed staff decision separately from generation inputs."""
     if snapshot.staff_activity_decision is None:
         return {}
     # Observation-time review context, never a replacement for model-input
@@ -359,6 +360,7 @@ class MatrixContextRuntime:
             return await self._process_incident(incoming, channel)
 
     async def _process_incident(self, incoming: Any, channel: Any) -> bool:
+        """Persist incident membership or bounded review intake before generation."""
         if self._closed:
             return False
         policy_service = self.runtime.resolve_optional(
@@ -418,6 +420,17 @@ class MatrixContextRuntime:
             and not progress_update
         ):
             return False
+        if progress_update:
+            review_case = await incidents.progress_review_case(
+                incoming, self._trial.trial_id if self._trial else None
+            )
+            if review_case is not None:
+                lock = await service._acquire_delivery_lock(review_case)
+                try:
+                    await incidents.append(review_case, incoming, question)
+                finally:
+                    await service._release_delivery_lock(review_case, lock)
+                return False
         # Do not assume a native reply is standalone when its incident was not
         # captured: the reply fallback has already been removed from its text.
         # Preserve the missing relationship for Admin instead of spending a
@@ -434,6 +447,8 @@ class MatrixContextRuntime:
         candidate_ids = await incidents.candidate_links(
             incoming, self._trial.trial_id if self._trial else None
         )
+        candidate_overflow = len(candidate_ids) > incidents.MAX_CANDIDATE_LINKS
+        candidate_ids = candidate_ids[: incidents.MAX_CANDIDATE_LINKS]
         unresolved_quote = quoted_question(question) is not None
         provisional = (
             helper_turn(question)
@@ -464,6 +479,12 @@ class MatrixContextRuntime:
                     "model_call_status": "not_started",
                     "incident_messages": [incidents.message(incoming, question)],
                     "incident_frozen": False,
+                    **({"progress_review_queue": True} if progress_update else {}),
+                    **(
+                        {"candidate_conversation_overflow": True}
+                        if candidate_overflow
+                        else {}
+                    ),
                     "conversation_membership": (
                         "provisional" if provisional else "confirmed"
                     ),
@@ -498,6 +519,14 @@ class MatrixContextRuntime:
                 pending = (candidate.channel_metadata or {}).get(
                     "conversation_pending_candidate_ids", []
                 )
+                if len(pending) >= incidents.MAX_CANDIDATE_LINKS:
+                    if not (candidate.channel_metadata or {}).get(
+                        "conversation_pending_candidate_overflow"
+                    ):
+                        await store.update(
+                            candidate_id, conversation_pending_candidate_overflow=True
+                        )
+                    continue
                 await store.update(
                     candidate_id,
                     conversation_pending_candidate_ids=list(
@@ -681,6 +710,7 @@ class MatrixContextRuntime:
         question: str,
         policy_service: Any,
     ) -> bool:
+        """Generate once from frozen evidence and recheck gates before each send."""
         if not await self._case_is_open(case_id):
             return False
         from app.channels.plugins.matrix.room_filter import (

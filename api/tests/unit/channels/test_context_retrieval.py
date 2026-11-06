@@ -174,6 +174,7 @@ def test_query_redacts_known_identifiers_and_secrets_without_losing_diagnostic()
         "Is a wallet seed the same as a seed phrase?",
         "My password is incorrect.",
         "My password is not accepted.",
+        "My password is incorrect only after reconnecting.",
         "My seed phrase length is not recognized.",
         "My token is missing.",
     ],
@@ -208,6 +209,26 @@ def test_actual_secret_value_is_redacted_without_losing_credential_topic():
     ("text", "label", "secret_values"),
     [
         ("password=xy", "password", ["xy"]),
+        (
+            "My password is synthetic cedar violet amber",
+            "password",
+            ["synthetic", "cedar", "violet", "amber"],
+        ),
+        (
+            "password: synthetic cedar violet amber",
+            "password",
+            ["synthetic", "cedar", "violet", "amber"],
+        ),
+        (
+            "private key=synthetic.cedar violet amber",
+            "private key",
+            ["synthetic", "cedar", "violet", "amber"],
+        ),
+        (
+            "My seed phrase is synthetic cedar\nviolet amber",
+            "seed phrase",
+            ["synthetic", "cedar", "violet", "amber"],
+        ),
         ('password="synthetic quoted value"', "password", ["synthetic quoted value"]),
         ("private key: synthetic-key-value", "private key", ["synthetic-key-value"]),
         (
@@ -257,6 +278,41 @@ def test_known_matrix_credential_identifier_is_redacted_without_assignment():
     assert "SyntheticAuthException" in query
     assert "syt_syntheticSessionValue" not in query
     assert "[REDACTED]" in query
+
+
+def test_multiword_assignment_preserves_explicit_diagnostic_question_conditions():
+    query = build_retrieval_query(
+        "Why is my password: synthetic cedar violet amber "
+        "not accepted only after reconnecting?"
+    )
+
+    assert (
+        query == "Why is my password: [REDACTED] not accepted only after reconnecting?"
+    )
+
+
+@pytest.mark.parametrize("secret", ["password=xy", "password=x", "token=y"])
+def test_redaction_expansion_cannot_reject_a_valid_length_focal_question(secret):
+    suffix = " only when offline?"
+    prefix = "Why does my wallet stop? "
+    question = (
+        prefix
+        + "x" * (MAX_RETRIEVAL_QUERY_CHARS - len(prefix + " " + secret + "." + suffix))
+        + " "
+        + secret
+        + "."
+        + suffix
+    )
+    assert len(question) == MAX_RETRIEVAL_QUERY_CHARS
+
+    query = build_retrieval_query(question, [requester("SyntheticExtraDiagnostic")])
+
+    assert len(query) <= MAX_RETRIEVAL_QUERY_CHARS
+    assert secret not in query
+    assert query.startswith(prefix)
+    assert query.endswith("." + suffix)
+    assert secret.partition("=")[0] + "=*" in query
+    assert "SyntheticExtraDiagnostic" not in query
 
 
 def test_character_bound_retains_focal_request_and_complete_context_conditions():
