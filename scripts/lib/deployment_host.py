@@ -97,10 +97,55 @@ def private_json(path: Path) -> dict:
     return value
 
 
+def _order_independent_binds(value: object) -> object:
+    """Sort only ordinary binds whose canonical destinations cannot overlap."""
+    if not isinstance(value, list):
+        return value
+
+    def canonical_absolute(path: str) -> bool:
+        return path.startswith("/") and all(
+            part not in {"", ".", ".."} for part in path.split("/")[1:]
+        )
+
+    destinations: list[str] = []
+    for entry in value:
+        if not isinstance(entry, str) or any(
+            ord(character) < 32 or ord(character) == 127 for character in entry
+        ):
+            return value
+        fields = entry.split(":")
+        # Preserve unfamiliar modes, including relabeling/propagation options,
+        # as order-sensitive. Never rewrite options within an entry.
+        if len(fields) not in {2, 3} or (
+            len(fields) == 3 and fields[2] not in {"ro", "rw"}
+        ):
+            return value
+        source, destination = fields[:2]
+        if not (
+            canonical_absolute(source)
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", source)
+        ) or not canonical_absolute(destination):
+            return value
+        if any(
+            destination == other
+            or destination.startswith(other + "/")
+            or other.startswith(destination + "/")
+            for other in destinations
+        ):
+            return value
+        destinations.append(destination)
+    return sorted(value)
+
+
 def replacement_host_config(config: dict) -> dict:
     """Compare only documented Docker representation changes on replacement."""
     require(isinstance(config, dict), "host_replacement_host_config")
     result = dict(config)
+    if "Binds" in result:
+        # _replacement separately requires exact resolved Mounts. Here only the
+        # order of proven independent bind entries may vary; retain every byte
+        # of their source, destination and mode, plus their multiplicity.
+        result["Binds"] = _order_independent_binds(result["Binds"])
     # Moby buildSandboxOptions uses len > 0 for these three DNS slices:
     # nil and [] both inherit daemon defaults. Nonempty order stays significant.
     for field in ("Dns", "DnsOptions", "DnsSearch"):
