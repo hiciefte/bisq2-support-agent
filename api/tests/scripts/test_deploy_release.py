@@ -114,6 +114,15 @@ def assert_error(result, code):
         ({"api/requirements.txt": "example==1.0\n"}, "api", ["api"]),
         ({"web/src/app/page.tsx": "export default 1;\n"}, "web", ["web"]),
         ({"web/package.json": "{}\n"}, "web", ["web"]),
+        ({"docker/web/Dockerfile": "FROM fixture\n"}, "web", ["web"]),
+        (
+            {
+                "docker/web/Dockerfile": "FROM fixture\n",
+                "api/app/example.py": "NEW = 2\n",
+            },
+            "api,web",
+            ["api", "web"],
+        ),
         (
             {"web/package-lock.json": "{}\n", "api/app/example.py": "NEW = 2\n"},
             "web,api",
@@ -166,6 +175,8 @@ def test_plan_binds_immutable_source_and_selected_service_without_worktree_write
     [
         "docker/docker-compose.yml",
         "docker/api/Dockerfile",
+        "docker/web/Dockerfile.dev",
+        "docker/web/entrypoint.sh",
         "scripts/update.sh",
         "api/data/faqs.db",
         "api/app/resources/wiki/seed.jsonl",

@@ -81,6 +81,49 @@ def new_issue(text: str) -> bool:
     )
 
 
+def diagnostic_progress(text: str) -> bool:
+    """Narrow transaction-check results, never an independent support question.
+
+    These reports remain meaningful incident facts. Unlike acknowledgements,
+    an unmatched report must be retained for Admin without starting generation.
+    """
+    if new_issue(text) or "?" in text or quoted_question(text):
+        return False
+    text = text.strip().rstrip(".! ")
+    product = r"(?:bisq[ _-]?(?:1|2|easy) )?"
+    transaction = rf"(?:(?:the|my|our) )?{product}(?:(?:deposit|payout) )?transaction"
+    subject = rf"(?:{transaction}|(?:the|my|our) {product}(?:deposit|payout)|it)"
+    count = r"\d{1,6} confirmations?"
+    return bool(
+        re.fullmatch(
+            rf"(?:{count}|confirmations?: \d{{1,6}}|"
+            rf"(?:i (?:see|have)|{subject} (?:has|shows)) (?:now )?{count}|"
+            rf"{subject} (?:is|was) (?:now |still )?"
+            r"(?:confirmed|unconfirmed|pending|paid(?: out)?)|"
+            rf"i checked {transaction}(?: in (?:the|an?) (?:block )?explorer)?"
+            rf"(?: and|[;,]) (?:it (?:is|was) (?:now |still )?"
+            rf"(?:confirmed|unconfirmed|pending|paid(?: out)?)|it has {count}))",
+            text,
+            re.I,
+        )
+    )
+
+
+def _progress_matches(text: str, previous: str) -> bool:
+    """A unique requester incident also needs a compatible transaction subject."""
+    product = explicit_product(text)
+    return bool(
+        diagnostic_progress(text)
+        and compatible(text, previous)
+        and (not product or product == explicit_product(previous))
+        and re.search(
+            r"\b(?:trade|wallet|deposit|payout|transaction|confirmations?)\b",
+            previous,
+            re.I,
+        )
+    )
+
+
 def helper_question(text: str) -> bool:
     """Conservative second-person diagnostic turn, not a general how-to request."""
     return bool(
@@ -201,7 +244,28 @@ def helper_turn(text: str) -> bool:
     if standalone_request(text) or quoted_question(text):
         return False
     text = re.sub(r"^(?:also|and)\b[\s,:;-]*", "", text.strip(), flags=re.I)
-    return bool(_advisory_start(text) or re.match(r"(?:if|when) you\b", text, re.I))
+    # Only complete paths rooted in a known UI menu are advice. Ordinary
+    # slash-separated data, quoted errors and paths with a personal request
+    # remain outside this narrow helper rule.
+    navigation = bool(
+        not re.search(
+            r"\b(?:i|my|me|we|our|error|failed|fails|cannot|broken|stuck|"
+            r"refused|unavailable|timeout|timed out|not (?:working|responding|connecting))\b",
+            text,
+            re.I,
+        )
+        and re.fullmatch(
+            r"(?:settings|preferences|account|wallet|funds|help|trades?)"
+            r"(?:\s*(?:->|→|>|»|/)\s*[a-z][a-z0-9 ()-]{0,49}){1,5}[.!]?",
+            text,
+            re.I,
+        )
+    )
+    return bool(
+        navigation
+        or _advisory_start(text)
+        or re.match(r"(?:if|when) you\b", text, re.I)
+    )
 
 
 def compatible(text: str, previous: str) -> bool:
@@ -383,12 +447,15 @@ def incident_question(
 class ContextIncidentStore:
     """Resolve explicit membership within one source room and trial."""
 
+    MAX_CANDIDATE_LINKS = 8
+
     def __init__(self, db_path: str) -> None:
         self.db_path = db_path
 
     async def find(
         self, incoming: Any, trial_id: str | None
     ) -> tuple[int | None, bool]:
+        """Resolve duplicates or one incident without promoting review queues."""
         metadata = incoming.channel_metadata
         # An edit target or native thread root wins over its reply fallback.
         # A fallback pointing elsewhere must not move an established thread.
@@ -431,6 +498,18 @@ class ContextIncidentStore:
                     == incoming.user.user_id
                 ):
                     return case_id, True
+                continue
+            if saved.get("progress_review_queue"):
+                # An intake queue is not a conversation anchor. Preserve an
+                # author's edits, but never infer membership from queued text
+                # or a reply to one of its otherwise unrelated reports.
+                edit = metadata.get("replaces_event_id")
+                if (
+                    edit in ids
+                    and known.get(edit, {}).get("sender_id", owner)
+                    == incoming.user.user_id
+                ):
+                    return case_id, False
                 continue
             if relations & ids:
                 # A new issue explicitly starts a new case, even when entered
@@ -492,9 +571,18 @@ class ContextIncidentStore:
                 if (
                     can_continue
                     and (own_texts or owner == incoming.user.user_id)
-                    and continuation(
-                        incoming.question,
-                        "\n".join(own_texts) if own_texts else question,
+                    and (
+                        continuation(
+                            incoming.question,
+                            "\n".join(own_texts) if own_texts else question,
+                        )
+                        or (
+                            requester == incoming.user.user_id
+                            and _progress_matches(
+                                incoming.question,
+                                "\n".join(own_texts) if own_texts else question,
+                            )
+                        )
                     )
                 ):
                     candidates.append(case_id)
@@ -511,6 +599,41 @@ class ContextIncidentStore:
         if len(candidates) != 1:
             return None, False
         return candidates[0], False
+
+    async def progress_review_case(
+        self, incoming: Any, trial_id: str | None
+    ) -> int | None:
+        """Reuse a sender's unresolved intake queue, never claim membership.
+
+        Confirmed/native/quoted membership must be resolved before this lookup.
+        The queue stays provisional until Admin handles it, so a burst cannot
+        allocate a new case and candidate backlinks for every progress report.
+        """
+        if not diagnostic_progress(incoming.question):
+            return None
+        async with aiosqlite.connect(self.db_path) as db:
+            row = await (
+                await db.execute(
+                    "SELECT id FROM escalations WHERE channel='matrix' "
+                    "AND user_id=? AND status IN ('pending', 'in_review') "
+                    "AND json_extract(channel_metadata, '$.response_kind')='public_context' "
+                    "AND json_extract(channel_metadata, '$.room_id')=? "
+                    "AND json_extract(channel_metadata, '$.context_trial_id') IS ? "
+                    "AND json_extract(channel_metadata, '$.conversation_membership')='provisional' "
+                    "AND json_extract(channel_metadata, '$.progress_review_queue')=1 "
+                    "AND json_extract(channel_metadata, '$.context_reason') "
+                    "IN ('conversation_membership_unresolved', 'incident_relation_unresolved') "
+                    "AND json_extract(channel_metadata, '$.model_call_status')='not_started' "
+                    "AND json_extract(channel_metadata, '$.incident_frozen')=0 "
+                    "ORDER BY id DESC LIMIT 1",
+                    (
+                        incoming.user.user_id,
+                        incoming.channel_metadata.get("room_id"),
+                        trial_id,
+                    ),
+                )
+            ).fetchone()
+        return row[0] if row else None
 
     async def candidate_links(self, incoming: Any, trial_id: str | None) -> list[int]:
         """Review hints only: never make room/topic proximity into membership."""
@@ -533,7 +656,7 @@ class ContextIncidentStore:
         independent_request = standalone_request(text)
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute(
-                "SELECT id, channel_metadata, question, created_at FROM escalations "
+                "SELECT id, channel_metadata, question, created_at, user_id FROM escalations "
                 "WHERE channel='matrix' AND status IN ('pending', 'in_review') "
                 "AND json_extract(channel_metadata, '$.response_kind')='public_context' "
                 "AND json_extract(channel_metadata, '$.room_id')=? "
@@ -548,7 +671,7 @@ class ContextIncidentStore:
         words = set(re.findall(r"[a-z]{4,}", text.lower())) - ignored
         matches = []
         now = datetime.now(timezone.utc)
-        for case_id, raw, previous, created_at in rows:
+        for case_id, raw, previous, created_at, owner in rows:
             saved = json.loads(raw or "{}")
             age = (now - datetime.fromisoformat(created_at)).total_seconds()
             idle = (
@@ -561,6 +684,7 @@ class ContextIncidentStore:
                 saved.get("response_kind") != "public_context"
                 or saved.get("room_id") != incoming.channel_metadata.get("room_id")
                 or saved.get("context_trial_id") != trial_id
+                or saved.get("progress_review_queue")
                 or not 0 <= age <= 3600
                 or not 0 <= idle <= 900
                 or not compatible(text, previous)
@@ -568,6 +692,13 @@ class ContextIncidentStore:
                 continue
             messages = saved.get("incident_messages", [])
             requester = saved.get("conversation_requester_id")
+            if not requester and saved.get("conversation_membership") != "provisional":
+                requester = owner
+            own_texts = [
+                message["text"]
+                for message in messages
+                if message.get("sender_id") == incoming.user.user_id
+            ]
             known_helper = (
                 saved.get("conversation_membership") == "confirmed"
                 and requester
@@ -577,7 +708,16 @@ class ContextIncidentStore:
                     for message in messages
                 )
             )
-            if known_helper and not independent_request:
+            progress_owner = requester == incoming.user.user_id or (
+                not requester
+                and owner == incoming.user.user_id
+                and diagnostic_progress(previous)
+            )
+            if progress_owner and _progress_matches(
+                text, "\n".join(own_texts) if own_texts else previous
+            ):
+                matches.append(case_id)
+            elif known_helper and not independent_request:
                 matches.append(case_id)
             elif (
                 dependent
@@ -617,6 +757,7 @@ class ContextIncidentStore:
         *,
         worker_active: bool = False,
     ) -> bool:
+        """Retain bounded context and flag late updates without regenerating."""
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("BEGIN IMMEDIATE")
             cursor = await db.execute(
@@ -657,6 +798,7 @@ class ContextIncidentStore:
             }
             activated = (
                 metadata.get("conversation_membership") == "provisional"
+                and not metadata.get("progress_review_queue")
                 and incoming.user.user_id not in helper_senders
                 and row[1] in {"pending", "in_review"}
                 and metadata.get("context_reason")
@@ -676,6 +818,16 @@ class ContextIncidentStore:
             updated_at = datetime.now(timezone.utc).isoformat()
             if len(messages) >= 10:
                 metadata["incident_context_overflow"] = True
+                if metadata.get("progress_review_queue"):
+                    # Preserve the original source and latest bounded reports.
+                    # Overflow is explicit; this queue is never generation input.
+                    messages = [
+                        messages[0],
+                        *messages[-8:],
+                        self.message(incoming, sanitized),
+                    ]
+                    metadata["incident_messages"] = messages
+                    metadata["incident_last_meaningful_at"] = updated_at
             else:
                 messages.append(self.message(incoming, sanitized))
                 metadata["incident_messages"] = messages

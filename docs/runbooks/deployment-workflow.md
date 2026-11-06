@@ -39,6 +39,9 @@ on failure and cannot be overwritten. Inside the source checkout, outputs are
 restricted to ignored `.agent-artifacts/` or `failed_updates/` directories.
 
 The planner accepts a conservative subset of selective API/web source changes.
+The production web image recipe (`docker/web/Dockerfile`) selects a web rebuild,
+including for a runtime-package security update. Other Docker recipes remain
+outside this capability.
 By default it refuses operational scripts, migrations, runtime data, catalogues,
 Compose, unknown paths and mismatched services. The explicit capabilities below
 admit only their individually bound exceptions. Dependency
