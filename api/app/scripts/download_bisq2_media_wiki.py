@@ -2,13 +2,14 @@ import argparse
 import logging
 import os
 import re
-import stat
 import sys
 import tempfile
 import time
 import xml.etree.ElementTree as ET
 
 import mwclient  # type: ignore[import-untyped]
+from app.scripts.wiki_atomic import replace_wiki_file
+from app.scripts.wiki_text import WikiTextRenderer, redirect_directive
 
 # Set up logging to stdout with debug level
 logging.basicConfig(
@@ -211,9 +212,7 @@ def main(output_dir: str) -> None:
                 )
                 if not isinstance(content, str):
                     raise ValueError("Missing readable revision content")
-                redirect = re.match(
-                    r"\s*#redirect\s*\[\[([^\]]+)\]\]", content, re.IGNORECASE
-                )
+                redirect = redirect_directive(content)
                 page_element = ET.SubElement(mediawiki_root, "page")
                 ET.SubElement(page_element, "title").text = page.name
                 ET.SubElement(page_element, "ns").text = str(page.namespace)
@@ -241,8 +240,10 @@ def main(output_dir: str) -> None:
                     revision_element, "text", attrib={"xml:space": "preserve"}
                 ).text = content
                 page_count += 1
-                if namespace == 0 and content.strip() and not redirect:
-                    article_count += 1
+                if namespace == 0:
+                    article_body = content[redirect.end() :] if redirect else content
+                    if WikiTextRenderer().render(article_body).text.strip():
+                        article_count += 1
             except Exception:
                 # A well-formed but partial export must not replace a good snapshot.
                 logging.exception(
@@ -269,13 +270,7 @@ def main(output_dir: str) -> None:
             os.fsync(handle.fileno())
         if not validate_xml(temporary):
             raise ValueError("Generated wiki XML failed validation")
-        mode = (
-            stat.S_IMODE(os.stat(output_filename).st_mode) & 0o777
-            if os.path.exists(output_filename)
-            else 0o644
-        )
-        os.chmod(temporary, mode)
-        os.replace(temporary, output_filename)
+        replace_wiki_file(temporary, output_filename)
         temporary = None
         logging.info("Validated snapshot saved as %s", output_filename)
     finally:

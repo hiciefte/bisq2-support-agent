@@ -116,3 +116,33 @@ def test_replacement_preserves_existing_reader_permissions(tmp_path, monkeypatch
     install_site(monkeypatch, {0: [page("Trading", "Article")], 10: []})
     downloader.main(str(tmp_path))
     assert target.stat().st_mode & 0o777 == 0o640
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "<!-- leading --> #REDIRECT [[Target]]",
+        "#REDIRECT: [[Target]]",
+        "<!-- a --><!-- b --> #redirect: [[Target]] <!-- tail -->",
+    ],
+)
+def test_export_rejects_comment_or_colon_only_redirect_corpus(
+    tmp_path, monkeypatch, content
+):
+    target = tmp_path / "bisq2_dump.xml"
+    target.write_bytes(b"previous snapshot")
+    install_site(monkeypatch, {0: [page("Alias", content)], 10: []})
+    with pytest.raises(ValueError, match="no non-redirect articles"):
+        downloader.main(str(tmp_path))
+    assert target.read_bytes() == b"previous snapshot"
+
+
+def test_export_retains_substantive_redirect_tail_as_article(tmp_path, monkeypatch):
+    text = "<!-- before --> #REDIRECT: [[Target]]\n{{Admonition_Warn|Do not overwrite}}\n* Keep backups"
+    install_site(monkeypatch, {0: [page("Alias", text)], 10: []})
+    downloader.main(str(tmp_path))
+    out = tmp_path / "processed.jsonl"
+    WikiDumpProcessor(str(tmp_path / "bisq2_dump.xml"), str(out)).process_dump()
+    row = json.loads(out.read_text())
+    assert row["redirect_target"] == "Target"
+    assert "Do not overwrite" in row["content"] and "* Keep backups" in row["content"]

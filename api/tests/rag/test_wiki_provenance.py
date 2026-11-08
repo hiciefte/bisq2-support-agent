@@ -125,6 +125,11 @@ def test_notices_are_exact_title_wiki_only(kind, title):
             "easy-reputation-amount-eligibility",
             "1,200 reputation points",
         ),
+        (
+            "Wallet",
+            "wallet-derivation-template-incomplete",
+            "SegWit",
+        ),
     ],
 )
 def test_reviewed_notice_cases_from_pinned_source_review(title, notice_id, phrase):

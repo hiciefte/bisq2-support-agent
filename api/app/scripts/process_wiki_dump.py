@@ -13,14 +13,14 @@ import json
 import logging
 import os
 import re
-import stat
 import tempfile
 import xml.etree.ElementTree as ET
 from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from app.scripts.wiki_text import WikiTextRenderer, template_key
+from app.scripts.wiki_atomic import replace_wiki_file
+from app.scripts.wiki_text import WikiTextRenderer, redirect_directive, template_key
 from app.services.wiki_metadata import reviewed_wiki_category
 
 # Configure logging
@@ -42,6 +42,7 @@ def coalesce_pages(
     merged = []
 
     def signature(element):
+        """Compare XML content without parser-added indentation/tail spacing."""
         # XML indentation and tail whitespace are not revision content. Leaf
         # text (especially <text xml:space="preserve">) stays byte-exact.
         return (
@@ -70,11 +71,20 @@ def coalesce_pages(
             existing_identity, target = by_id[page_id]
             if identity != existing_identity:
                 raise ValueError(f"Conflicting title/namespace for page ID {page_id}")
-            # Page-level redirect metadata can describe a different chunk's
-            # current state. The selected revision's actual directive wins.
+            # Identical repeated blocks describe the same state. Preserve their
+            # XML-only redirect marker; never carry it across different revisions.
             redirect = target.find("mw:redirect", namespace)
-            if redirect is not None:
+            incoming_redirect = page.find("mw:redirect", namespace)
+            same_revisions = {
+                signature(rev) for rev in target.findall("mw:revision", namespace)
+            } == {signature(rev) for rev in page.findall("mw:revision", namespace)}
+            if not same_revisions and redirect is not None:
                 target.remove(redirect)
+            elif same_revisions and incoming_redirect is not None:
+                if redirect is None:
+                    target.append(deepcopy(incoming_redirect))
+                elif signature(redirect) != signature(incoming_redirect):
+                    raise ValueError(f"Conflicting redirect for page ID {page_id}")
             for revision in page.findall("mw:revision", namespace):
                 target.append(deepcopy(revision))
         else:
@@ -169,7 +179,10 @@ def revision_metadata(
 
 
 class WikiDumpProcessor:
+    """Convert a complete XML snapshot into one atomically published corpus."""
+
     def __init__(self, input_file: str, output_file: str):
+        """Configure isolated source/output paths and per-run bookkeeping."""
         self.input_file = input_file
         self.output_file = output_file
         self.templates: Dict[str, str] = {}
@@ -313,20 +326,16 @@ class WikiDumpProcessor:
             content = text_elem.text or ""
             redirect = page.find("mw:redirect", self.namespace)
             redirect_target = redirect.get("title") if redirect is not None else None
-            directive = re.match(
-                r"^(?:\s|<!--.*?-->)*#redirect\s*:?\s*\[\[([^\]]+)\]\]",
-                content,
-                re.IGNORECASE | re.DOTALL,
-            )
+            directive = redirect_directive(content)
             if directive:
                 redirect_target = directive.group(1).split("|", 1)[0].strip()
                 content = content[directive.end() :]
 
-            # Use enhanced categorization logic
-            category = self.categorize_content(title, content)
-
             # Clean the text
             clean_content = self.clean_text(content)
+            # Preserve source/category cues while also seeing template-generated
+            # protocol prose. Reviewed title overrides still take precedence.
+            category = self.categorize_content(title, content + "\n" + clean_content)
 
             # Pure redirects have no article body, but trailing prose, warnings
             # and lists in a redirect source are still useful content.
@@ -432,10 +441,6 @@ class WikiDumpProcessor:
             raise ValueError("No articles to save; existing corpus left unchanged")
 
         destination = os.path.abspath(self.output_file)
-        try:
-            output_mode = stat.S_IMODE(os.stat(destination).st_mode) & 0o777
-        except FileNotFoundError:
-            output_mode = 0o644  # New wiki output is public source material.
         temporary = None
         try:
             with tempfile.NamedTemporaryFile(
@@ -447,13 +452,12 @@ class WikiDumpProcessor:
                 delete=False,
             ) as output:
                 temporary = output.name
-                os.fchmod(output.fileno(), output_mode)
                 for category in ("bisq2", "bisq1", "general"):
                     for entry in self.context[category]:
                         output.write(json.dumps(entry, ensure_ascii=False) + "\n")
                 output.flush()
                 os.fsync(output.fileno())
-            os.replace(temporary, destination)
+            replace_wiki_file(temporary, destination)
             temporary = None
         finally:
             if temporary is not None:
@@ -461,6 +465,7 @@ class WikiDumpProcessor:
 
 
 def main():
+    """Process an explicit offline snapshot, retaining legacy default paths."""
     # Define file paths
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     input_file = os.path.join(project_root, "data", "wiki", "bisq2_dump.xml")

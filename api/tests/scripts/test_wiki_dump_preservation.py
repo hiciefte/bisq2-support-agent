@@ -5,13 +5,143 @@ import stat
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
+from copy import deepcopy
 
 import pytest
-from app.scripts.process_wiki_dump import WikiDumpProcessor
+from app.scripts.process_wiki_dump import WikiDumpProcessor, coalesce_pages
 from app.scripts.wiki_text import WikiTextRenderer
 from app.services.wiki_service import WikiService
 
 pytestmark = pytest.mark.unit
+
+
+def test_repeated_spaces_and_explicit_template_colons_resolve():
+    renderer = WikiTextRenderer(
+        {"Template:Trade limit": "0.01 BTC", "Template:Payment:Limit": "method limit"}
+    )
+    result = renderer.render("{{Trade__limit}} {{Template:Payment:Limit}}")
+    assert result.text == "0.01 BTC method limit"
+    assert not result.source_gaps
+    assert (
+        "non-template transclusion unsupported"
+        in renderer.render("{{Payment:Limit}}").text
+    )
+
+
+def test_preflight_ignores_noinclude_and_literal_examples_but_not_active_code():
+    renderer = WikiTextRenderer(
+        {
+            "Limit": "<noinclude>{{#if:documentation|unrelated}}</noinclude>0.01 BTC",
+            "Literal": "<code><noinclude>{{#if:example|exact}}</noinclude></code>",
+            "Active": "{{#if:condition|unsupported}}0.01 BTC",
+        }
+    )
+    assert renderer.render("{{Limit}}").text == "0.01 BTC"
+    assert not renderer.render("{{Limit}}").source_gaps
+    assert (
+        "<noinclude>{{#if:example|exact}}</noinclude>"
+        in renderer.render("{{Literal}}").text
+    )
+    assert "unsupported constructs" in renderer.render("{{Active}}").text
+
+
+@pytest.mark.parametrize("prefix", ["", "<!-- leading -->", "<!-- a --><!-- b -->\n"])
+def test_template_redirect_after_comments_is_explicitly_unresolved(prefix):
+    result = WikiTextRenderer({"Limit": prefix + "#REDIRECT: [[Other]]"}).render(
+        "Before {{Limit}} after"
+    )
+    assert (
+        result.source_gaps[0]["reason"]
+        == "redirect definition Template:Limit unsupported"
+    )
+    assert "{{Limit}}" in result.text and result.text.endswith(" after")
+
+
+def test_includeonly_is_hidden_on_direct_article_but_visible_when_transcluded():
+    body = "Shown<includeonly>transclusion only</includeonly><noinclude>direct only</noinclude>"
+    renderer = WikiTextRenderer({"Example": body})
+    assert renderer.render(body).text == "Showndirect only"
+    assert renderer.render("{{Example}}").text == "Showntransclusion only"
+
+
+def test_nested_missing_fallback_is_bounded_with_original_call_retained_once():
+    call = "{{Unknown|" * 80 + "Never reveal the seed" + "}}" * 80
+    result = WikiTextRenderer().render(call + "\nAfter")
+    assert call in result.text and result.text.endswith("After")
+    assert "fallback traversal stopped" in result.text
+    assert len(result.source_gaps) <= WikiTextRenderer.MAX_FALLBACK_DEPTH + 1
+    assert sum("invocation" in gap for gap in result.source_gaps) == 1
+    assert all("invocation_sha256" in gap for gap in result.source_gaps[1:])
+    assert len(result.text) < len(call) + 5000
+
+
+def test_substituted_argument_bytes_exceed_budget_after_definition_fits():
+    renderer = WikiTextRenderer({"Repeat": "{{{1}}}" * 10})
+    renderer.MAX_EXPANSION_BYTES = 200
+    call = "{{Repeat|keep this warning}}"
+    assert len(renderer.templates["Repeat"].encode()) + len(call.encode()) < 200
+    result = renderer.render(call + "\nAfter")
+    assert result.source_gaps[0]["reason"] == "template expansion budget exceeded"
+    assert call in result.text and result.text.endswith("After")
+
+
+@pytest.mark.parametrize(
+    "budget", ["MAX_SOURCE_BYTES", "MAX_RENDER_BYTES", "MAX_RENDER_NODES"]
+)
+def test_total_render_limits_fail_closed_instead_of_publishing_partial(
+    tmp_path, monkeypatch, budget
+):
+    source = write_dump(
+        tmp_path, [("Safety", 0, "Before {{Missing|Keep original}} After")]
+    )
+    output = tmp_path / "processed.jsonl"
+    output.write_text("existing complete corpus")
+    monkeypatch.setattr(WikiTextRenderer, budget, 1)
+    with pytest.raises(ValueError, match="budget"):
+        WikiDumpProcessor(str(source), str(output)).process_dump()
+    assert output.read_text() == "existing complete corpus"
+
+
+def test_classification_uses_expanded_template_prose_and_reviewed_override(tmp_path):
+    source = write_dump(
+        tmp_path,
+        [
+            ("Checklist", 0, "{{Easy}}"),
+            ("Funding your wallet", 0, "{{Easy}}"),
+            ("Template:Easy", 10, "Bisq Easy setup and Bisq 2 protocol"),
+        ],
+    )
+    output = tmp_path / "processed.jsonl"
+    WikiDumpProcessor(str(source), str(output)).process_dump()
+    rows = {
+        row["title"]: row for row in map(json.loads, output.read_text().splitlines())
+    }
+    assert rows["Checklist"]["category"] == "bisq2"
+    assert rows["Funding your wallet"]["category"] == "bisq1"
+
+
+def test_identical_repeated_page_blocks_preserve_xml_only_redirect_marker(tmp_path):
+    source = write_dump(tmp_path, [("Alias", 0, "Substantive body without directive")])
+    tree = ET.parse(source)
+    ns = {"mw": "http://www.mediawiki.org/xml/export-0.10/"}
+    page = tree.getroot().find("mw:page", ns)
+    ET.SubElement(page, "{" + ns["mw"] + "}id").text = "7"
+    ET.SubElement(page, "{" + ns["mw"] + "}redirect", title="Target")
+    revision = page.find("mw:revision", ns)
+    ET.SubElement(revision, "{" + ns["mw"] + "}id").text = "1"
+    ET.SubElement(revision, "{" + ns["mw"] + "}timestamp").text = "2026-01-01T00:00:00Z"
+    pages = coalesce_pages([page, deepcopy(page)], ns)
+    processor = WikiDumpProcessor(str(source), str(tmp_path / "out"))
+    assert processor.process_page(pages[0])["redirect_target"] == "Target"
+    changed = deepcopy(page)
+    changed.find("mw:revision/mw:id", ns).text = "2"
+    changed.find("mw:revision/mw:timestamp", ns).text = "2026-01-02T00:00:00Z"
+    changed.find("mw:revision/mw:text", ns).text = "New nonredirect body"
+    changed.remove(changed.find("mw:redirect", ns))
+    for order in ([page, changed], [changed, page]):
+        assert "redirect_target" not in processor.process_page(
+            coalesce_pages(order, ns)[0]
+        )
 
 
 def test_real_warning_and_note_arguments_survive_missing_definitions():
@@ -550,3 +680,16 @@ def test_substantive_redirect_tail_survives_including_warnings_lists_and_images(
     assert "Warning: Never reveal your seed." in row["content"]
     assert "* Keep all backups" in row["content"]
     assert "Guide screenshot" in row["content"]
+
+
+def test_redirect_comment_prefix_is_scanned_without_backtracking():
+    from app.scripts.process_wiki_dump import redirect_directive
+
+    prefix = " \n<!-- prefix -->" * 20000
+    assert redirect_directive(prefix + "ordinary article") is None
+    assert redirect_directive(prefix + "<!-- unterminated") is None
+    content = prefix + "#redirect [[Target#Section]]\nKeep this warning."
+    match = redirect_directive(content)
+    assert match is not None
+    assert match.group(1) == "Target#Section"
+    assert content[match.end() :] == "\nKeep this warning."

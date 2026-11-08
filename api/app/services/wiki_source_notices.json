@@ -238,6 +238,47 @@
         }
       ],
       "limits": "Release-pinned source check only; no funded trade, wallet recovery, private-key export, signature/broadcast or live payment-provider action was performed."
+    },
+    {
+      "id": "wallet-derivation-template-incomplete",
+      "title": "The historical BSQ derivation list is incomplete",
+      "body": "The archived template lists only BSQ account m/44'/142'/0'. Bisq 1 v1.10.11 additionally defines BSQ SegWit account m/44'/142'/1'; wallet setup uses a SegWit keychain for new wallets and can migrate legacy wallets. The historical list is incomplete for that version and should not be treated as a complete wallet-recovery recipe. This check does not validate an external-wallet restoration.",
+      "source_titles": [
+        "Backing up your wallet seed",
+        "Restoring your wallet from seed",
+        "Wallet"
+      ],
+      "status": "verified-against-pinned-source",
+      "checked_at": "2026-11-08",
+      "display_priority": "prominent",
+      "is_added_notice_not_original_source": true,
+      "sources": [
+        {
+          "label": "Bisq 1 legacy and SegWit BTC/BSQ account paths",
+          "url": "https://github.com/bisq-network/bisq/blob/ea9d5dff90c99ac462f2b0a7bf9ef92683956619/core/src/main/java/bisq/core/btc/setup/BisqKeyChainGroupStructure.java#L32-L74",
+          "line_start": 32,
+          "line_end": 74,
+          "sha256": "80f978708656fa689a79d544fbdae96c2f7a08b038dd05f770ba9946a8591629",
+          "checked_at": "2026-11-08T18:52:34.535233+00:00"
+        },
+        {
+          "label": "Bisq 1 new wallets use a SegWit keychain",
+          "url": "https://github.com/bisq-network/bisq/blob/ea9d5dff90c99ac462f2b0a7bf9ef92683956619/core/src/main/java/bisq/core/btc/setup/WalletConfig.java#L434-L450",
+          "line_start": 434,
+          "line_end": 450,
+          "sha256": "49955fcdf3a6cb50eb516cf2f98f118eeebc552c6eb0349e4164bb31647c7ed7",
+          "checked_at": "2026-11-08T18:49:30.997830+00:00"
+        },
+        {
+          "label": "Bisq 1 legacy wallet SegWit migration",
+          "url": "https://github.com/bisq-network/bisq/blob/ea9d5dff90c99ac462f2b0a7bf9ef92683956619/core/src/main/java/bisq/core/btc/setup/WalletConfig.java#L566-L605",
+          "line_start": 566,
+          "line_end": 605,
+          "sha256": "49955fcdf3a6cb50eb516cf2f98f118eeebc552c6eb0349e4164bb31647c7ed7",
+          "checked_at": "2026-11-08T18:49:30.997830+00:00"
+        }
+      ],
+      "limits": "Release-pinned source check only; no funded trade, wallet recovery, private-key export, signature/broadcast or live payment-provider action was performed."
     }
   ]
 }
