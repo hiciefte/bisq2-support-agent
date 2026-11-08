@@ -216,6 +216,38 @@ def test_export_rejects_conflicting_normalized_template_definitions(
     assert target.read_bytes() == b"previous snapshot"
 
 
+@pytest.mark.parametrize(
+    ("article", "ordinary", "nested", "expected"),
+    [
+        ("{{Empty}}", "Useful content", "<!-- docs -->", "Useful content"),
+        (
+            "{{Template:Template:Empty}}",
+            "Other content",
+            "Nested title",
+            "Nested title",
+        ),
+    ],
+)
+def test_export_distinguishes_template_prefix_in_definition_title(
+    tmp_path, monkeypatch, article, ordinary, nested, expected
+):
+    """Distinct namespace titles remain distinct through export and processing."""
+    install_site(
+        monkeypatch,
+        {
+            0: [page("Article", article)],
+            10: [
+                page("Template:Empty", ordinary, 10, page_id=2),
+                page("Template:Template:Empty", nested, 10, page_id=3),
+            ],
+        },
+    )
+    downloader.main(str(tmp_path))
+    output = tmp_path / "processed.jsonl"
+    WikiDumpProcessor(str(tmp_path / "bisq2_dump.xml"), str(output)).process_dump()
+    assert json.loads(output.read_text())["content"] == expected
+
+
 def test_export_does_not_replace_snapshot_updated_during_fetch(tmp_path, monkeypatch):
     """Capture the destination before acquisition so overlapping writers conflict."""
     from app.scripts.wiki_atomic import WikiPublicationConflictError

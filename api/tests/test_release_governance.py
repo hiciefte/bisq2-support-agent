@@ -5,9 +5,11 @@ from __future__ import annotations
 import copy
 import json
 import re
+import shlex
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -22,6 +24,36 @@ SINGLE_OPERATOR_RUNBOOK = (
     REPO_ROOT / "docs" / "runbooks" / "single-operator-production-testing.md"
 )
 DIGEST_REF_PATTERN = re.compile(r"^\S+@sha256:[0-9a-f]{64}$")
+WEB_RUNTIME_PACKAGES = {
+    "libcrypto3=3.5.9-r0",
+    "libssl3=3.5.9-r0",
+    "musl=1.2.5-r24",
+    "musl-utils=1.2.5-r24",
+    "zlib=1.4-r0",
+}
+
+
+def _assert_web_runtime_package_pins(runtime: str) -> None:
+    """Inspect active shell-form apk commands, excluding comments and echo text."""
+    active_lines = "\n".join(
+        line for line in runtime.splitlines() if not line.lstrip().startswith("#")
+    )
+    logical_lines = re.sub(r"\\\r?\n", " ", active_lines)
+    packages = set()
+    for run in re.findall(r"^\s*RUN\s+(.+)$", logical_lines, re.MULTILINE):
+        lexer = shlex.shlex(run, posix=True, punctuation_chars=";&|")
+        lexer.whitespace_split = True
+        command: list[str] = []
+        for token in [*lexer, ";"]:
+            if token in {";", "&&", "||", "|", "&"}:
+                if command[:2] == ["apk", "add"]:
+                    packages.update(
+                        arg for arg in command[2:] if not arg.startswith("--")
+                    )
+                command = []
+            else:
+                command.append(token)
+    assert packages == WEB_RUNTIME_PACKAGES
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -115,16 +147,24 @@ def test_web_image_contains_only_pinned_fixed_runtime_dependencies() -> None:
         "RUN npm prune --omit=dev"
     )
 
-    assert "libcrypto3=3.5.9-r0" in runtime
-    assert "libssl3=3.5.9-r0" in runtime
-    assert "musl=1.2.5-r24" in runtime
-    assert "musl-utils=1.2.5-r24" in runtime
-    assert "zlib=1.4-r0" in runtime
+    _assert_web_runtime_package_pins(runtime)
     assert "rm -rf /usr/local/lib/node_modules/npm" in runtime
     assert "rm -f /usr/local/bin/npm /usr/local/bin/npx" in runtime
     assert "npm install --global" not in runtime
     assert 'CMD ["node", "node_modules/next/dist/bin/next", "start"]' in runtime
     assert "command" not in compose_web
+
+
+@pytest.mark.parametrize("decoy", ["# Pinned packages: {pins}", "RUN echo '{pins}'"])
+def test_web_runtime_pin_check_rejects_inactive_pins(decoy: str) -> None:
+    """Commented or printed pins cannot validate an unversioned installation."""
+    pins = " ".join(sorted(WEB_RUNTIME_PACKAGES))
+    packages = " ".join(
+        pin.split("=", maxsplit=1)[0] for pin in sorted(WEB_RUNTIME_PACKAGES)
+    )
+    runtime = decoy.format(pins=pins) + "\nRUN apk add --no-cache " + packages
+    with pytest.raises(AssertionError):
+        _assert_web_runtime_package_pins(runtime)
 
 
 def test_bisq_build_fetches_and_verifies_a_full_commit() -> None:

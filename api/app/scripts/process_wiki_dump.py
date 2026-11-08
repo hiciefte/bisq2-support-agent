@@ -53,6 +53,24 @@ def coalesce_pages(
             tuple(signature(child) for child in element),
         )
 
+    def deduplicate(page):
+        """Collapse identical IDs while rejecting conflicting revision bodies."""
+        seen = {}
+        for revision in list(page.findall("mw:revision", namespace)):
+            raw_id = revision.findtext("mw:id", namespaces=namespace)
+            if raw_id is None or not re.fullmatch(r"[0-9]+", raw_id):
+                continue
+            revision_id = int(raw_id)
+            value = signature(revision)
+            if revision_id in seen:
+                if seen[revision_id] != value:
+                    raise ValueError(
+                        f"Conflicting contents for revision ID {revision_id}"
+                    )
+                page.remove(revision)
+            else:
+                seen[revision_id] = value
+
     for page in pages:
         title = page.findtext("mw:title", namespaces=namespace)
         ns = page.findtext("mw:ns", default="0", namespaces=namespace)
@@ -67,7 +85,11 @@ def coalesce_pages(
         if marker is not None:
             # Page-level metadata describes the newest revision in this block.
             # Bind it to that revision, never to the entire merged history.
-            selected = signature(latest_revision(page, namespace))
+            block = deepcopy(page)
+            deduplicate(block)
+            selected = signature(
+                latest_revision(block, namespace, require_available=False)
+            )
             markers = redirect_by_revision.setdefault(identity, {})
             if selected in markers and signature(markers[selected]) != signature(
                 marker
@@ -95,21 +117,7 @@ def coalesce_pages(
                 by_id[page_id] = (identity, target)
 
     for page in merged:
-        seen = {}
-        for revision in list(page.findall("mw:revision", namespace)):
-            raw_id = revision.findtext("mw:id", namespaces=namespace)
-            if raw_id is None or not re.fullmatch(r"[0-9]+", raw_id):
-                continue  # latest_revision gives the metadata error for history
-            revision_id = int(raw_id)
-            value = signature(revision)
-            if revision_id in seen:
-                if seen[revision_id] != value:
-                    raise ValueError(
-                        f"Conflicting contents for revision ID {revision_id}"
-                    )
-                page.remove(revision)
-            else:
-                seen[revision_id] = value
+        deduplicate(page)
         title = page.findtext("mw:title", namespaces=namespace)
         ns = page.findtext("mw:ns", default="0", namespaces=namespace)
         raw_id = page.findtext("mw:id", namespaces=namespace)
@@ -122,7 +130,9 @@ def coalesce_pages(
     return merged
 
 
-def latest_revision(page: ET.Element, namespace: Dict[str, str]) -> ET.Element:
+def latest_revision(
+    page: ET.Element, namespace: Dict[str, str], *, require_available: bool = True
+) -> ET.Element:
     """Select a history revision by UTC time, then numeric ID, never XML order.
 
     Legacy one-revision exports may omit metadata. Multiple revisions require
@@ -170,8 +180,9 @@ def latest_revision(page: ET.Element, namespace: Dict[str, str]) -> ET.Element:
         ranked.append((instant, numeric_id, revision))
     selected = max(ranked, key=lambda item: (item[0], item[1]))[2]
     text = selected.find("mw:text", namespace)
-    if selected.get("deleted") is not None or (
-        text is not None and text.get("deleted") is not None
+    if require_available and (
+        selected.get("deleted") is not None
+        or (text is not None and text.get("deleted") is not None)
     ):
         raise ValueError(f"Page {title!r} latest revision content is deleted")
     return selected
@@ -399,6 +410,7 @@ class WikiDumpProcessor:
             self.context = {"bisq1": [], "bisq2": [], "general": []}
             self.templates = {}
             self.template_revisions = {}
+            normalized_templates = {}
             # Definitions can appear after the articles which invoke them.
             for page in pages:
                 title = page.findtext("mw:title", default="", namespaces=self.namespace)
@@ -416,9 +428,13 @@ class WikiDumpProcessor:
                         )
                     key = template_key(title)
                     value = definition.text or ""
-                    if key in self.templates and self.templates[key] != value:
+                    if (
+                        key in normalized_templates
+                        and normalized_templates[key] != value
+                    ):
                         raise ValueError(f"Conflicting definitions for Template:{key}")
-                    self.templates[key] = value
+                    normalized_templates[key] = value
+                    self.templates[title] = value
                     self.template_revisions[key] = revision_metadata(
                         selected, self.namespace
                     )
