@@ -134,6 +134,7 @@ def select_public_evidence(documents: list[Any]) -> list[PublicEvidence]:
     deliberately excluded from this first automatic staff-context path.
     """
     from app.services.rag.canonical_fixes import canonical_url_for_metadata
+    from app.services.wiki_provenance import wiki_context_notice, wiki_source_provenance
     from app.utils.wiki_url_generator import generate_wiki_url
 
     selected: list[PublicEvidence] = []
@@ -153,6 +154,10 @@ def select_public_evidence(documents: list[Any]) -> list[PublicEvidence]:
                 id=f"e{len(selected) + 1}",
                 title=meta.get("title"),
                 content=doc.page_content,
+                provenance={
+                    **wiki_source_provenance(meta),
+                    "source_context": wiki_context_notice(meta),
+                },
                 url=meta.get("url")
                 or canonical_url_for_metadata(meta)
                 or generate_wiki_url(

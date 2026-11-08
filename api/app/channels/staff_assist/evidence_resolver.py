@@ -31,6 +31,7 @@ from app.services.rag.code_evidence import (
     explicit_user_version,
 )
 from app.services.rag.source_refs import is_precise_code_source_ref
+from app.services.wiki_provenance import wiki_context_notice, wiki_source_provenance
 from markdown_it import MarkdownIt
 
 
@@ -395,6 +396,8 @@ class StaffEvidenceResolver:
             provenance={
                 "protocol": metadata.get("protocol"),
                 "section": metadata.get("section"),
+                **wiki_source_provenance(metadata),
+                "source_context": wiki_context_notice(metadata),
             },
         )
 

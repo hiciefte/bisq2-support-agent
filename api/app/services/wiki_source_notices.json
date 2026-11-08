@@ -1,0 +1,243 @@
+{
+  "schema_version": 1,
+  "checked_at": "2026-11-08",
+  "items": [
+    {
+      "id": "archived-bisq1-trade-limit-macros",
+      "title": "Trade limits: restored macro values are historical",
+      "body": "The restored templates contain 0.0624 BTC for MaxTradeSizeBisq1 and 0.50 BTC for MaxTradeSizeAltcoin. Bisq 1 v1.10.11 clamps trade limits to 0.25 BTC and calculates method limits from the DAO parameter and payment-method risk factor, with additional account restrictions. The historical macro values are not universal current limits; use the limit shown for the actual account and offer.",
+      "source_titles": [
+        "ACH Transfer",
+        "Capitual",
+        "CelPay",
+        "Domestic Wire Transfer",
+        "Faster Payments",
+        "Faster Payments System SBP",
+        "IMPS",
+        "Main Page",
+        "Monese",
+        "Nequi",
+        "Paxum",
+        "Paysera",
+        "Pix",
+        "RTGS",
+        "SEPA",
+        "SEPA Instant",
+        "Satispay",
+        "Strike",
+        "Templates as macros",
+        "Tikkie",
+        "Verse",
+        "Wise-USD",
+        "Zelle"
+      ],
+      "status": "verified-against-pinned-source",
+      "checked_at": "2026-11-08",
+      "display_priority": "prominent",
+      "is_added_notice_not_original_source": true,
+      "sources": [
+        {
+          "label": "Bisq 1 v1.10.11 limit clamp and DAO parameter",
+          "url": "https://github.com/bisq-network/bisq/blob/ea9d5dff90c99ac462f2b0a7bf9ef92683956619/core/src/main/java/bisq/core/payment/TradeLimits.java#L40-L88",
+          "line_start": 40,
+          "line_end": 88,
+          "sha256": "105ec7724961de62cf13132b825ebb8de897dc7846e30224d3f22abcee84027f",
+          "checked_at": "2026-11-08T18:35:56.898515+00:00"
+        },
+        {
+          "label": "Bisq 1 v1.10.11 method-specific limit calculation",
+          "url": "https://github.com/bisq-network/bisq/blob/ea9d5dff90c99ac462f2b0a7bf9ef92683956619/core/src/main/java/bisq/core/payment/payload/PaymentMethod.java#L395-L431",
+          "line_start": 395,
+          "line_end": 431,
+          "sha256": "e9d27c638b304dd5de781b7623f6ae185f49868d53ed5045cd09baf0263e34b3",
+          "checked_at": "2026-11-08T18:35:56.898869+00:00"
+        }
+      ],
+      "limits": "Release-pinned source check only; no funded trade, wallet recovery, private-key export, signature/broadcast or live payment-provider action was performed."
+    },
+    {
+      "id": "local-signing-not-private-key-collection",
+      "title": "Manual payout: local signing",
+      "body": "The restored 2021 Emergency Multisig payout tool guide describes copying private keys into a text file and removing wallet password protection. Bisq 1 v1.10.11 includes a local Locate key in wallet action and local signature generation; the assembly step combines signatures. Sending a seed or private key to the mediator is not part of that workflow. This source check does not validate any payout, signature or broadcast.",
+      "source_titles": [
+        "Mediation",
+        "Manual payout",
+        "Mediator",
+        "Emergency Multisig payout tool"
+      ],
+      "status": "verified-against-pinned-source",
+      "checked_at": "2026-11-08",
+      "display_priority": "prominent",
+      "is_added_notice_not_original_source": true,
+      "sources": [
+        {
+          "label": "Bisq 1 local key lookup and signing",
+          "url": "https://github.com/bisq-network/bisq/blob/ea9d5dff90c99ac462f2b0a7bf9ef92683956619/desktop/src/main/java/bisq/desktop/main/overlays/windows/supporttool/SignPane.java#L76-L138",
+          "line_start": 76,
+          "line_end": 138,
+          "sha256": "32e54c2c04e83028b04eb5805dc3e6a4e6e2f86a389f6abd5c6785a6ff57c97e",
+          "checked_at": "2026-11-08T18:35:58.020927+00:00"
+        },
+        {
+          "label": "Bisq 1 signature assembly",
+          "url": "https://github.com/bisq-network/bisq/blob/ea9d5dff90c99ac462f2b0a7bf9ef92683956619/desktop/src/main/java/bisq/desktop/main/overlays/windows/supporttool/BuildPane.java#L106-L135",
+          "line_start": 106,
+          "line_end": 135,
+          "sha256": "b3b5cf9d8bd611861c66651a09e342ad4444a36319193038d73caaeede7fc169",
+          "checked_at": "2026-11-08T18:35:58.094301+00:00"
+        }
+      ],
+      "limits": "Release-pinned source check only; no funded trade, wallet recovery, private-key export, signature/broadcast or live payment-provider action was performed."
+    },
+    {
+      "id": "seed-is-not-application-backup",
+      "title": "Wallet seed and application data have different scopes",
+      "body": "Bisq 1 v1.10.11 explicitly says the same seed serves BTC and BSQ, but seed words do not replace the database and keys needed to restore application state. The application backup warning also says the copy is not encrypted. Restoring wallet funds is not evidence that payment accounts, signing identity, messages or trade state have been recovered.",
+      "source_titles": [
+        "Backing up application data",
+        "Backing up your wallet seed",
+        "How to back up your Bisq wallet seed",
+        "Restoring your wallet from seed",
+        "Restoring application data"
+      ],
+      "status": "verified-against-pinned-source",
+      "checked_at": "2026-11-08",
+      "display_priority": "source-check",
+      "is_added_notice_not_original_source": true,
+      "sources": [
+        {
+          "label": "Bisq 1 application backup and wallet-seed scope",
+          "url": "https://github.com/bisq-network/bisq/blob/ea9d5dff90c99ac462f2b0a7bf9ef92683956619/core/src/main/resources/i18n/displayStrings.properties#L1998-L2044",
+          "line_start": 1998,
+          "line_end": 2044,
+          "sha256": "6d4371a2cd6649969310dd079159da5e514365c43ace6c5d12ab55ee956df2cd",
+          "checked_at": "2026-11-08T18:35:58.342424+00:00"
+        }
+      ],
+      "limits": "Release-pinned source check only; no funded trade, wallet recovery, private-key export, signature/broadcast or live payment-provider action was performed."
+    },
+    {
+      "id": "seed-restore-preconditions",
+      "title": "Seed restoration is an emergency procedure",
+      "body": "Bisq 1 v1.10.11 warns to finish trades, close open offers and empty the existing wallet before restoring an older wallet. Its UI warns that restoring an encrypted wallet removes encryption and requires a new password afterward, and explains the role of the original wallet creation date. These warnings are separate from application-data backup requirements; no wallet restore was performed for this review.",
+      "source_titles": [
+        "Restoring your wallet from seed",
+        "How to back up your Bisq wallet seed"
+      ],
+      "status": "verified-against-pinned-source",
+      "checked_at": "2026-11-08",
+      "display_priority": "prominent",
+      "is_added_notice_not_original_source": true,
+      "sources": [
+        {
+          "label": "Bisq 1 seed-restore preconditions and encryption warning",
+          "url": "https://github.com/bisq-network/bisq/blob/ea9d5dff90c99ac462f2b0a7bf9ef92683956619/core/src/main/resources/i18n/displayStrings.properties#L3864-L3889",
+          "line_start": 3864,
+          "line_end": 3889,
+          "sha256": "6d4371a2cd6649969310dd079159da5e514365c43ace6c5d12ab55ee956df2cd",
+          "checked_at": "2026-11-08T18:35:58.342424+00:00"
+        }
+      ],
+      "limits": "Release-pinned source check only; no funded trade, wallet recovery, private-key export, signature/broadcast or live payment-provider action was performed."
+    },
+    {
+      "id": "easy-payment-reference-conflict",
+      "title": "Conflicting payment-reference advice",
+      "body": "The original Bisq Easy page tells buyers both to leave the payment reason blank/use their own name and to insert the trade ID. Bisq 2 v2.1.15's explicit buyer payment-screen rule says blank if possible, otherwise the buyer's own name; never Bisq or Bitcoin. The pinned upstream guide text itself also retains conflicting trade-ID wording. This check identifies the contradiction and follows the actual payment-screen rule; it does not silently remove either original passage.",
+      "source_titles": [
+        "Bisq Easy"
+      ],
+      "status": "verified-against-pinned-source",
+      "checked_at": "2026-11-08",
+      "display_priority": "prominent",
+      "is_added_notice_not_original_source": true,
+      "sources": [
+        {
+          "label": "Bisq 2 buyer payment-screen reference rule",
+          "url": "https://github.com/bisq-network/bisq2/blob/cfe8ab251f2b6579f29e9955036afc33ba36861e/i18n/src/main/resources/bisq_easy.properties#L910-L910",
+          "line_start": 910,
+          "line_end": 910,
+          "sha256": "c5380bb30b22c9b9df7d1357865a16266a1d3b427ab8fd32054c401d85fcd4aa",
+          "checked_at": "2026-11-08T18:35:58.817957+00:00"
+        },
+        {
+          "label": "Bisq 2 guide wording still mentioning Trade ID",
+          "url": "https://github.com/bisq-network/bisq2/blob/cfe8ab251f2b6579f29e9955036afc33ba36861e/i18n/src/main/resources/bisq_easy.properties#L418-L427",
+          "line_start": 418,
+          "line_end": 427,
+          "sha256": "c5380bb30b22c9b9df7d1357865a16266a1d3b427ab8fd32054c401d85fcd4aa",
+          "checked_at": "2026-11-08T18:35:58.817957+00:00"
+        }
+      ],
+      "limits": "Release-pinned source check only; no funded trade, wallet recovery, private-key export, signature/broadcast or live payment-provider action was performed."
+    },
+    {
+      "id": "bisq1-payment-reference",
+      "title": "Bisq 1 payment references",
+      "body": "Bisq 1 v1.10.11's rules say to leave the reason blank and not include the trade ID, Bitcoin, BTC or Bisq. Its UI guidance allows an account name or a non-descriptive character when a reference is compulsory and tells traders to discuss alternatives in trade chat. A method-specific old suggestion such as a SWIFT conversion comment is not a universal exception to those rules.",
+      "source_titles": [
+        "Trading rules",
+        "Wise-USD",
+        "Zelle",
+        "Faster Payments",
+        "SWIFT"
+      ],
+      "status": "verified-against-pinned-source",
+      "checked_at": "2026-11-08",
+      "display_priority": "source-check",
+      "is_added_notice_not_original_source": true,
+      "sources": [
+        {
+          "label": "Bisq 1 trading rule",
+          "url": "https://github.com/bisq-network/bisq/blob/ea9d5dff90c99ac462f2b0a7bf9ef92683956619/core/src/main/resources/i18n/displayStrings.properties#L350-L355",
+          "line_start": 350,
+          "line_end": 355,
+          "sha256": "6d4371a2cd6649969310dd079159da5e514365c43ace6c5d12ab55ee956df2cd",
+          "checked_at": "2026-11-08T18:35:58.342424+00:00"
+        },
+        {
+          "label": "Bisq 1 compulsory reference guidance",
+          "url": "https://github.com/bisq-network/bisq/blob/ea9d5dff90c99ac462f2b0a7bf9ef92683956619/core/src/main/resources/i18n/displayStrings.properties#L811-L814",
+          "line_start": 811,
+          "line_end": 814,
+          "sha256": "6d4371a2cd6649969310dd079159da5e514365c43ace6c5d12ab55ee956df2cd",
+          "checked_at": "2026-11-08T18:35:58.342424+00:00"
+        }
+      ],
+      "limits": "Release-pinned source check only; no funded trade, wallet recovery, private-key export, signature/broadcast or live payment-provider action was performed."
+    },
+    {
+      "id": "easy-reputation-amount-eligibility",
+      "title": "Bisq Easy amount eligibility differs from the old minimum score",
+      "body": "Bisq 2 v2.1.15 retains a 600 USD Bisq Easy ceiling, but permits seller offers from 1,200 reputation points and computes the amount from 200 points per USD, subject to its rounding and tolerance checks. The old 10,000-point minimum in Reputation2 is not the release-pinned predicate. These rules do not guarantee that a trade or a particular counterparty is safe.",
+      "source_titles": [
+        "Reputation",
+        "Reputation2",
+        "Bisq Easy"
+      ],
+      "status": "verified-against-pinned-source",
+      "checked_at": "2026-11-08",
+      "display_priority": "source-check",
+      "is_added_notice_not_original_source": true,
+      "sources": [
+        {
+          "label": "Bisq Easy limits and reputation constants",
+          "url": "https://github.com/bisq-network/bisq2/blob/cfe8ab251f2b6579f29e9955036afc33ba36861e/trade/src/main/java/bisq/trade/bisq_easy/BisqEasyTradeAmountLimits.java#L51-L69",
+          "line_start": 51,
+          "line_end": 69,
+          "sha256": "e57abb3ceffccf723ec458e72a8166377f87477c907c681d02ee3aa79e1fa566",
+          "checked_at": "2026-11-08T18:35:58.511801+00:00"
+        },
+        {
+          "label": "Bisq Easy offer eligibility checks",
+          "url": "https://github.com/bisq-network/bisq2/blob/cfe8ab251f2b6579f29e9955036afc33ba36861e/trade/src/main/java/bisq/trade/bisq_easy/BisqEasyTradeAmountLimits.java#L158-L187",
+          "line_start": 158,
+          "line_end": 187,
+          "sha256": "e57abb3ceffccf723ec458e72a8166377f87477c907c681d02ee3aa79e1fa566",
+          "checked_at": "2026-11-08T18:35:58.511801+00:00"
+        }
+      ],
+      "limits": "Release-pinned source check only; no funded trade, wallet recovery, private-key export, signature/broadcast or live payment-provider action was performed."
+    }
+  ]
+}

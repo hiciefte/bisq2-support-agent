@@ -24,6 +24,7 @@ from app.services.rag.interfaces import (
     RetrieverProtocol,
 )
 from app.services.rag.protocol_detector import ProtocolDetector
+from app.services.wiki_provenance import wiki_context_notice
 from langchain_core.documents import Document
 
 logger = logging.getLogger(__name__)
@@ -631,6 +632,9 @@ class DocumentRetriever:
             entry = f"[{protocol_display}] [{source_type.upper()}] {title}"
             if section:
                 entry += f" - {section}"
+            source_notice = wiki_context_notice(doc.metadata)
+            if source_notice:
+                entry += f"\n{source_notice}"
             entry += f"\n{doc.page_content}\n"
             formatted_docs.append(entry)
 

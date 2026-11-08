@@ -12,6 +12,7 @@ import re
 from typing import TYPE_CHECKING, Dict, List
 
 from app.services.wiki_metadata import reviewed_wiki_category
+from app.services.wiki_provenance import wiki_source_provenance
 from langchain_core.documents import Document
 
 if TYPE_CHECKING:
@@ -115,6 +116,9 @@ class WikiService:
                             "source_weight": self.source_weights.get("wiki", 1.0),
                             "protocol": protocol,
                         },
+                    )
+                    doc.metadata.update(
+                        wiki_source_provenance({**entry, "type": "wiki"})
                     )
                     documents.append(doc)
 

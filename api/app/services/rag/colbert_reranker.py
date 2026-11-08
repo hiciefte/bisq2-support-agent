@@ -164,6 +164,13 @@ class ColBERTReranker(RerankerProtocol):
         try:
             # Extract document texts for reranking
             doc_texts = [doc.content for doc in documents]
+            # Results are mapped back by exact text below. Equal chunks may
+            # carry different article dates/notices: do not attach the first
+            # article's provenance to another source. Keep retrieval order
+            # when the reranker cannot unambiguously identify each input.
+            if len(set(doc_texts)) != len(doc_texts):
+                logger.info("Skipping ambiguous equal-text reranking")
+                return documents[:effective_top_n]
 
             # Rerank using ColBERT
             logger.debug(
@@ -206,15 +213,11 @@ class ColBERTReranker(RerankerProtocol):
                         )
                     )
                 else:
-                    # Document not found in original list (shouldn't happen)
+                    # A result without its source metadata is not evidence.
+                    # Keep the original candidates rather than emit an orphan
+                    # chunk without its date, protocol or reviewed notices.
                     logger.warning("Reranked document not found in original list")
-                    reranked_docs.append(
-                        RetrievedDocument(
-                            content=content,
-                            metadata={},
-                            score=float(score),
-                        )
-                    )
+                    return documents[:effective_top_n]
 
             logger.info(
                 f"ColBERT reranking complete: {len(documents)} -> {len(reranked_docs)} documents"
