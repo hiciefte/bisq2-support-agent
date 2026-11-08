@@ -18,6 +18,7 @@ SOURCE_FIELDS = ("source_revision", "source_gaps", "redirect_target")
 
 @lru_cache(maxsize=1)
 def _reviewed_notices() -> dict[str, list[dict[str, Any]]]:
+    """Validate and index packaged review annotations by exact article title."""
     data = json.loads(
         Path(__file__).with_name("wiki_source_notices.json").read_text(encoding="utf-8")
     )
@@ -45,7 +46,9 @@ def wiki_source_provenance(metadata: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def wiki_context_notice(metadata: dict[str, Any]) -> str:
+def wiki_context_notice(
+    metadata: dict[str, Any], *, seen_notices: set[tuple[str, str]] | None = None
+) -> str:
     """Separate provenance preamble placed before a chunk, safe under truncation.
 
     Article revision dates do not date expanded template definitions or claim
@@ -94,6 +97,18 @@ def wiki_context_notice(metadata: dict[str, Any]) -> str:
             "was retained as labeled warnings/notes, not inferred template values."
         )
     for notice in provenance.get("source_notices", []):
+        notice_key = (
+            str(metadata.get("title", "")),
+            json.dumps(notice, sort_keys=True, ensure_ascii=False),
+        )
+        if seen_notices is not None:
+            if notice_key in seen_notices:
+                lines.append(
+                    f"Reviewed source check [{notice['id']}] applies to this chunk; "
+                    "see the full check above for this article."
+                )
+                continue
+            seen_notices.add(notice_key)
         lines.append(
             f"Reviewed source check [{notice['id']}; checked {notice['checked_at']}]: "
             + notice["body"]

@@ -8,8 +8,8 @@ import time
 import xml.etree.ElementTree as ET
 
 import mwclient  # type: ignore[import-untyped]
-from app.scripts.wiki_atomic import replace_wiki_file
-from app.scripts.wiki_text import WikiTextRenderer, redirect_directive
+from app.scripts.wiki_atomic import capture_wiki_preimage, replace_wiki_file
+from app.scripts.wiki_text import WikiTextRenderer, redirect_directive, template_key
 
 # Set up logging to stdout with debug level
 logging.basicConfig(
@@ -141,6 +141,8 @@ def main(output_dir: str) -> None:
     Args:
         output_dir: Directory path where the XML dump will be saved
     """
+    output_filename = os.path.abspath(os.path.join(output_dir, "bisq2_dump.xml"))
+    preimage = capture_wiki_preimage(output_filename)
     logging.info("Connecting to Bisq Wiki via mwclient...")
     site = mwclient.Site("bisq.wiki", path="/")
 
@@ -192,7 +194,8 @@ def main(output_dir: str) -> None:
     # Keep redirect aliases and template definitions alongside article sources.
     # Read content and revision metadata together so they describe the same edit.
     page_count = 0
-    article_count = 0
+    article_bodies = []
+    templates = {}
     for namespace in (0, 10):
         for page in site.allpages(namespace=namespace):
             if page.namespace != namespace:
@@ -242,8 +245,12 @@ def main(output_dir: str) -> None:
                 page_count += 1
                 if namespace == 0:
                     article_body = content[redirect.end() :] if redirect else content
-                    if WikiTextRenderer().render(article_body).text.strip():
-                        article_count += 1
+                    article_bodies.append(article_body)
+                else:
+                    key = template_key(page.name)
+                    if key in templates and templates[key] != content:
+                        raise ValueError(f"Conflicting definitions for Template:{key}")
+                    templates[key] = content
             except Exception:
                 # A well-formed but partial export must not replace a good snapshot.
                 logging.exception(
@@ -252,11 +259,14 @@ def main(output_dir: str) -> None:
                 raise
             time.sleep(0.1)
 
+    article_count = sum(
+        bool(WikiTextRenderer(templates).render(body).text.strip())
+        for body in article_bodies
+    )
     if not article_count:
         raise ValueError("Wiki export contains no non-redirect articles")
     logging.info("Captured %s pages, including %s articles", page_count, article_count)
     os.makedirs(output_dir, exist_ok=True)
-    output_filename = os.path.join(output_dir, "bisq2_dump.xml")
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -270,12 +280,17 @@ def main(output_dir: str) -> None:
             os.fsync(handle.fileno())
         if not validate_xml(temporary):
             raise ValueError("Generated wiki XML failed validation")
-        replace_wiki_file(temporary, output_filename)
+        replace_wiki_file(temporary, output_filename, expected_preimage=preimage)
         temporary = None
         logging.info("Validated snapshot saved as %s", output_filename)
     finally:
-        if temporary and os.path.exists(temporary):
-            os.unlink(temporary)
+        if temporary:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                # A completed rename followed by an fsync error consumes the
+                # staged path and must retain its durability-uncertain error.
+                pass
 
 
 if __name__ == "__main__":

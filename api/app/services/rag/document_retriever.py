@@ -604,6 +604,7 @@ class DocumentRetriever:
         sorted_docs = sorted(docs, key=sort_key)
 
         formatted_docs = []
+        seen_wiki_notices: set[tuple[str, str]] = set()
         for doc in sorted_docs:
             # Extract metadata
             title = doc.metadata.get("title", "Unknown")
@@ -632,7 +633,9 @@ class DocumentRetriever:
             entry = f"[{protocol_display}] [{source_type.upper()}] {title}"
             if section:
                 entry += f" - {section}"
-            source_notice = wiki_context_notice(doc.metadata)
+            source_notice = wiki_context_notice(
+                doc.metadata, seen_notices=seen_wiki_notices
+            )
             if source_notice:
                 entry += f"\n{source_notice}"
             entry += f"\n{doc.page_content}\n"
@@ -884,8 +887,13 @@ class DocumentRetriever:
                     metadata = dict(lc_doc.metadata or {})
                     if reranked_doc.id and "_retrieved_id" not in metadata:
                         metadata["_retrieved_id"] = reranked_doc.id
-                    metadata["_reranked"] = True
-                    metadata["_colbert_score"] = float(reranked_doc.score)
+                    # ColBERT marks its fallback explicitly; other protocol
+                    # implementations retain their existing success contract.
+                    metadata["_reranked"] = metadata.get("_reranked", True)
+                    if metadata["_reranked"]:
+                        metadata["_colbert_score"] = float(reranked_doc.score)
+                    else:
+                        metadata.pop("_colbert_score", None)
                     metadata["_retrieval_rank"] = len(reranked_docs)
                     lc_doc.metadata = metadata
                     reranked_docs.append(lc_doc)

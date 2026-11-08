@@ -45,6 +45,20 @@ def test_comparison_page_is_not_reclassified_by_legacy_mentions():
     )
 
 
+@pytest.mark.parametrize("prior_category", ["bisq1", "bisq2"])
+def test_mixed_introduction_loads_for_all_protocols_without_changing_text(
+    tmp_path, prior_category
+):
+    """Correct old exclusive metadata without changing historical source text."""
+    body = "Classic Bisq 1 arbitration and Bisq Easy use different protocols."
+    entry = {"title": "Introduction", "content": body, "category": prior_category}
+    (tmp_path / "processed_wiki.jsonl").write_text(json.dumps(entry) + "\n")
+    (document,) = WikiService().load_wiki_data(str(tmp_path))
+    assert document.metadata["category"] == "general"
+    assert document.metadata["protocol"] == "all"
+    assert document.page_content == body
+
+
 @pytest.mark.parametrize("title", ["Funding your wallet", "Funding_your_wallet"])
 def test_existing_mislabeled_wiki_loads_with_correct_retrieval_metadata(
     tmp_path, funding_article, title

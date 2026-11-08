@@ -371,6 +371,7 @@ class StaffEvidenceResolver:
 
     @staticmethod
     def _wiki(document: Any, metadata: dict[str, Any]) -> PublicEvidence | None:
+        """Retain wiki provenance while validating public source attribution."""
         from app.services.rag.canonical_fixes import canonical_url_for_metadata
         from app.utils.wiki_url_generator import generate_wiki_url
 
