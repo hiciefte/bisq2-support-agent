@@ -112,6 +112,14 @@ def assert_error(result, code):
     [
         ({"api/app/example.py": "NEW = 2\n"}, "api", ["api"]),
         ({"api/requirements.txt": "example==1.0\n"}, "api", ["api"]),
+        (
+            {"api/app/scripts/download_bisq2_media_wiki.py": "fixture\n"},
+            "api",
+            ["api"],
+        ),
+        ({"api/app/scripts/process_wiki_dump.py": "fixture\n"}, "api", ["api"]),
+        ({"api/app/scripts/wiki_atomic.py": "fixture\n"}, "api", ["api"]),
+        ({"api/app/scripts/wiki_text.py": "fixture\n"}, "api", ["api"]),
         ({"web/src/app/page.tsx": "export default 1;\n"}, "web", ["web"]),
         ({"web/package.json": "{}\n"}, "web", ["web"]),
         ({"docker/web/Dockerfile": "FROM fixture\n"}, "web", ["web"]),
@@ -126,6 +134,14 @@ def assert_error(result, code):
         (
             {"web/package-lock.json": "{}\n", "api/app/example.py": "NEW = 2\n"},
             "web,api",
+            ["api", "web"],
+        ),
+        (
+            {
+                "api/app/scripts/process_wiki_dump.py": "fixture\n",
+                "docker/web/Dockerfile": "FROM fixture\n",
+            },
+            "api,web",
             ["api", "web"],
         ),
     ],
@@ -182,6 +198,10 @@ def test_plan_binds_immutable_source_and_selected_service_without_worktree_write
         "api/app/resources/wiki/seed.jsonl",
         "api/app/db/migrations/002_change.sql",
         "api/app/scripts/rebuild.py",
+        "api/app/scripts/update_wiki.py",
+        "api/app/scripts/disaster_recovery.py",
+        "api/app/scripts/wiki_text.py.bak",
+        "api/app/scripts/nested/wiki_text.py",
         "api/app/services/schema_migration.py",
         "web/.env",
         ".gitmodules",
