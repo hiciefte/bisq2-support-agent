@@ -220,6 +220,7 @@ def test_export_rejects_conflicting_normalized_template_definitions(
     ("article", "ordinary", "nested", "expected"),
     [
         ("{{Empty}}", "Useful content", "<!-- docs -->", "Useful content"),
+        ("{{Template:Empty}}", "Ordinary title", "Nested title", "Ordinary title"),
         (
             "{{Template:Template:Empty}}",
             "Other content",

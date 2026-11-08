@@ -34,26 +34,25 @@ WEB_RUNTIME_PACKAGES = {
 
 
 def _assert_web_runtime_package_pins(runtime: str) -> None:
-    """Inspect active shell-form apk commands, excluding comments and echo text."""
+    """Require the pinned installation to lead a RUN, with no fallback branch."""
     active_lines = "\n".join(
         line for line in runtime.splitlines() if not line.lstrip().startswith("#")
     )
     logical_lines = re.sub(r"\\\r?\n", " ", active_lines)
-    packages = set()
+    installations = []
     for run in re.findall(r"^\s*RUN\s+(.+)$", logical_lines, re.MULTILINE):
-        lexer = shlex.shlex(run, posix=True, punctuation_chars=";&|")
+        lexer = shlex.shlex(run, posix=True, punctuation_chars=";&|()")
         lexer.whitespace_split = True
-        command: list[str] = []
-        for token in [*lexer, ";"]:
-            if token in {";", "&&", "||", "|", "&"}:
-                if command[:2] == ["apk", "add"]:
-                    packages.update(
-                        arg for arg in command[2:] if not arg.startswith("--")
-                    )
-                command = []
-            else:
-                command.append(token)
-    assert packages == WEB_RUNTIME_PACKAGES
+        tokens = list(lexer)
+        if tokens[:3] != ["apk", "add", "--no-cache"]:
+            continue
+        # The reviewed contract installs first. Do not attempt to interpret
+        # arbitrary shell control flow or accept a fallback that masks failure.
+        assert not set(tokens) & {";", "||", "|", "&", "(", ")"}
+        command = tokens[: tokens.index("&&")] if "&&" in tokens else tokens
+        assert len(command[3:]) == len(WEB_RUNTIME_PACKAGES)
+        installations.append(set(command[3:]))
+    assert installations == [WEB_RUNTIME_PACKAGES]
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -165,6 +164,22 @@ def test_web_runtime_pin_check_rejects_inactive_pins(decoy: str) -> None:
     runtime = decoy.format(pins=pins) + "\nRUN apk add --no-cache " + packages
     with pytest.raises(AssertionError):
         _assert_web_runtime_package_pins(runtime)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "true || apk add --no-cache {pins}",
+        "false && apk add --no-cache {pins}",
+        "if false; then apk add --no-cache {pins}; fi",
+        "apk add --no-cache {pins} || true",
+    ],
+)
+def test_web_runtime_pin_check_rejects_conditional_install(command: str) -> None:
+    """Skipped installs or suppressed install failures cannot prove package pins."""
+    pins = " ".join(sorted(WEB_RUNTIME_PACKAGES))
+    with pytest.raises(AssertionError):
+        _assert_web_runtime_package_pins("RUN " + command.format(pins=pins))
 
 
 def test_bisq_build_fetches_and_verifies_a_full_commit() -> None:

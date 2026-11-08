@@ -283,6 +283,7 @@ else:
 """
     process = subprocess.Popen(
         [sys.executable, "-c", script, str(target), str(older)],
+        cwd=Path(__file__).resolve().parents[2],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -473,6 +474,7 @@ with _publication_directory(sys.argv[1]):
 """
     process = subprocess.Popen(
         [sys.executable, "-c", script, str(target)],
+        cwd=Path(__file__).resolve().parents[2],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
