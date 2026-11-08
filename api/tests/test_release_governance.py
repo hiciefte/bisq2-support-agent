@@ -102,6 +102,7 @@ def test_api_builder_pins_setuptools_after_application_dependencies() -> None:
 
 
 def test_web_image_contains_only_pinned_fixed_runtime_dependencies() -> None:
+    """Keep the deployed web image's reviewed security package pins explicit."""
     dockerfile = (REPO_ROOT / "docker" / "web" / "Dockerfile").read_text(
         encoding="utf-8"
     )
@@ -116,6 +117,9 @@ def test_web_image_contains_only_pinned_fixed_runtime_dependencies() -> None:
 
     assert "libcrypto3=3.5.9-r0" in runtime
     assert "libssl3=3.5.9-r0" in runtime
+    assert "musl=1.2.5-r24" in runtime
+    assert "musl-utils=1.2.5-r24" in runtime
+    assert "zlib=1.4-r0" in runtime
     assert "rm -rf /usr/local/lib/node_modules/npm" in runtime
     assert "rm -f /usr/local/bin/npm /usr/local/bin/npx" in runtime
     assert "npm install --global" not in runtime

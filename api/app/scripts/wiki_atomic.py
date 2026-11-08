@@ -2,9 +2,12 @@
 
 import ctypes
 import errno
+import fcntl
 import os
 import stat
 import sys
+from contextlib import contextmanager
+from typing import Iterator
 
 
 def _xattrs(path: str) -> dict[str, bytes]:
@@ -58,20 +61,101 @@ def _identity(info: os.stat_result) -> tuple:
         info.st_dev,
         info.st_ino,
         info.st_ctime_ns,
+        info.st_mtime_ns,
+        info.st_size,
         info.st_uid,
         info.st_gid,
         info.st_mode,
     )
 
 
-def replace_wiki_file(staged: str, destination: str) -> None:
-    """Preserve owner/group, mode and access ACL, or leave destination untouched.
+class WikiPublicationConflictError(OSError):
+    """The source or destination changed since acquisition/rendering began."""
 
-    Linux extended attributes and macOS extended ACLs are checked explicitly;
-    unsupported platforms fail closed for an existing file. Timestamps are not
-    copied: the index must still detect that wiki content changed. The caller
-    owns cleanup of its staged file when this function raises.
+
+class WikiPublicationDurabilityError(OSError):
+    """Replacement is visible but directory durability could not be confirmed.
+
+    Callers must report uncertainty, not claim the previous file was retained or
+    retry/rollback automatically. The staged pathname has already been consumed.
     """
+
+    published = True
+
+
+def capture_wiki_preimage(path: str) -> tuple | None:
+    """Capture the destination/source identity before fetching or rendering.
+
+    This is an overlap/CAS token, not a semantic MediaWiki revision number.
+    An absent destination is a meaningful preimage; symlinks are not accepted.
+    """
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(info.st_mode):
+        raise ValueError("Wiki source/destination must be a regular file")
+    return _identity(info)
+
+
+@contextmanager
+def _publication_directory(destination: str) -> Iterator[int]:
+    """Serialize cooperating wiki publishers across processes and threads.
+
+    The stable lock is never unlinked: replacing a lock inode would split the
+    serialization domain. Contention refuses immediately rather than waiting or
+    retrying a staged result. Open read-only so a later authorized writer with a
+    different UID can flock the same lock without changing its ownership.
+    """
+    parent = os.path.realpath(os.path.dirname(os.path.abspath(destination)))
+    directory_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    lock_fd = None
+    try:
+        flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+        try:
+            lock_fd = os.open(
+                ".wiki-publication.lock",
+                flags | os.O_CREAT | os.O_EXCL,
+                0o644,
+                dir_fd=directory_fd,
+            )
+            os.fchmod(lock_fd, 0o644)
+        except FileExistsError:
+            lock_fd = os.open(".wiki-publication.lock", flags, dir_fd=directory_fd)
+        lock = os.fstat(lock_fd)
+        directory = os.fstat(directory_fd)
+        if (
+            not stat.S_ISREG(lock.st_mode)
+            or lock.st_nlink != 1
+            or stat.S_IMODE(lock.st_mode) != 0o644
+        ):
+            raise OSError("Unsafe wiki publication lock")
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise WikiPublicationConflictError(
+                "Another wiki publication is in progress; staged result not published"
+            ) from error
+        current = os.stat(
+            ".wiki-publication.lock", dir_fd=directory_fd, follow_symlinks=False
+        )
+        if (current.st_dev, current.st_ino) != (lock.st_dev, lock.st_ino):
+            raise OSError("Wiki publication lock changed")
+        path_directory = os.stat(parent, follow_symlinks=False)
+        if (path_directory.st_dev, path_directory.st_ino) != (
+            directory.st_dev,
+            directory.st_ino,
+        ):
+            raise OSError("Wiki publication directory changed")
+        yield directory_fd
+    finally:
+        if lock_fd is not None:
+            os.close(lock_fd)
+        os.close(directory_fd)
+
+
+def _preserve_and_replace(staged: str, destination: str) -> None:
+    """Preserve reader access and fsync staged content under publication lock."""
     try:
         previous = os.lstat(destination)
     except FileNotFoundError:
@@ -116,3 +200,48 @@ def replace_wiki_file(staged: str, destination: str) -> None:
     if previous is None and os.path.lexists(destination):
         raise OSError("Wiki destination appeared before publication")
     os.replace(staged, destination)
+
+
+def replace_wiki_file(
+    staged: str,
+    destination: str,
+    *,
+    expected_preimage: tuple | None,
+    expected_sources: dict[str, tuple | None] | None = None,
+) -> None:
+    """Publish only against the pre-fetch/render identity, with durable rename.
+
+    All cooperating writers in the wiki directory share a short publication
+    lock. The token must be captured BEFORE expensive acquisition/processing;
+    taking it here would let an older staged result replace a finished update.
+    Sources are checked under the same lock (the live XML/JSONL share a parent).
+    External offline input files are read-only dependencies, not a cross-folder
+    transaction. No semantic freshness is inferred for content fetched after a
+    completed update or for noncooperating external writers.
+
+    Before replacement, errors retain the destination. After replacement, a
+    directory-fsync failure raises WikiPublicationDurabilityError explicitly.
+    Existing owner/group/mode/ACL preservation remains mandatory and fail-closed.
+    """
+    destination = os.path.abspath(destination)
+    if os.path.realpath(os.path.dirname(os.path.abspath(staged))) != os.path.realpath(
+        os.path.dirname(destination)
+    ):
+        raise ValueError("Wiki staging must share the destination directory")
+    with _publication_directory(destination) as directory_fd:
+        if capture_wiki_preimage(destination) != expected_preimage:
+            raise WikiPublicationConflictError(
+                "Wiki destination changed before publication"
+            )
+        for path, expected in (expected_sources or {}).items():
+            if capture_wiki_preimage(path) != expected:
+                raise WikiPublicationConflictError(
+                    "Wiki source changed before publication"
+                )
+        _preserve_and_replace(staged, destination)
+        try:
+            os.fsync(directory_fd)
+        except OSError as error:
+            raise WikiPublicationDurabilityError(
+                "Wiki destination was replaced; directory durability is uncertain"
+            ) from error

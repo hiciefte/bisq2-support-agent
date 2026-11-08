@@ -20,6 +20,7 @@ pytestmark = pytest.mark.unit
 
 
 def load(tmp_path, entries):
+    """Load isolated source records through the production wiki loader."""
     (tmp_path / "processed_wiki.jsonl").write_text(
         "".join(json.dumps(entry) + "\n" for entry in entries), encoding="utf-8"
     )
@@ -27,6 +28,7 @@ def load(tmp_path, entries):
 
 
 def test_optional_source_fields_survive_loading_without_changing_article(tmp_path):
+    """Keep article bytes unchanged while preserving date, gaps and redirect provenance."""
     content = "Warning: do NOT share keys.\n```\n  keep = 'exact'\n\n```\n0.50 BTC"
     source = {
         "title": "SEPA",
@@ -60,6 +62,7 @@ def test_optional_source_fields_survive_loading_without_changing_article(tmp_pat
 
 
 def test_presentation_gaps_are_not_described_as_lost_warning_prose():
+    """Distinguish missing presentation definitions from retained warning content."""
     notice = wiki_context_notice(
         {
             "type": "wiki",
@@ -83,6 +86,7 @@ def test_presentation_gaps_are_not_described_as_lost_warning_prose():
     ],
 )
 def test_notices_are_exact_title_wiki_only(kind, title):
+    """Prevent dated wiki annotations from leaking into FAQs or similarly named pages."""
     metadata = {"type": kind, "title": title}
     assert "source_notices" not in wiki_source_provenance(metadata)
     if kind != "wiki":
@@ -133,6 +137,7 @@ def test_notices_are_exact_title_wiki_only(kind, title):
     ],
 )
 def test_reviewed_notice_cases_from_pinned_source_review(title, notice_id, phrase):
+    """Tie each reviewed discrepancy to its dated, pinned public evidence."""
     metadata = {"type": "wiki", "title": title}
     notices = wiki_source_provenance(metadata)["source_notices"]
     notice = next(item for item in notices if item["id"] == notice_id)
@@ -149,6 +154,7 @@ def test_reviewed_notice_cases_from_pinned_source_review(title, notice_id, phras
 def test_chunk_rerank_context_and_staff_snapshot_preserve_source_attachment(
     tmp_path, monkeypatch
 ):
+    """Carry the correct source annotations through chunking, reranking and staff evidence."""
     monkeypatch.setenv("BISQ_DISABLE_TRANSFORMERS", "1")
     entries = [
         {
@@ -240,42 +246,174 @@ def test_chunk_rerank_context_and_staff_snapshot_preserve_source_attachment(
         assert "2026-11-08" in provenance["source_context"]
 
 
-def test_identical_rerank_chunks_cannot_inherit_another_articles_notices():
+def test_identical_rerank_chunks_keep_sources_and_rank_other_candidates():
+    """Equal chunks share relevance without hiding a more relevant candidate."""
     docs = [
         RetrievedDocument(
             content="Identical quoted text.",
             metadata={"type": "wiki", "title": title},
             id=str(i),
+            score=0.8 - i * 0.1,
         )
         for i, title in enumerate(["SEPA", "Emergency Multisig payout tool"])
     ]
+    docs.append(
+        RetrievedDocument("Relevant separate text.", {"title": "Wallet"}, 0.2, "2")
+    )
+    reranker = _test_reranker()
+    reranker._model.rerank.return_value = [
+        {"content": docs[2].content, "score": 0.99},
+        {"content": docs[0].content, "score": 0.95},
+    ]
+    result = reranker.rerank("wallet", docs, top_n=3)
+    assert [item.id for item in result] == ["2", "0", "1"]
+    assert [item.score for item in result] == [0.99, 0.95, 0.95]
+    assert [item.metadata["title"] for item in result] == [
+        "Wallet",
+        "SEPA",
+        "Emergency Multisig payout tool",
+    ]
+    assert all(item.metadata["_reranked"] for item in result)
+    assert all("_reranked" not in item.metadata for item in docs)
+    reranker._model.rerank.assert_called_once_with(
+        query="wallet", documents=[docs[0].content, docs[2].content], k=2
+    )
+    assert [item.id for item in reranker.rerank("wallet", docs, top_n=2)] == ["2", "0"]
+
+
+def _test_reranker():
+    """Use the real adapter with a local model double and no provider calls."""
     reranker = ColBERTReranker(
         SimpleNamespace(
-            COLBERT_MODEL="unused", COLBERT_TOP_N=2, ENABLE_COLBERT_RERANK=True
+            COLBERT_MODEL="unused", COLBERT_TOP_N=3, ENABLE_COLBERT_RERANK=True
         )
     )
     reranker._model = Mock()
-    result = reranker.rerank("wallet", docs)
-    assert result == docs
-    assert [item.id for item in result] == ["0", "1"]
-    reranker._model.rerank.assert_not_called()
+    return reranker
 
 
 def test_unmatched_rerank_result_cannot_become_undated_wiki_evidence():
+    """An orphan model result falls back to explicitly unreranked source evidence."""
     docs = [
         RetrievedDocument(
-            content="Historical limit: 0.50 BTC.",
-            metadata={"type": "wiki", "title": "SEPA"},
-            id="original",
+            "Historical limit: 0.50 BTC.",
+            {"type": "wiki", "title": "SEPA"},
+            0.7,
+            "original",
         )
     ]
-    reranker = ColBERTReranker(
-        SimpleNamespace(
-            COLBERT_MODEL="unused", COLBERT_TOP_N=2, ENABLE_COLBERT_RERANK=True
-        )
-    )
-    reranker._model = Mock()
+    reranker = _test_reranker()
     reranker._model.rerank.return_value = [
         {"content": "Changed unknown text", "score": 0.99}
     ]
-    assert reranker.rerank("limit", docs) == docs
+    result = reranker.rerank("limit", docs)
+    assert len(result) == 1
+    assert result[0].id == "original"
+    assert result[0].content == docs[0].content
+    assert result[0].score == 0.7
+    assert result[0].metadata == {**docs[0].metadata, "_reranked": False}
+
+
+def test_duplicate_fallback_retains_scores_through_retriever_and_threshold():
+    """A failed model preserves per-source retrieval confidence and score meaning."""
+    docs = [
+        RetrievedDocument("Same text.", {"type": "wiki", "title": title}, score, str(i))
+        for i, (title, score) in enumerate(
+            [("SEPA", 0.9), ("Emergency Multisig payout tool", 0.3)]
+        )
+    ]
+    backend = Mock()
+    backend.retrieve_with_scores.return_value = docs
+    backend.retrieve_semantic_with_scores.return_value = []
+    reranker = _test_reranker()
+    reranker._model.rerank.side_effect = RuntimeError("offline model failure")
+    documents, scores = DocumentRetriever(
+        backend, reranker=reranker
+    ).retrieve_with_scores("wallet")
+    assert scores == [0.9, 0.3]
+    assert [doc.metadata["title"] for doc in documents] == [
+        doc.metadata["title"] for doc in docs
+    ]
+    for doc, score in zip(documents, scores, strict=True):
+        assert doc.metadata["_score_type"] == "relative_rank"
+        assert doc.metadata["_retrieval_score"] == score
+        assert doc.metadata["_reranked"] is False
+        assert "_colbert_score" not in doc.metadata
+    kept = reranker.rerank_with_threshold("wallet", docs, score_threshold=0.5)
+    assert [(doc.id, doc.score) for doc in kept] == [("0", 0.9)]
+    assert kept[0].metadata["_reranked"] is False
+
+
+def test_context_shares_notices_only_within_same_article():
+    """Notice bodies appear once per article while each chunk retains provenance."""
+    docs = [
+        Document(
+            page_content="First chunk",
+            metadata={
+                "type": "wiki",
+                "title": "SEPA",
+                "source_revision": {"id": "1", "timestamp": "2020-01-01"},
+            },
+        ),
+        Document(
+            page_content="Second chunk",
+            metadata={
+                "type": "wiki",
+                "title": "SEPA",
+                "source_revision": {"id": "2", "timestamp": "2021-01-01"},
+                "source_gaps": [{"kind": "template", "template": "Missing"}],
+            },
+        ),
+        Document(
+            page_content="Other article", metadata={"type": "wiki", "title": "Zelle"}
+        ),
+    ]
+    retriever = DocumentRetriever(Mock())
+    context = retriever.format_documents(docs)
+    body = wiki_source_provenance(docs[0].metadata)["source_notices"][0]["body"]
+    assert context.count(body) == 2  # Once for SEPA, separately for Zelle.
+    assert (
+        context.count(
+            "applies to this chunk; see the full check above for this article."
+        )
+        == 1
+    )
+    assert "2020-01-01 (revision 1)" in context
+    assert "2021-01-01 (revision 2)" in context
+    assert "Unresolved source expansions: Missing" in context
+    assert all(doc.page_content in context for doc in docs)
+    assert retriever.format_documents(docs) == context  # No cross-query suppression.
+    assert body in wiki_context_notice(
+        docs[1].metadata
+    )  # Standalone evidence stays complete.
+
+
+def test_context_retains_distinct_checks_for_one_article(monkeypatch):
+    """Deduplication must preserve separate notices rather than merge by article alone."""
+    from app.services import wiki_provenance
+
+    notices = [
+        {
+            "id": key,
+            "checked_at": "2026-11-08",
+            "body": body,
+            "sources": [{"url": "https://example.invalid/" + key}],
+        }
+        for key, body in [
+            ("one", "First distinct check"),
+            ("two", "Second distinct check"),
+        ]
+    ]
+    monkeypatch.setattr(
+        wiki_provenance, "_reviewed_notices", lambda: {"Article": notices}
+    )
+    docs = [
+        Document(
+            page_content=f"Chunk {i}", metadata={"type": "wiki", "title": "Article"}
+        )
+        for i in range(2)
+    ]
+    context = DocumentRetriever(Mock()).format_documents(docs)
+    for notice in notices:
+        assert context.count(notice["body"]) == 1
+        assert f"[{notice['id']}] applies to this chunk" in context

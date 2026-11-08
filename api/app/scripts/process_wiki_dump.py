@@ -19,7 +19,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from app.scripts.wiki_atomic import replace_wiki_file
+from app.scripts.wiki_atomic import capture_wiki_preimage, replace_wiki_file
 from app.scripts.wiki_text import WikiTextRenderer, redirect_directive, template_key
 from app.services.wiki_metadata import reviewed_wiki_category
 
@@ -40,6 +40,7 @@ def coalesce_pages(
     by_id = {}
     by_title = {}
     merged = []
+    redirect_by_revision = {}
 
     def signature(element):
         """Compare XML content without parser-added indentation/tail spacing."""
@@ -62,6 +63,17 @@ def coalesce_pages(
             raise ValueError(f"Page {title!r} has malformed page ID")
         page_id = int(raw_id) if raw_id is not None else None
         identity = (page_id, title, ns)
+        marker = page.find("mw:redirect", namespace)
+        if marker is not None:
+            # Page-level metadata describes the newest revision in this block.
+            # Bind it to that revision, never to the entire merged history.
+            selected = signature(latest_revision(page, namespace))
+            markers = redirect_by_revision.setdefault(identity, {})
+            if selected in markers and signature(markers[selected]) != signature(
+                marker
+            ):
+                raise ValueError(f"Conflicting redirect for page ID {page_id}")
+            markers[selected] = deepcopy(marker)
         if title in by_title and (page_id is None or by_title[title] != identity):
             raise ValueError(
                 f"Duplicate article title or conflicting page identity: {title!r}"
@@ -71,24 +83,13 @@ def coalesce_pages(
             existing_identity, target = by_id[page_id]
             if identity != existing_identity:
                 raise ValueError(f"Conflicting title/namespace for page ID {page_id}")
-            # Identical repeated blocks describe the same state. Preserve their
-            # XML-only redirect marker; never carry it across different revisions.
-            redirect = target.find("mw:redirect", namespace)
-            incoming_redirect = page.find("mw:redirect", namespace)
-            same_revisions = {
-                signature(rev) for rev in target.findall("mw:revision", namespace)
-            } == {signature(rev) for rev in page.findall("mw:revision", namespace)}
-            if not same_revisions and redirect is not None:
-                target.remove(redirect)
-            elif same_revisions and incoming_redirect is not None:
-                if redirect is None:
-                    target.append(deepcopy(incoming_redirect))
-                elif signature(redirect) != signature(incoming_redirect):
-                    raise ValueError(f"Conflicting redirect for page ID {page_id}")
             for revision in page.findall("mw:revision", namespace):
                 target.append(deepcopy(revision))
         else:
             target = deepcopy(page)
+            existing_marker = target.find("mw:redirect", namespace)
+            if existing_marker is not None:
+                target.remove(existing_marker)
             merged.append(target)
             if page_id is not None:
                 by_id[page_id] = (identity, target)
@@ -109,6 +110,15 @@ def coalesce_pages(
                 page.remove(revision)
             else:
                 seen[revision_id] = value
+        title = page.findtext("mw:title", namespaces=namespace)
+        ns = page.findtext("mw:ns", default="0", namespaces=namespace)
+        raw_id = page.findtext("mw:id", namespaces=namespace)
+        identity = (int(raw_id) if raw_id is not None else None, title, ns)
+        markers = redirect_by_revision.get(identity)
+        if markers:
+            selected = signature(latest_revision(page, namespace))
+            if selected in markers:
+                page.append(deepcopy(markers[selected]))
     return merged
 
 
@@ -201,13 +211,15 @@ class WikiDumpProcessor:
         self.source_gaps = result.source_gaps
         return result.text
 
-    def categorize_content(self, title: str, content: str) -> str:
-        """Categorize content as bisq1, bisq2, or general based on title and content analysis."""
+    def categorize_content(
+        self, title: str, content: str, rendered_content: str = ""
+    ) -> str:
+        """Classify cues from raw and rendered content without duplicating them."""
         reviewed_category = reviewed_wiki_category(title)
         if reviewed_category is not None:
             return reviewed_category
         title_lower = title.lower()
-        content_lower = content.lower()
+        sources = (content.lower(), rendered_content.lower())
 
         # Define Bisq 2 specific page titles and patterns
         bisq2_titles = [
@@ -282,12 +294,10 @@ class WikiDumpProcessor:
         ]
 
         for pattern in bisq2_patterns:
-            if pattern in content_lower:
-                bisq2_score += content_lower.count(pattern)
+            bisq2_score += max(source.count(pattern) for source in sources)
 
         for pattern in bisq1_patterns:
-            if pattern in content_lower:
-                bisq1_score += content_lower.count(pattern)
+            bisq1_score += max(source.count(pattern) for source in sources)
 
         # Determine category based on scores
         if bisq2_score > bisq1_score and bisq2_score > 0:
@@ -296,10 +306,11 @@ class WikiDumpProcessor:
             return "bisq1"
         else:
             # Additional context clues for general content
-            if "bisq 2" in content_lower or "bisq2" in content_lower:
+            if any("bisq 2" in source or "bisq2" in source for source in sources):
                 return "bisq2"
-            elif "bisq 1" in content_lower or any(
-                v in content_lower for v in ["v1.2", "version 1"]
+            elif any(
+                "bisq 1" in source or any(v in source for v in ["v1.2", "version 1"])
+                for source in sources
             ):
                 return "bisq1"
             else:
@@ -335,7 +346,7 @@ class WikiDumpProcessor:
             clean_content = self.clean_text(content)
             # Preserve source/category cues while also seeing template-generated
             # protocol prose. Reviewed title overrides still take precedence.
-            category = self.categorize_content(title, content + "\n" + clean_content)
+            category = self.categorize_content(title, content, clean_content)
 
             # Pure redirects have no article body, but trailing prose, warnings
             # and lists in a redirect source are still useful content.
@@ -368,6 +379,10 @@ class WikiDumpProcessor:
     def process_dump(self):
         """Process the entire wiki dump."""
         logger.info(f"Processing wiki dump from {self.input_file}")
+        destination = os.path.abspath(self.output_file)
+        source = os.path.abspath(self.input_file)
+        destination_preimage = capture_wiki_preimage(destination)
+        source_preimage = capture_wiki_preimage(source)
 
         try:
             # Parse XML
@@ -421,21 +436,21 @@ class WikiDumpProcessor:
                     self.context[entry["category"]].append(entry)
                     processed_count += 1
 
-            logger.info(f"Successfully processed {processed_count} pages")
+            logger.info(f"Prepared {processed_count} pages for publication")
             logger.info("Categories breakdown:")
             for category, entries in self.context.items():
                 logger.info(f"- {category}: {len(entries)} entries")
 
             # Save processed content
-            self.save_processed_content()
+            self.save_processed_content(destination_preimage, source, source_preimage)
             logger.info(f"Processed content saved to {self.output_file}")
 
         except Exception as e:
             logger.error(f"Error processing dump: {str(e)}", exc_info=True)
             raise
 
-    def save_processed_content(self):
-        """Save processed content to JSONL file."""
+    def save_processed_content(self, destination_preimage, source, source_preimage):
+        """Publish processed JSONL only against captured source/output identities."""
         total_entries = sum(len(entries) for entries in self.context.values())
         if total_entries == 0:
             raise ValueError("No articles to save; existing corpus left unchanged")
@@ -457,11 +472,21 @@ class WikiDumpProcessor:
                         output.write(json.dumps(entry, ensure_ascii=False) + "\n")
                 output.flush()
                 os.fsync(output.fileno())
-            replace_wiki_file(temporary, destination)
+            replace_wiki_file(
+                temporary,
+                destination,
+                expected_preimage=destination_preimage,
+                expected_sources={source: source_preimage},
+            )
             temporary = None
         finally:
             if temporary is not None:
-                os.unlink(temporary)
+                try:
+                    os.unlink(temporary)
+                except FileNotFoundError:
+                    # A completed rename followed by an fsync error consumes
+                    # the staged path; preserve the explicit durability error.
+                    pass
 
 
 def main():

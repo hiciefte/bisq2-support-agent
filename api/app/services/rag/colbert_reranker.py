@@ -149,28 +149,38 @@ class ColBERTReranker(RerankerProtocol):
 
         effective_top_n = top_n or self.top_n
 
+        def original_order() -> List[RetrievedDocument]:
+            """Preserve retrieval scores and provenance when no ranking succeeds."""
+            results = []
+            for doc in documents[:effective_top_n]:
+                metadata = dict(doc.metadata)
+                metadata.pop("_colbert_score", None)
+                metadata["_reranked"] = False
+                results.append(
+                    RetrievedDocument(doc.content, metadata, doc.score, doc.id)
+                )
+            return results
+
         # If reranking is disabled, just return top_n documents
         if not self.settings.ENABLE_COLBERT_RERANK:
             logger.debug("ColBERT reranking disabled, returning original order")
-            return documents[:effective_top_n]
+            return original_order()
 
         # Ensure model is loaded
         if not self._ensure_model_loaded():
             logger.warning(
                 "ColBERT model not available, returning documents without reranking"
             )
-            return documents[:effective_top_n]
+            return original_order()
 
         try:
-            # Extract document texts for reranking
-            doc_texts = [doc.content for doc in documents]
-            # Results are mapped back by exact text below. Equal chunks may
-            # carry different article dates/notices: do not attach the first
-            # article's provenance to another source. Keep retrieval order
-            # when the reranker cannot unambiguously identify each input.
-            if len(set(doc_texts)) != len(doc_texts):
-                logger.info("Skipping ambiguous equal-text reranking")
-                return documents[:effective_top_n]
+            # Equal text has the same relevance, but may have distinct source
+            # metadata. Rank each text once, then expand tied originals in
+            # retrieval order without attaching one source's metadata to another.
+            by_text: dict[str, List[RetrievedDocument]] = {}
+            for doc in documents:
+                by_text.setdefault(doc.content, []).append(doc)
+            doc_texts = list(by_text)
 
             # Rerank using ColBERT
             logger.debug(
@@ -181,11 +191,12 @@ class ColBERTReranker(RerankerProtocol):
             reranked_results = self._model.rerank(  # type: ignore[attr-defined]
                 query=query,
                 documents=doc_texts,
-                k=effective_top_n,
+                k=min(effective_top_n, len(doc_texts)),
             )
 
             # Map reranked results back to RetrievedDocument objects
             reranked_docs = []
+            seen_texts: set[str] = set()
             for result in reranked_results:
                 # RAGatouille returns dict with 'content' and 'score'
                 if isinstance(result, dict):
@@ -195,39 +206,34 @@ class ColBERTReranker(RerankerProtocol):
                     # Handle tuple format (content, score)
                     content, score = result if len(result) == 2 else (result[0], 0.0)
 
-                # Find matching original document
-                matching_doc = None
-                for doc in documents:
-                    if doc.content == content:
-                        matching_doc = doc
-                        break
-
-                if matching_doc:
-                    # Create new doc with updated score
+                if content not in by_text or content in seen_texts:
+                    # An orphan or repeated result cannot establish a ranking
+                    # of the original evidence candidates.
+                    logger.warning("Invalid source mapping in rerank results")
+                    return original_order()
+                seen_texts.add(content)
+                for matching_doc in by_text[content]:
+                    metadata = dict(matching_doc.metadata)
+                    metadata["_reranked"] = True
+                    metadata["_colbert_score"] = float(score)
                     reranked_docs.append(
                         RetrievedDocument(
                             content=matching_doc.content,
-                            metadata=matching_doc.metadata,
+                            metadata=metadata,
                             score=float(score),
                             id=matching_doc.id,
                         )
                     )
-                else:
-                    # A result without its source metadata is not evidence.
-                    # Keep the original candidates rather than emit an orphan
-                    # chunk without its date, protocol or reviewed notices.
-                    logger.warning("Reranked document not found in original list")
-                    return documents[:effective_top_n]
 
             logger.info(
                 f"ColBERT reranking complete: {len(documents)} -> {len(reranked_docs)} documents"
             )
-            return reranked_docs
+            return reranked_docs[:effective_top_n]
 
         except Exception as e:
             logger.error(f"ColBERT reranking failed: {e}", exc_info=True)
             # Fallback: return original documents without reranking
-            return documents[:effective_top_n]
+            return original_order()
 
     def rerank_with_threshold(
         self,
