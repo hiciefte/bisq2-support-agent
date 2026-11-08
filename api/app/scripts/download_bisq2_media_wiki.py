@@ -2,7 +2,9 @@ import argparse
 import logging
 import os
 import re
+import stat
 import sys
+import tempfile
 import time
 import xml.etree.ElementTree as ET
 
@@ -186,81 +188,99 @@ def main(output_dir: str) -> None:
         )
         ns.text = name
 
-    # Use mwclient to iterate over all pages
+    # Keep redirect aliases and template definitions alongside article sources.
+    # Read content and revision metadata together so they describe the same edit.
     page_count = 0
-    for page in site.allpages():
-        if page.namespace != 0:  # Skip non-main pages
-            continue
+    article_count = 0
+    for namespace in (0, 10):
+        for page in site.allpages(namespace=namespace):
+            if page.namespace != namespace:
+                raise ValueError(f"Unexpected namespace for {page.name}")
+            try:
+                revision = next(
+                    page.revisions(
+                        prop="ids|timestamp|comment|user|userid|content",
+                        slots="main",
+                        api_chunk_size=1,
+                    )
+                )
+                content = (
+                    revision["slots"]["main"]["*"]
+                    if "slots" in revision
+                    else revision["*"]
+                )
+                if not isinstance(content, str):
+                    raise ValueError("Missing readable revision content")
+                redirect = re.match(
+                    r"\s*#redirect\s*\[\[([^\]]+)\]\]", content, re.IGNORECASE
+                )
+                page_element = ET.SubElement(mediawiki_root, "page")
+                ET.SubElement(page_element, "title").text = page.name
+                ET.SubElement(page_element, "ns").text = str(page.namespace)
+                ET.SubElement(page_element, "id").text = str(page.pageid)
+                if redirect:
+                    ET.SubElement(
+                        page_element,
+                        "redirect",
+                        attrib={"title": redirect.group(1).split("|", 1)[0].strip()},
+                    )
+                revision_element = ET.SubElement(page_element, "revision")
+                ET.SubElement(revision_element, "id").text = str(revision["revid"])
+                ET.SubElement(revision_element, "timestamp").text = time.strftime(
+                    "%Y-%m-%dT%H:%M:%SZ", revision["timestamp"]
+                )
+                contributor = ET.SubElement(revision_element, "contributor")
+                ET.SubElement(contributor, "username").text = revision.get("user", "")
+                ET.SubElement(contributor, "id").text = str(revision.get("userid", "0"))
+                ET.SubElement(revision_element, "comment").text = revision.get(
+                    "comment", ""
+                )
+                ET.SubElement(revision_element, "model").text = "wikitext"
+                ET.SubElement(revision_element, "format").text = "text/x-wiki"
+                ET.SubElement(
+                    revision_element, "text", attrib={"xml:space": "preserve"}
+                ).text = content
+                page_count += 1
+                if namespace == 0 and content.strip() and not redirect:
+                    article_count += 1
+            except Exception:
+                # A well-formed but partial export must not replace a good snapshot.
+                logging.exception(
+                    "Failed to capture page %s; snapshot unchanged", page.name
+                )
+                raise
+            time.sleep(0.1)
 
-        page_count += 1
-        logging.info(f"Processing page {page_count}: {page.name}")
-
-        try:
-            content = page.text()
-            if not content or content.lower().startswith("#redirect"):
-                logging.debug(f"Skipping empty or redirect page: {page.name}")
-                continue
-
-            # Classify content
-            bisq_version = classify_bisq_version(page.name, content)
-
-            # Create XML element for the page
-            page_element = ET.SubElement(mediawiki_root, "page")
-            ET.SubElement(page_element, "title").text = page.name
-            ET.SubElement(page_element, "ns").text = str(page.namespace)
-            ET.SubElement(page_element, "id").text = str(page.pageid)
-
-            revision = page.revisions(prop="ids|timestamp|comment|user").__next__()
-            revision_element = ET.SubElement(page_element, "revision")
-            ET.SubElement(revision_element, "id").text = str(revision["revid"])
-            ts = revision["timestamp"]
-            formatted_ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", ts)
-            ET.SubElement(revision_element, "timestamp").text = formatted_ts
-
-            contributor = ET.SubElement(revision_element, "contributor")
-            ET.SubElement(contributor, "username").text = revision.get(
-                "user", "downloader"
-            )
-            ET.SubElement(contributor, "id").text = str(revision.get("userid", "0"))
-
-            ET.SubElement(revision_element, "comment").text = revision.get(
-                "comment", "Downloaded by script"
-            )
-            ET.SubElement(revision_element, "model").text = "wikitext"
-            ET.SubElement(revision_element, "format").text = "text/x-wiki"
-
-            text_element = ET.SubElement(
-                revision_element, "text", attrib={"xml:space": "preserve"}
-            )
-
-            # The text of the element must be set *after* the comment is appended.
-            comment_text = f"<!-- BISQ VERSION: {bisq_version} -->"
-            text_element.text = content + comment_text
-
-        except Exception as e:
-            logging.error(f"Error processing page {page.name}: {e}")
-
-        # Small delay to avoid overwhelming the server
-        time.sleep(0.1)
-
-    logging.info(f"Finished processing {page_count} pages.")
-
-    # Ensure the output directory exists
+    if not article_count:
+        raise ValueError("Wiki export contains no non-redirect articles")
+    logging.info("Captured %s pages, including %s articles", page_count, article_count)
     os.makedirs(output_dir, exist_ok=True)
-
-    # Save the XML file
     output_filename = os.path.join(output_dir, "bisq2_dump.xml")
-    tree = ET.ElementTree(mediawiki_root)
-    ET.indent(tree, space="  ")  # Pretty-print the XML
-    tree.write(output_filename, encoding="utf-8", xml_declaration=True)
-
-    logging.info(f"File saved as {output_filename}")
-
-    # Verify the XML file is well-formed
-    if validate_xml(output_filename):
-        logging.info("XML validation successful.")
-    else:
-        logging.error("The generated XML file has formatting issues.")
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            dir=output_dir, prefix=".wiki-", suffix=".xml", delete=False
+        ) as handle:
+            temporary = handle.name
+            tree = ET.ElementTree(mediawiki_root)
+            ET.indent(tree, space="  ")
+            tree.write(handle, encoding="utf-8", xml_declaration=True)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if not validate_xml(temporary):
+            raise ValueError("Generated wiki XML failed validation")
+        mode = (
+            stat.S_IMODE(os.stat(output_filename).st_mode) & 0o777
+            if os.path.exists(output_filename)
+            else 0o644
+        )
+        os.chmod(temporary, mode)
+        os.replace(temporary, output_filename)
+        temporary = None
+        logging.info("Validated snapshot saved as %s", output_filename)
+    finally:
+        if temporary and os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 if __name__ == "__main__":

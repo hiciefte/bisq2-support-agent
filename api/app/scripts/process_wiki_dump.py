@@ -8,15 +8,20 @@ This script:
 4. Creates clean JSONL output for embedding
 """
 
+import argparse
 import json
 import logging
 import os
 import re
+import stat
+import tempfile
 import xml.etree.ElementTree as ET
+from copy import deepcopy
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from app.scripts.wiki_text import WikiTextRenderer, template_key
 from app.services.wiki_metadata import reviewed_wiki_category
-from bs4 import BeautifulSoup
 
 # Configure logging
 logging.basicConfig(
@@ -28,10 +33,149 @@ logger = logging.getLogger(__name__)
 NS = {"mw": "http://www.mediawiki.org/xml/export-0.10/"}
 
 
+def coalesce_pages(
+    pages: List[ET.Element], namespace: Dict[str, str]
+) -> List[ET.Element]:
+    """Join incremental WikiTeam blocks without accepting identity conflicts."""
+    by_id = {}
+    by_title = {}
+    merged = []
+
+    def signature(element):
+        # XML indentation and tail whitespace are not revision content. Leaf
+        # text (especially <text xml:space="preserve">) stays byte-exact.
+        return (
+            element.tag,
+            tuple(sorted(element.attrib.items())),
+            element.text if len(element) == 0 else (element.text or "").strip(),
+            tuple(signature(child) for child in element),
+        )
+
+    for page in pages:
+        title = page.findtext("mw:title", namespaces=namespace)
+        ns = page.findtext("mw:ns", default="0", namespaces=namespace)
+        raw_id = page.findtext("mw:id", namespaces=namespace)
+        if not title:
+            raise ValueError("Page missing title")
+        if raw_id is not None and not re.fullmatch(r"[0-9]+", raw_id):
+            raise ValueError(f"Page {title!r} has malformed page ID")
+        page_id = int(raw_id) if raw_id is not None else None
+        identity = (page_id, title, ns)
+        if title in by_title and (page_id is None or by_title[title] != identity):
+            raise ValueError(
+                f"Duplicate article title or conflicting page identity: {title!r}"
+            )
+        by_title[title] = identity
+        if page_id is not None and page_id in by_id:
+            existing_identity, target = by_id[page_id]
+            if identity != existing_identity:
+                raise ValueError(f"Conflicting title/namespace for page ID {page_id}")
+            # Page-level redirect metadata can describe a different chunk's
+            # current state. The selected revision's actual directive wins.
+            redirect = target.find("mw:redirect", namespace)
+            if redirect is not None:
+                target.remove(redirect)
+            for revision in page.findall("mw:revision", namespace):
+                target.append(deepcopy(revision))
+        else:
+            target = deepcopy(page)
+            merged.append(target)
+            if page_id is not None:
+                by_id[page_id] = (identity, target)
+
+    for page in merged:
+        seen = {}
+        for revision in list(page.findall("mw:revision", namespace)):
+            raw_id = revision.findtext("mw:id", namespaces=namespace)
+            if raw_id is None or not re.fullmatch(r"[0-9]+", raw_id):
+                continue  # latest_revision gives the metadata error for history
+            revision_id = int(raw_id)
+            value = signature(revision)
+            if revision_id in seen:
+                if seen[revision_id] != value:
+                    raise ValueError(
+                        f"Conflicting contents for revision ID {revision_id}"
+                    )
+                page.remove(revision)
+            else:
+                seen[revision_id] = value
+    return merged
+
+
+def latest_revision(page: ET.Element, namespace: Dict[str, str]) -> ET.Element:
+    """Select a history revision by UTC time, then numeric ID, never XML order.
+
+    Legacy one-revision exports may omit metadata. Multiple revisions require
+    complete, unambiguous metadata. A deleted latest revision is an unavailable
+    source, not permission to silently publish an older revision instead.
+    """
+    title = page.findtext("mw:title", default="<untitled>", namespaces=namespace)
+    revisions = page.findall("mw:revision", namespace)
+    if not revisions:
+        raise ValueError(f"Page {title!r} missing revision")
+    ranked = []
+    seen_ids = set()
+    for revision in revisions:
+        timestamp = revision.findtext("mw:timestamp", namespaces=namespace)
+        revision_id = revision.findtext("mw:id", namespaces=namespace)
+        if len(revisions) > 1 and (not timestamp or not revision_id):
+            raise ValueError(f"Page {title!r} history revision missing timestamp or ID")
+        instant = datetime.min.replace(tzinfo=timezone.utc)
+        if timestamp is not None:
+            try:
+                if not re.fullmatch(
+                    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})",
+                    timestamp,
+                ):
+                    raise ValueError("expected timestamp with explicit timezone")
+                instant = datetime.fromisoformat(
+                    timestamp.replace("Z", "+00:00")
+                ).astimezone(timezone.utc)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Page {title!r} has malformed revision timestamp: {timestamp!r}"
+                ) from exc
+        numeric_id = -1
+        if revision_id is not None:
+            if not re.fullmatch(r"[0-9]+", revision_id):
+                raise ValueError(
+                    f"Page {title!r} has malformed revision ID: {revision_id!r}"
+                )
+            numeric_id = int(revision_id)
+            if numeric_id in seen_ids:
+                raise ValueError(
+                    f"Page {title!r} has ambiguous duplicate revision ID: {revision_id}"
+                )
+            seen_ids.add(numeric_id)
+        ranked.append((instant, numeric_id, revision))
+    selected = max(ranked, key=lambda item: (item[0], item[1]))[2]
+    text = selected.find("mw:text", namespace)
+    if selected.get("deleted") is not None or (
+        text is not None and text.get("deleted") is not None
+    ):
+        raise ValueError(f"Page {title!r} latest revision content is deleted")
+    return selected
+
+
+def revision_metadata(
+    revision: ET.Element, namespace: Dict[str, str]
+) -> Dict[str, str]:
+    """Original revision identifiers, when present, for source provenance."""
+    return {
+        field: value
+        for field in ("id", "timestamp")
+        if (value := revision.findtext(f"mw:{field}", namespaces=namespace)) is not None
+    }
+
+
 class WikiDumpProcessor:
     def __init__(self, input_file: str, output_file: str):
         self.input_file = input_file
         self.output_file = output_file
+        self.templates: Dict[str, str] = {}
+        self.template_revisions: Dict[str, Dict[str, str]] = {}
+        self.source_gaps: List[Dict[str, str]] = []
+        self.namespace = NS
         self.context: Dict[str, List[Dict[str, Any]]] = {
             "bisq1": [],
             "bisq2": [],
@@ -39,61 +183,10 @@ class WikiDumpProcessor:
         }
 
     def clean_text(self, text: str) -> str:
-        """
-        Clean MediaWiki text by converting it to a more readable format,
-        preserving structure like headings and bold text, while removing
-        unnecessary markup.
-        """
-        if not text:
-            return ""
-
-        # --- Stage 1: Regex-based MediaWiki syntax conversion ---
-
-        # Keep content of <pre> blocks, protect them from further processing
-        pre_blocks: Dict[str, str] = {}
-
-        def pre_tag_replacer(match):
-            key = f"__PRE_BLOCK_{len(pre_blocks)}__"
-            # Extract content and remove the tags
-            content = match.group(1).strip()
-            pre_blocks[key] = f"\n```\n{content}\n```\n"
-            return key
-
-        text = re.sub(r"<pre>(.*?)</pre>", pre_tag_replacer, text, flags=re.DOTALL)
-
-        # Convert headings: == Heading == -> ## Heading
-        text = re.sub(r"==\s*(.*?)\s*==", r"\n## \1\n", text)
-
-        # Convert bold: '''bold''' -> **bold**
-        text = re.sub(r"'''(.*?)'''", r"**\1**", text)
-
-        # Convert internal links: [[Page Title|display text]] -> display text
-        text = re.sub(r"\[\[(?:[^|\]]+\|)?([^\]]+)\]\]", r"\1", text)
-
-        # Remove file links and thumbnails: [[File:...]]
-        text = re.sub(r"\[\[File:.*?\]\]", "", text, flags=re.IGNORECASE)
-
-        # Remove templates: {{template...}}
-        text = re.sub(r"{{.*?}}", "", text, flags=re.DOTALL)
-
-        # --- Stage 2: HTML tag stripping with BeautifulSoup ---
-        soup = BeautifulSoup(text, "html.parser")
-        text = soup.get_text()
-
-        # --- Stage 3: Final cleanup ---
-
-        # Restore <pre> blocks
-        for key, value in pre_blocks.items():
-            text = text.replace(key, value)
-
-        # Consolidate multiple newlines into a maximum of two
-        text = re.sub(r"\n{3,}", "\n\n", text)
-        # Remove multiple spaces
-        text = re.sub(r" +", " ", text)
-        # Remove leading/trailing whitespace from each line
-        text = "\n".join(line.strip() for line in text.split("\n"))
-
-        return text.strip()
+        """Render without silently discarding warnings or missing expansions."""
+        result = WikiTextRenderer(self.templates).render(text or "")
+        self.source_gaps = result.source_gaps
+        return result.text
 
     def categorize_content(self, title: str, content: str) -> str:
         """Categorize content as bisq1, bisq2, or general based on title and content analysis."""
@@ -202,27 +295,32 @@ class WikiDumpProcessor:
     def process_page(self, page: ET.Element) -> Optional[Dict]:
         """Process a single wiki page."""
         try:
-            title_elem = page.find("mw:title", NS)
+            title_elem = page.find("mw:title", self.namespace)
             if title_elem is None or title_elem.text is None:
-                logger.warning("Page missing title")
-                return None
+                raise ValueError("Page missing title")
             title = title_elem.text
 
-            # Skip pages that are just file descriptions as they provide no value
-            if title.startswith("File:"):
+            # Template definitions and other namespaces are not support articles.
+            namespace = page.findtext("mw:ns", default="0", namespaces=self.namespace)
+            if namespace != "0" or title.lower().startswith(("file:", "template:")):
                 return None
+            revision = latest_revision(page, self.namespace)
 
-            revision = page.find("mw:revision", NS)
-            if revision is None:
-                logger.warning(f"Page '{title}' missing revision")
-                return None
+            text_elem = revision.find("mw:text", self.namespace)
+            if text_elem is None or text_elem.get("deleted") is not None:
+                raise ValueError(f"Page {title!r} missing text content")
 
-            text_elem = revision.find("mw:text", NS)
-            if text_elem is None or text_elem.text is None:
-                logger.warning(f"Page '{title}' missing text content")
-                return None
-
-            content = text_elem.text
+            content = text_elem.text or ""
+            redirect = page.find("mw:redirect", self.namespace)
+            redirect_target = redirect.get("title") if redirect is not None else None
+            directive = re.match(
+                r"^(?:\s|<!--.*?-->)*#redirect\s*:?\s*\[\[([^\]]+)\]\]",
+                content,
+                re.IGNORECASE | re.DOTALL,
+            )
+            if directive:
+                redirect_target = directive.group(1).split("|", 1)[0].strip()
+                content = content[directive.end() :]
 
             # Use enhanced categorization logic
             category = self.categorize_content(title, content)
@@ -230,20 +328,33 @@ class WikiDumpProcessor:
             # Clean the text
             clean_content = self.clean_text(content)
 
-            # Skip redirects and empty pages
-            if clean_content.startswith("#REDIRECT") or not clean_content.strip():
+            # Pure redirects have no article body, but trailing prose, warnings
+            # and lists in a redirect source are still useful content.
+            if not clean_content.strip():
                 logger.debug(f"Skipping redirect/empty page: {title}")
                 return None
 
             # Create page entry
             entry = {"title": title, "content": clean_content, "category": category}
+            if redirect_target:
+                entry["redirect_target"] = redirect_target
+            provenance = revision_metadata(revision, self.namespace)
+            if provenance:
+                entry["source_revision"] = provenance
+            if self.source_gaps:
+                entry["source_gaps"] = self.source_gaps.copy()
+                logger.warning(
+                    "Page %r has %d unresolved source gaps",
+                    title,
+                    len(self.source_gaps),
+                )
 
             logger.info(f"Processed page: {title} (category: {entry['category']})")
             return entry
 
         except Exception as e:
             logger.error(f"Error processing page: {str(e)}", exc_info=True)
-            return None
+            raise
 
     def process_dump(self):
         """Process the entire wiki dump."""
@@ -254,15 +365,50 @@ class WikiDumpProcessor:
             tree = ET.parse(self.input_file)
             root = tree.getroot()
 
-            # Get all pages
-            pages = root.findall(".//mw:page", NS)
+            namespace_uri = root.tag.partition("}")[0].lstrip("{")
+            if not namespace_uri.startswith("http://www.mediawiki.org/xml/export-"):
+                raise ValueError("Input is not a namespaced MediaWiki export")
+            self.namespace = {"mw": namespace_uri}
+            pages = coalesce_pages(
+                root.findall("mw:page", self.namespace), self.namespace
+            )
+            self.context = {"bisq1": [], "bisq2": [], "general": []}
+            self.templates = {}
+            self.template_revisions = {}
+            # Definitions can appear after the articles which invoke them.
+            for page in pages:
+                title = page.findtext("mw:title", default="", namespaces=self.namespace)
+                ns = page.findtext("mw:ns", default="0", namespaces=self.namespace)
+                if ns == "10" or title.lower().startswith("template:"):
+                    selected = latest_revision(page, self.namespace)
+                    definition = selected.find("mw:text", self.namespace)
+                    if (
+                        not title
+                        or definition is None
+                        or definition.get("deleted") is not None
+                    ):
+                        raise ValueError(
+                            f"Template {title!r} has no available definition"
+                        )
+                    key = template_key(title)
+                    value = definition.text or ""
+                    if key in self.templates and self.templates[key] != value:
+                        raise ValueError(f"Conflicting definitions for Template:{key}")
+                    self.templates[key] = value
+                    self.template_revisions[key] = revision_metadata(
+                        selected, self.namespace
+                    )
             logger.info(f"Found {len(pages)} pages in the dump")
 
             # Process each page
             processed_count = 0
+            article_titles = set()
             for page in pages:
                 entry = self.process_page(page)
                 if entry:
+                    if entry["title"] in article_titles:
+                        raise ValueError(f"Duplicate article title: {entry['title']!r}")
+                    article_titles.add(entry["title"])
                     self.context[entry["category"]].append(entry)
                     processed_count += 1
 
@@ -283,21 +429,35 @@ class WikiDumpProcessor:
         """Save processed content to JSONL file."""
         total_entries = sum(len(entries) for entries in self.context.values())
         if total_entries == 0:
-            logger.warning("No entries to save!")
-            return
+            raise ValueError("No articles to save; existing corpus left unchanged")
 
-        with open(self.output_file, "w", encoding="utf-8") as f:
-            # Write Bisq 2 content first (most relevant)
-            for entry in self.context["bisq2"]:
-                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-
-            # Write Bisq 1 content
-            for entry in self.context["bisq1"]:
-                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-
-            # Write general content
-            for entry in self.context["general"]:
-                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        destination = os.path.abspath(self.output_file)
+        try:
+            output_mode = stat.S_IMODE(os.stat(destination).st_mode) & 0o777
+        except FileNotFoundError:
+            output_mode = 0o644  # New wiki output is public source material.
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=os.path.dirname(destination),
+                prefix=".wiki-",
+                suffix=".jsonl.tmp",
+                delete=False,
+            ) as output:
+                temporary = output.name
+                os.fchmod(output.fileno(), output_mode)
+                for category in ("bisq2", "bisq1", "general"):
+                    for entry in self.context[category]:
+                        output.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(temporary, destination)
+            temporary = None
+        finally:
+            if temporary is not None:
+                os.unlink(temporary)
 
 
 def main():
@@ -306,10 +466,17 @@ def main():
     input_file = os.path.join(project_root, "data", "wiki", "bisq2_dump.xml")
     output_file = os.path.join(project_root, "data", "wiki", "processed_wiki.jsonl")
 
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--input-file", default=input_file, help="MediaWiki XML input")
+    parser.add_argument(
+        "--output-file", default=output_file, help="Processed JSONL destination"
+    )
+    args = parser.parse_args()
+    input_file, output_file = args.input_file, args.output_file
+
     # Check if input file exists
     if not os.path.exists(input_file):
-        logger.error(f"Input file not found: {input_file}")
-        return
+        raise FileNotFoundError(f"Input file not found: {input_file}")
 
     # Process the dump
     processor = WikiDumpProcessor(str(input_file), str(output_file))
