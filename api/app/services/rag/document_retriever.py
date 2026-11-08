@@ -24,6 +24,7 @@ from app.services.rag.interfaces import (
     RetrieverProtocol,
 )
 from app.services.rag.protocol_detector import ProtocolDetector
+from app.services.wiki_metadata import reviewed_wiki_category
 from app.services.wiki_provenance import wiki_context_notice
 from langchain_core.documents import Document
 
@@ -613,8 +614,14 @@ class DocumentRetriever:
 
             # Determine protocol from metadata and content
             protocol = doc.metadata.get("protocol", "all")
-            if protocol == "all":
-                # Check content for protocol-specific information
+            reviewed_general = (
+                source_type == "wiki"
+                and reviewed_wiki_category(str(title)) == "general"
+            )
+            if protocol == "all" and not reviewed_general:
+                # Reviewed mixed-protocol articles retain their general label;
+                # incidental mentions must not override that source-scope review.
+                # Other unclassified chunks retain the existing keyword fallback.
                 content = doc.page_content.lower()
                 if "bisq 2" in content or "bisq2" in content or "bisq easy" in content:
                     protocol = "bisq_easy"

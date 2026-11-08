@@ -100,47 +100,24 @@ def capture_wiki_preimage(path: str) -> tuple | None:
 
 @contextmanager
 def _publication_directory(destination: str) -> Iterator[int]:
-    """Serialize cooperating wiki publishers across processes and threads.
+    """Lock the existing parent inode, without initializing another lock file.
 
-    The stable lock is never unlinked: replacing a lock inode would split the
-    serialization domain. Contention refuses immediately rather than waiting or
-    retrying a staged result. Open read-only so a later authorized writer with a
-    different UID can flock the same lock without changing its ownership.
+    Independent directory descriptors contend on Linux and macOS. A restrictive
+    umask or a crashed publisher cannot leave a partly initialized lock pathname;
+    closing the descriptor (including process exit) releases the kernel lock.
+    Contention refuses immediately, never retries a staged result. Cooperating
+    publishers must use this same parent-directory lock and early CAS contract.
     """
     parent = os.path.realpath(os.path.dirname(os.path.abspath(destination)))
     directory_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    lock_fd = None
     try:
-        flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
-        try:
-            lock_fd = os.open(
-                ".wiki-publication.lock",
-                flags | os.O_CREAT | os.O_EXCL,
-                0o644,
-                dir_fd=directory_fd,
-            )
-            os.fchmod(lock_fd, 0o644)
-        except FileExistsError:
-            lock_fd = os.open(".wiki-publication.lock", flags, dir_fd=directory_fd)
-        lock = os.fstat(lock_fd)
         directory = os.fstat(directory_fd)
-        if (
-            not stat.S_ISREG(lock.st_mode)
-            or lock.st_nlink != 1
-            or stat.S_IMODE(lock.st_mode) != 0o644
-        ):
-            raise OSError("Unsafe wiki publication lock")
         try:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(directory_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as error:
             raise WikiPublicationConflictError(
                 "Another wiki publication is in progress; staged result not published"
             ) from error
-        current = os.stat(
-            ".wiki-publication.lock", dir_fd=directory_fd, follow_symlinks=False
-        )
-        if (current.st_dev, current.st_ino) != (lock.st_dev, lock.st_ino):
-            raise OSError("Wiki publication lock changed")
         path_directory = os.stat(parent, follow_symlinks=False)
         if (path_directory.st_dev, path_directory.st_ino) != (
             directory.st_dev,
@@ -149,8 +126,6 @@ def _publication_directory(destination: str) -> Iterator[int]:
             raise OSError("Wiki publication directory changed")
         yield directory_fd
     finally:
-        if lock_fd is not None:
-            os.close(lock_fd)
         os.close(directory_fd)
 
 

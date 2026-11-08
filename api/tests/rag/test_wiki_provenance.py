@@ -317,7 +317,12 @@ def test_unmatched_rerank_result_cannot_become_undated_wiki_evidence():
 def test_duplicate_fallback_retains_scores_through_retriever_and_threshold():
     """A failed model preserves per-source retrieval confidence and score meaning."""
     docs = [
-        RetrievedDocument("Same text.", {"type": "wiki", "title": title}, score, str(i))
+        RetrievedDocument(
+            "Same text.",
+            {"type": "wiki", "title": title, "_colbert_score": 0.99},
+            score,
+            str(i),
+        )
         for i, (title, score) in enumerate(
             [("SEPA", 0.9), ("Emergency Multisig payout tool", 0.3)]
         )
@@ -342,6 +347,7 @@ def test_duplicate_fallback_retains_scores_through_retriever_and_threshold():
     kept = reranker.rerank_with_threshold("wallet", docs, score_threshold=0.5)
     assert [(doc.id, doc.score) for doc in kept] == [("0", 0.9)]
     assert kept[0].metadata["_reranked"] is False
+    assert "_colbert_score" not in kept[0].metadata
 
 
 def test_context_shares_notices_only_within_same_article():

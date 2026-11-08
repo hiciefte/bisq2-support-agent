@@ -781,6 +781,60 @@ def test_newest_chunk_keeps_its_xml_only_redirect_without_stale_markers(
     assert result["source_revision"]["id"] == "2"
 
 
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("newest_deleted", [False, True])
+def test_redirect_blocks_merge_deleted_history_and_duplicate_revisions(
+    tmp_path, reverse, newest_deleted
+):
+    """Check the merged latest revision, not an old or duplicated block."""
+    source = write_dump(tmp_path, [("Alias", 0, "Old content")])
+    ns = {"mw": "http://www.mediawiki.org/xml/export-0.10/"}
+    old = ET.parse(source).getroot().find("mw:page", ns)
+    ET.SubElement(old, "{" + ns["mw"] + "}id").text = "7"
+    revision = old.find("mw:revision", ns)
+    ET.SubElement(revision, "{" + ns["mw"] + "}id").text = "1"
+    ET.SubElement(revision, "{" + ns["mw"] + "}timestamp").text = "2026-01-01T00:00:00Z"
+    revision.find("mw:text", ns).set("deleted", "deleted")
+    old.append(deepcopy(revision))
+    ET.SubElement(old, "{" + ns["mw"] + "}redirect", title="Old target")
+    newer = deepcopy(old)
+    newer.remove(newer.findall("mw:revision", ns)[1])
+    new_revision = newer.find("mw:revision", ns)
+    new_revision.find("mw:id", ns).text = "2"
+    new_revision.find("mw:timestamp", ns).text = "2026-01-02T00:00:00Z"
+    new_text = new_revision.find("mw:text", ns)
+    if not newest_deleted:
+        del new_text.attrib["deleted"]
+    new_text.text = "New readable tail"
+    newer.find("mw:redirect", ns).set("title", "New target")
+    order = [newer, old] if reverse else [old, newer]
+    if newest_deleted:
+        with pytest.raises(ValueError, match="latest revision content is deleted"):
+            coalesce_pages(order, ns)
+    else:
+        result = WikiDumpProcessor(str(source), str(tmp_path / "out")).process_page(
+            coalesce_pages(order, ns)[0]
+        )
+        assert result["redirect_target"] == "New target"
+        assert result["content"] == "New readable tail"
+
+
+def test_redirect_block_rejects_conflicting_duplicate_revision(tmp_path):
+    """A repeated revision ID with different bytes must never be coalesced."""
+    source = write_dump(tmp_path, [("Alias", 0, "Original")])
+    ns = {"mw": "http://www.mediawiki.org/xml/export-0.10/"}
+    page = ET.parse(source).getroot().find("mw:page", ns)
+    revision = page.find("mw:revision", ns)
+    ET.SubElement(revision, "{" + ns["mw"] + "}id").text = "3"
+    ET.SubElement(revision, "{" + ns["mw"] + "}timestamp").text = "2026-01-01T00:00:00Z"
+    duplicate = deepcopy(revision)
+    duplicate.find("mw:text", ns).text = "Conflict"
+    page.append(duplicate)
+    ET.SubElement(page, "{" + ns["mw"] + "}redirect", title="Target")
+    with pytest.raises(ValueError, match="Conflicting contents for revision ID"):
+        coalesce_pages([page], ns)
+
+
 def test_template_generated_cues_are_not_double_counted(tmp_path):
     """Raw and rendered copies of the same cue should not defeat new cues."""
     source = write_dump(

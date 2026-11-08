@@ -196,6 +196,7 @@ def main(output_dir: str) -> None:
     page_count = 0
     article_bodies = []
     templates = {}
+    normalized_templates = {}
     for namespace in (0, 10):
         for page in site.allpages(namespace=namespace):
             if page.namespace != namespace:
@@ -248,9 +249,13 @@ def main(output_dir: str) -> None:
                     article_bodies.append(article_body)
                 else:
                     key = template_key(page.name)
-                    if key in templates and templates[key] != content:
+                    if (
+                        key in normalized_templates
+                        and normalized_templates[key] != content
+                    ):
                         raise ValueError(f"Conflicting definitions for Template:{key}")
-                    templates[key] = content
+                    normalized_templates[key] = content
+                    templates[page.name] = content
             except Exception:
                 # A well-formed but partial export must not replace a good snapshot.
                 logging.exception(

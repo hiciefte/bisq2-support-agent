@@ -2,6 +2,7 @@
 
 import os
 import pwd
+import select
 import stat
 import struct
 import subprocess
@@ -303,19 +304,30 @@ else:
 
 
 @pytest.mark.parametrize("exists", [True, False])
-def test_concurrent_same_preimage_publishers_have_one_winner(tmp_path, exists):
-    """The CAS and rename are serialized even when both workers are ready."""
+def test_concurrent_same_preimage_publishers_have_one_winner(
+    tmp_path, monkeypatch, exists
+):
+    """A second publisher must conflict while the first is paused before rename."""
     target = tmp_path / "target"
     if exists:
         target.write_text("original")
     token = wiki_atomic.capture_wiki_preimage(str(target))
-    barrier = threading.Barrier(3)
+    before_rename, release = threading.Event(), threading.Event()
+    first_stage = tmp_path / "staged-0"
+    real_replace = os.replace
+
+    def pause_first(source, destination):
+        """Hold the exact first rename boundary while its directory lock is held."""
+        if str(source) == str(first_stage):
+            before_rename.set()
+            if not release.wait(timeout=10):
+                raise TimeoutError("test did not release first publisher")
+        return real_replace(source, destination)
 
     def publish(index):
-        """Stage independently, then race publication with the shared early token."""
+        """Publish independently against the same pre-acquisition identity."""
         staged = tmp_path / f"staged-{index}"
         staged.write_text(str(index))
-        barrier.wait(timeout=10)
         try:
             wiki_atomic.replace_wiki_file(
                 str(staged), str(target), expected_preimage=token
@@ -324,12 +336,19 @@ def test_concurrent_same_preimage_publishers_have_one_winner(tmp_path, exists):
             return "conflict"
         return "published"
 
+    monkeypatch.setattr(wiki_atomic.os, "replace", pause_first)
     with ThreadPoolExecutor(max_workers=2) as executor:
-        futures = [executor.submit(publish, index) for index in range(2)]
-        barrier.wait(timeout=10)
-        outcomes = [future.result(timeout=10) for future in futures]
-    assert sorted(outcomes) == ["conflict", "published"]
-    assert target.read_text() == str(outcomes.index("published"))
+        first = executor.submit(publish, 0)
+        try:
+            assert before_rename.wait(timeout=10)
+            second = executor.submit(publish, 1)
+            assert second.result(timeout=3) == "conflict"
+            assert not release.is_set() and not first.done()
+        finally:
+            # Always release before executor shutdown, including failed asserts.
+            release.set()
+        assert first.result(timeout=10) == "published"
+    assert target.read_text() == "0"
 
 
 def test_changed_processing_input_refuses_output(tmp_path):
@@ -416,11 +435,67 @@ def test_success_fsyncs_file_then_replaces_then_syncs_parent(tmp_path, monkeypat
     assert events == ["file", "replace", "directory"]
 
 
-def test_unsafe_lock_does_not_modify_destination(tmp_path):
-    """A substituted lock pathname cannot split the publication lock domain."""
+@pytest.mark.parametrize("legacy_lock", [False, True])
+def test_restrictive_umask_never_initializes_or_repairs_a_lock_path(
+    tmp_path, legacy_lock
+):
+    """Umask077 and an old incomplete mode0600 lock cannot poison publication."""
     target, staged = files(tmp_path)
-    (tmp_path / ".wiki-publication.lock").symlink_to(target)
+    lock_path = tmp_path / ".wiki-publication.lock"
+    if legacy_lock:
+        lock_path.write_text("old incomplete lock, retain untouched")
+        lock_path.chmod(0o600)
     token = wiki_atomic.capture_wiki_preimage(str(target))
-    with pytest.raises(OSError):
+    previous_umask = os.umask(0o077)
+    try:
         wiki_atomic.replace_wiki_file(str(staged), str(target), expected_preimage=token)
-    assert target.read_text() == "old complete corpus"
+    finally:
+        os.umask(previous_umask)
+    assert target.read_text() == "new complete corpus"
+    assert stat.S_IMODE(target.stat().st_mode) == 0o640
+    if legacy_lock:
+        assert lock_path.read_text() == "old incomplete lock, retain untouched"
+        assert stat.S_IMODE(lock_path.stat().st_mode) == 0o600
+    else:
+        assert not lock_path.exists()
+
+
+def test_crashed_directory_lock_owner_does_not_poison_next_publication(tmp_path):
+    """Kernel lock release after process exit needs no mode repair or retry."""
+    target, staged = files(tmp_path)
+    script = """
+import os,sys
+from app.scripts.wiki_atomic import _publication_directory
+os.umask(0o077)
+with _publication_directory(sys.argv[1]):
+    print('ready', flush=True)
+    sys.stdin.readline()
+"""
+    process = subprocess.Popen(
+        [sys.executable, "-c", script, str(target)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        readable, _, _ = select.select([process.stdout], [], [], 10)
+        assert readable, "child did not acquire directory lock in time"
+        assert process.stdout.readline().strip() == "ready"
+        token = wiki_atomic.capture_wiki_preimage(str(target))
+        with pytest.raises(wiki_atomic.WikiPublicationConflictError):
+            wiki_atomic.replace_wiki_file(
+                str(staged), str(target), expected_preimage=token
+            )
+        assert target.read_text() == "old complete corpus" and staged.exists()
+        process.kill()
+        process.communicate(timeout=10)
+        # This fresh explicit invocation is authorized by the original unchanged
+        # destination token; the helper itself never retries a staged result.
+        wiki_atomic.replace_wiki_file(str(staged), str(target), expected_preimage=token)
+        assert target.read_text() == "new complete corpus"
+        assert not (tmp_path / ".wiki-publication.lock").exists()
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.communicate(timeout=10)
