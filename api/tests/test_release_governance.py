@@ -35,21 +35,54 @@ WEB_RUNTIME_PACKAGES = {
 
 def _assert_web_runtime_package_pins(runtime: str) -> None:
     """Require the pinned installation to lead a RUN, with no fallback branch."""
-    active_lines = "\n".join(
-        line for line in runtime.splitlines() if not line.lstrip().startswith("#")
-    )
+    active = []
+    pending = []
+    for line in runtime.splitlines():
+        if pending:
+            delimiter, strip_tabs = pending[0]
+            if (line.lstrip("\t") if strip_tabs else line) == delimiter:
+                pending.pop(0)
+            continue
+        if line.lstrip().startswith("#"):
+            continue
+        active.append(line)
+        if re.match(r"^\s*(?:RUN|COPY|ADD)\b", line, re.IGNORECASE):
+            for match in re.finditer(
+                r"<<(-?)[ \t]*(?:(['\"])([A-Za-z_][\w.-]*)\2|([A-Za-z_][\w.-]*))",
+                line,
+            ):
+                pending.append((match.group(3) or match.group(4), bool(match.group(1))))
+    assert not pending, "unterminated Dockerfile heredoc"
+    active_lines = "\n".join(active)
     logical_lines = re.sub(r"\\\r?\n", " ", active_lines)
     installations = []
     for run in re.findall(r"^\s*RUN\s+(.+)$", logical_lines, re.MULTILINE):
+        if not re.search(r"\bapk\s+add\b", run):
+            continue
         lexer = shlex.shlex(run, posix=True, punctuation_chars=";&|()")
         lexer.whitespace_split = True
         tokens = list(lexer)
-        if tokens[:3] != ["apk", "add", "--no-cache"]:
+        matches = [i for i in range(len(tokens)) if tokens[i : i + 2] == ["apk", "add"]]
+        if not matches:
             continue
+        assert matches == [0], "additional or conditional apk installation"
+        assert tokens[:3] == ["apk", "add", "--no-cache"]
         # The reviewed contract installs first. Do not attempt to interpret
         # arbitrary shell control flow or accept a fallback that masks failure.
-        assert not set(tokens) & {";", "||", "|", "&", "(", ")"}
-        command = tokens[: tokens.index("&&")] if "&&" in tokens else tokens
+        split = tokens.index("&&") if "&&" in tokens else len(tokens)
+        command, cleanup = tokens[:split], tokens[split:]
+        # shlex splits 2>&1 into 2>, &, 1; accept only this redirection
+        # after a successful install, never a background job or fallback.
+        for i, token in enumerate(cleanup):
+            if token == "&":
+                assert (
+                    i > 0
+                    and i + 1 < len(cleanup)
+                    and re.fullmatch(r"\d+>", cleanup[i - 1])
+                    and cleanup[i + 1].isdigit()
+                )
+        assert not set(command) & {";", "||", "|", "&", "(", ")"}
+        assert not set(cleanup) & {";", "||", "|", "(", ")"}
         assert len(command[3:]) == len(WEB_RUNTIME_PACKAGES)
         installations.append(set(command[3:]))
     assert installations == [WEB_RUNTIME_PACKAGES]
@@ -180,6 +213,64 @@ def test_web_runtime_pin_check_rejects_conditional_install(command: str) -> None
     pins = " ".join(sorted(WEB_RUNTIME_PACKAGES))
     with pytest.raises(AssertionError):
         _assert_web_runtime_package_pins("RUN " + command.format(pins=pins))
+
+
+def test_web_pin_check_ignores_dockerfile_heredoc_body() -> None:
+    """Content in an unrelated heredoc is not a Dockerfile instruction."""
+    pins = " ".join(sorted(WEB_RUNTIME_PACKAGES))
+    runtime = (
+        "RUN cat <<EOF\nRUN echo it's content\nEOF\nRUN apk add --no-cache " + pins
+    )
+    _assert_web_runtime_package_pins(runtime)
+
+
+def test_web_pin_check_does_not_accept_pins_inside_heredoc() -> None:
+    """Printed heredoc content cannot stand in for an actual installation."""
+    pins = " ".join(sorted(WEB_RUNTIME_PACKAGES))
+    runtime = "COPY <<'EOF' /message\nRUN apk add --no-cache " + pins + "\nEOF"
+    with pytest.raises(AssertionError):
+        _assert_web_runtime_package_pins(runtime)
+
+
+def test_web_pin_check_rejects_redirection_followed_by_fallback() -> None:
+    """A valid redirect cannot mask a later shell failure-suppression branch."""
+    pins = " ".join(sorted(WEB_RUNTIME_PACKAGES))
+    with pytest.raises(AssertionError):
+        _assert_web_runtime_package_pins(
+            "RUN apk add --no-cache " + pins + " && rm /tmp/x 2>&1 || true"
+        )
+
+
+def test_web_pin_check_accepts_cleanup_stderr_redirection() -> None:
+    """A post-install stderr redirect is not a background shell operator."""
+    pins = " ".join(sorted(WEB_RUNTIME_PACKAGES))
+    _assert_web_runtime_package_pins(
+        "RUN apk add --no-cache " + pins + " && rm -rf /tmp/cache 2>&1"
+    )
+
+
+@pytest.mark.parametrize(
+    "additional",
+    [
+        "RUN echo ok && apk add --no-cache libcrypto3 || true",
+        "RUN echo ok && apk add libcrypto3",
+        "RUN apk add --no-cache {pins}",
+        "repeat",
+    ],
+)
+def test_web_pin_check_rejects_additional_or_repeated_installation(
+    additional: str,
+) -> None:
+    """Extra installs or repeated arguments cannot satisfy the exact pin contract."""
+    pins = " ".join(sorted(WEB_RUNTIME_PACKAGES))
+    runtime = "RUN apk add --no-cache " + pins
+    runtime += (
+        " " + sorted(WEB_RUNTIME_PACKAGES)[0]
+        if additional == "repeat"
+        else "\n" + additional.format(pins=pins)
+    )
+    with pytest.raises(AssertionError):
+        _assert_web_runtime_package_pins(runtime)
 
 
 def test_bisq_build_fetches_and_verifies_a_full_commit() -> None:
