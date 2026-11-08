@@ -20,6 +20,7 @@ from app.scripts import wiki_atomic
 from app.scripts.process_wiki_dump import WikiDumpProcessor
 
 pytestmark = pytest.mark.unit
+API_ROOT = Path(__file__).resolve().parents[2]
 
 
 def files(tmp_path):
@@ -263,8 +264,14 @@ def test_separate_group_only_reader_retains_access_after_both_writers(
         assert read_as_group() == 0
 
 
-def test_stale_acquisition_cannot_replace_completed_newer_process(tmp_path):
+@pytest.mark.parametrize("safe_path", [False, True])
+def test_stale_acquisition_cannot_replace_completed_newer_process(
+    tmp_path, monkeypatch, safe_path
+):
     """An older invocation retains its early token across a newer publication."""
+    if safe_path:
+        monkeypatch.setenv("PYTHONSAFEPATH", "1")
+        monkeypatch.setenv("PYTHONPATH", "api")
     target, older = files(tmp_path)
     newer = tmp_path / "newer"
     newer.write_text("newer invocation completed")
@@ -283,7 +290,8 @@ else:
 """
     process = subprocess.Popen(
         [sys.executable, "-c", script, str(target), str(older)],
-        cwd=Path(__file__).resolve().parents[2],
+        cwd=API_ROOT,
+        env={**os.environ, "PYTHONPATH": str(API_ROOT)},
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -461,8 +469,14 @@ def test_restrictive_umask_never_initializes_or_repairs_a_lock_path(
         assert not lock_path.exists()
 
 
-def test_crashed_directory_lock_owner_does_not_poison_next_publication(tmp_path):
+@pytest.mark.parametrize("safe_path", [False, True])
+def test_crashed_directory_lock_owner_does_not_poison_next_publication(
+    tmp_path, monkeypatch, safe_path
+):
     """Kernel lock release after process exit needs no mode repair or retry."""
+    if safe_path:
+        monkeypatch.setenv("PYTHONSAFEPATH", "1")
+        monkeypatch.setenv("PYTHONPATH", "api")
     target, staged = files(tmp_path)
     script = """
 import os,sys
@@ -474,7 +488,8 @@ with _publication_directory(sys.argv[1]):
 """
     process = subprocess.Popen(
         [sys.executable, "-c", script, str(target)],
-        cwd=Path(__file__).resolve().parents[2],
+        cwd=API_ROOT,
+        env={**os.environ, "PYTHONPATH": str(API_ROOT)},
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
