@@ -6,6 +6,10 @@ from typing import Optional
 def reviewed_wiki_category(title: str) -> Optional[str]:
     """Return an audited article category, or defer to normal classification."""
     normalized_title = " ".join(title.replace("_", " ").lower().split())
+    # The recovered introduction discusses both classic v1 and Bisq Easy.
+    # This is a source-scope label, not a review of its current instructions.
+    if normalized_title == "introduction":
+        return "general"
     # This article describes the legacy multisig wallet/deposit requirements.
     # Its Bisq Easy paragraph recommends a way to acquire the initial bitcoin;
     # it does not make those requirements applicable to Bisq Easy.

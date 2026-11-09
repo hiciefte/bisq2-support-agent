@@ -5,9 +5,11 @@ from __future__ import annotations
 import copy
 import json
 import re
+import shlex
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -22,6 +24,116 @@ SINGLE_OPERATOR_RUNBOOK = (
     REPO_ROOT / "docs" / "runbooks" / "single-operator-production-testing.md"
 )
 DIGEST_REF_PATTERN = re.compile(r"^\S+@sha256:[0-9a-f]{64}$")
+WEB_RUNTIME_PACKAGES = {
+    "libcrypto3=3.5.9-r0",
+    "libssl3=3.5.9-r0",
+    "musl=1.2.5-r24",
+    "musl-utils=1.2.5-r24",
+    "zlib=1.4-r0",
+}
+
+
+def _dockerfile_heredocs(line: str) -> list[tuple[str, bool]]:
+    """Find unquoted literal heredoc openings in one Dockerfile instruction."""
+    result = []
+    quote = None
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if char == "\\" and quote != "'":
+            index += 2
+            continue
+        if char in "'\"":
+            if quote is None:
+                quote = char
+            elif quote == char:
+                quote = None
+        elif quote is None and line.startswith("<<", index):
+            match = re.match(
+                r"<<(-?)[ \t]*(?:(['\"])([A-Za-z0-9_][\w.-]*)\2|([A-Za-z0-9_][\w.-]*))",
+                line[index:],
+            )
+            assert match, "unsupported Dockerfile heredoc"
+            end = index + match.end()
+            assert (
+                end == len(line) or line[end] in " \t;&|()<>"
+            ), "unsupported Dockerfile heredoc delimiter"
+            result.append((match.group(3) or match.group(4), bool(match.group(1))))
+            index += match.end()
+            continue
+        index += 1
+    return result
+
+
+def _assert_web_runtime_package_pins(runtime: str) -> None:
+    """Require the pinned installation to lead a RUN, with no fallback branch."""
+    active = []
+    pending = []
+    instruction = ""
+    for line in runtime.splitlines():
+        if pending:
+            delimiter, strip_tabs = pending[0]
+            if (line.lstrip("\t") if strip_tabs else line) == delimiter:
+                pending.pop(0)
+            continue
+        if line.lstrip().startswith("#"):
+            continue
+        if instruction and not line.strip():
+            continue
+        segment = line.rstrip()
+        continued = segment.endswith("\\")
+        instruction += segment[:-1] if continued else segment
+        if continued:
+            continue
+        active.append(instruction)
+        if re.match(r"^\s*(?:RUN|COPY|ADD)\b", instruction, re.IGNORECASE):
+            pending.extend(_dockerfile_heredocs(instruction))
+        instruction = ""
+    assert not pending, "unterminated Dockerfile heredoc"
+    assert not instruction, "unterminated Dockerfile instruction"
+    active_lines = "\n".join(active)
+    installations = []
+    for run in re.findall(
+        r"^\s*RUN\s+(.+)$", active_lines, re.MULTILINE | re.IGNORECASE
+    ):
+        if not re.search(r"\bapk\b", run):
+            continue
+        lexer = shlex.shlex(run, posix=True, punctuation_chars=";&|()")
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+        for i, token in enumerate(tokens):
+            if token.rsplit("/", 1)[-1] in {"sh", "bash", "ash"}:
+                assert not any(
+                    re.search(r"\bapk\b", argument) for argument in tokens[i + 1 :]
+                ), "shell-wrapped apk is unsupported"
+        matches = [
+            i
+            for i, token in enumerate(tokens)
+            if token == "apk" or token.endswith("/apk")
+        ]
+        if not matches:
+            continue
+        assert matches == [0], "additional or conditional apk installation"
+        assert tokens[:3] == ["apk", "add", "--no-cache"]
+        # The reviewed contract installs first. Do not attempt to interpret
+        # arbitrary shell control flow or accept a fallback that masks failure.
+        split = tokens.index("&&") if "&&" in tokens else len(tokens)
+        command, cleanup = tokens[:split], tokens[split:]
+        # shlex splits 2>&1 into 2>, &, 1; accept only this redirection
+        # after a successful install, never a background job or fallback.
+        for i, token in enumerate(cleanup):
+            if token == "&":
+                assert (
+                    i > 0
+                    and i + 1 < len(cleanup)
+                    and re.fullmatch(r"\d+>", cleanup[i - 1])
+                    and cleanup[i + 1].isdigit()
+                )
+        assert not set(command) & {";", "||", "|", "&", "(", ")"}
+        assert not set(cleanup) & {";", "||", "|", "(", ")"}
+        assert len(command[3:]) == len(WEB_RUNTIME_PACKAGES)
+        installations.append(set(command[3:]))
+    assert installations == [WEB_RUNTIME_PACKAGES]
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -102,6 +214,7 @@ def test_api_builder_pins_setuptools_after_application_dependencies() -> None:
 
 
 def test_web_image_contains_only_pinned_fixed_runtime_dependencies() -> None:
+    """Keep the deployed web image's reviewed security package pins explicit."""
     dockerfile = (REPO_ROOT / "docker" / "web" / "Dockerfile").read_text(
         encoding="utf-8"
     )
@@ -114,13 +227,168 @@ def test_web_image_contains_only_pinned_fixed_runtime_dependencies() -> None:
         "RUN npm prune --omit=dev"
     )
 
-    assert "libcrypto3=3.5.9-r0" in runtime
-    assert "libssl3=3.5.9-r0" in runtime
+    _assert_web_runtime_package_pins(runtime)
     assert "rm -rf /usr/local/lib/node_modules/npm" in runtime
     assert "rm -f /usr/local/bin/npm /usr/local/bin/npx" in runtime
     assert "npm install --global" not in runtime
     assert 'CMD ["node", "node_modules/next/dist/bin/next", "start"]' in runtime
     assert "command" not in compose_web
+
+
+@pytest.mark.parametrize("decoy", ["# Pinned packages: {pins}", "RUN echo '{pins}'"])
+def test_web_runtime_pin_check_rejects_inactive_pins(decoy: str) -> None:
+    """Commented or printed pins cannot validate an unversioned installation."""
+    pins = " ".join(sorted(WEB_RUNTIME_PACKAGES))
+    packages = " ".join(
+        pin.split("=", maxsplit=1)[0] for pin in sorted(WEB_RUNTIME_PACKAGES)
+    )
+    runtime = decoy.format(pins=pins) + "\nRUN apk add --no-cache " + packages
+    with pytest.raises(AssertionError):
+        _assert_web_runtime_package_pins(runtime)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "true || apk add --no-cache {pins}",
+        "false && apk add --no-cache {pins}",
+        "if false; then apk add --no-cache {pins}; fi",
+        "apk add --no-cache {pins} || true",
+    ],
+)
+def test_web_runtime_pin_check_rejects_conditional_install(command: str) -> None:
+    """Skipped installs or suppressed install failures cannot prove package pins."""
+    pins = " ".join(sorted(WEB_RUNTIME_PACKAGES))
+    with pytest.raises(AssertionError):
+        _assert_web_runtime_package_pins("RUN " + command.format(pins=pins))
+
+
+def test_web_pin_check_ignores_dockerfile_heredoc_body() -> None:
+    """Content in an unrelated heredoc is not a Dockerfile instruction."""
+    pins = " ".join(sorted(WEB_RUNTIME_PACKAGES))
+    runtime = (
+        "RUN cat <<EOF\nRUN echo it's content\nEOF\nRUN apk add --no-cache " + pins
+    )
+    _assert_web_runtime_package_pins(runtime)
+
+
+def test_web_pin_check_does_not_accept_pins_inside_heredoc() -> None:
+    """Printed heredoc content cannot stand in for an actual installation."""
+    pins = " ".join(sorted(WEB_RUNTIME_PACKAGES))
+    runtime = "COPY <<'EOF' /message\nRUN apk add --no-cache " + pins + "\nEOF"
+    with pytest.raises(AssertionError):
+        _assert_web_runtime_package_pins(runtime)
+
+
+def test_web_pin_check_rejects_continued_heredoc_decoy() -> None:
+    """A heredoc in a continued instruction cannot supply a fake RUN."""
+    pins = " ".join(sorted(WEB_RUNTIME_PACKAGES))
+    with pytest.raises(AssertionError):
+        _assert_web_runtime_package_pins(
+            "COPY \\\n    <<EOF /data\nRUN apk add --no-cache " + pins + "\nEOF"
+        )
+
+
+def test_web_pin_check_accepts_valid_install_after_continued_heredoc() -> None:
+    """A real install after a continued heredoc remains visible."""
+    pins = " ".join(sorted(WEB_RUNTIME_PACKAGES))
+    _assert_web_runtime_package_pins(
+        "COPY \\\n# ignored continuation comment\n    <<EOF /data\nRUN echo it's content \\\nEOF\nRUN apk add --no-cache "
+        + pins
+    )
+
+
+@pytest.mark.parametrize("separator", ["\nRUN ", " && "])
+@pytest.mark.parametrize("options", ["-c", "-ec", "-e -c"])
+def test_web_pin_check_rejects_shell_wrapped_additional_install(
+    separator: str, options: str
+) -> None:
+    """A shell command string cannot hide an extra package installation."""
+    pins = " ".join(sorted(WEB_RUNTIME_PACKAGES))
+    with pytest.raises(AssertionError):
+        _assert_web_runtime_package_pins(
+            "RUN apk add --no-cache "
+            + pins
+            + separator
+            + f'sh {options} "apk add --no-cache curl"'
+        )
+
+
+def test_web_pin_check_joins_continued_command_token_without_extra_space() -> None:
+    """Docker's escaped newline does not split adjacent command characters."""
+    pins = " ".join(sorted(WEB_RUNTIME_PACKAGES))
+    _assert_web_runtime_package_pins("RUN ap\\\nk add --no-cache " + pins)
+
+
+def test_web_pin_check_rejects_numeric_heredoc_decoy() -> None:
+    """A numeric Dockerfile heredoc delimiter cannot turn data into a RUN."""
+    pins = " ".join(sorted(WEB_RUNTIME_PACKAGES))
+    with pytest.raises(AssertionError):
+        _assert_web_runtime_package_pins(
+            "COPY <<1 /data\nRUN apk add --no-cache " + pins + "\n1"
+        )
+
+
+@pytest.mark.parametrize("word", ["EOF:", 'E"ND"', "END!", r"E\ND"])
+def test_web_pin_check_rejects_partial_heredoc_delimiter(word: str) -> None:
+    """Unsupported delimiter suffixes cannot make heredoc content look active."""
+    pins = " ".join(sorted(WEB_RUNTIME_PACKAGES))
+    with pytest.raises(AssertionError, match="unsupported Dockerfile heredoc"):
+        _assert_web_runtime_package_pins(
+            "COPY <<" + word + " /data\nE\nRUN apk add --no-cache " + pins + "\nEND"
+        )
+
+
+def test_web_pin_check_ignores_quoted_heredoc_operator() -> None:
+    """A quoted literal is not an actual heredoc opening."""
+    pins = " ".join(sorted(WEB_RUNTIME_PACKAGES))
+    _assert_web_runtime_package_pins("RUN echo '<<EOF'\nRUN apk add --no-cache " + pins)
+
+
+def test_web_pin_check_rejects_redirection_followed_by_fallback() -> None:
+    """A valid redirect cannot mask a later shell failure-suppression branch."""
+    pins = " ".join(sorted(WEB_RUNTIME_PACKAGES))
+    with pytest.raises(AssertionError):
+        _assert_web_runtime_package_pins(
+            "RUN apk add --no-cache " + pins + " && rm /tmp/x 2>&1 || true"
+        )
+
+
+def test_web_pin_check_accepts_cleanup_stderr_redirection() -> None:
+    """A post-install stderr redirect is not a background shell operator."""
+    pins = " ".join(sorted(WEB_RUNTIME_PACKAGES))
+    _assert_web_runtime_package_pins(
+        "RUN apk add --no-cache " + pins + " && rm -rf /tmp/cache 2>&1"
+    )
+
+
+@pytest.mark.parametrize(
+    "additional",
+    [
+        "RUN echo ok && apk add --no-cache libcrypto3 || true",
+        "RUN echo ok && apk add libcrypto3",
+        "RUN apk --no-cache add curl",
+        "RUN apk --root /tmp/root add curl",
+        "RUN /sbin/apk --root /tmp/root add curl",
+        "run apk add curl",
+        "RuN apk add curl",
+        "RUN apk add --no-cache {pins}",
+        "repeat",
+    ],
+)
+def test_web_pin_check_rejects_additional_or_repeated_installation(
+    additional: str,
+) -> None:
+    """Extra installs or repeated arguments cannot satisfy the exact pin contract."""
+    pins = " ".join(sorted(WEB_RUNTIME_PACKAGES))
+    runtime = "RUN apk add --no-cache " + pins
+    runtime += (
+        " " + sorted(WEB_RUNTIME_PACKAGES)[0]
+        if additional == "repeat"
+        else "\n" + additional.format(pins=pins)
+    )
+    with pytest.raises(AssertionError):
+        _assert_web_runtime_package_pins(runtime)
 
 
 def test_bisq_build_fetches_and_verifies_a_full_commit() -> None:

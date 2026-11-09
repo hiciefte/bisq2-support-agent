@@ -31,6 +31,7 @@ from app.services.rag.code_evidence import (
     explicit_user_version,
 )
 from app.services.rag.source_refs import is_precise_code_source_ref
+from app.services.wiki_provenance import wiki_context_notice, wiki_source_provenance
 from markdown_it import MarkdownIt
 
 
@@ -370,6 +371,7 @@ class StaffEvidenceResolver:
 
     @staticmethod
     def _wiki(document: Any, metadata: dict[str, Any]) -> PublicEvidence | None:
+        """Retain wiki provenance while validating public source attribution."""
         from app.services.rag.canonical_fixes import canonical_url_for_metadata
         from app.utils.wiki_url_generator import generate_wiki_url
 
@@ -395,6 +397,8 @@ class StaffEvidenceResolver:
             provenance={
                 "protocol": metadata.get("protocol"),
                 "section": metadata.get("section"),
+                **wiki_source_provenance(metadata),
+                "source_context": wiki_context_notice(metadata),
             },
         )
 

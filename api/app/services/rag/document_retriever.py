@@ -24,6 +24,8 @@ from app.services.rag.interfaces import (
     RetrieverProtocol,
 )
 from app.services.rag.protocol_detector import ProtocolDetector
+from app.services.wiki_metadata import reviewed_wiki_category
+from app.services.wiki_provenance import wiki_context_notice
 from langchain_core.documents import Document
 
 logger = logging.getLogger(__name__)
@@ -603,6 +605,7 @@ class DocumentRetriever:
         sorted_docs = sorted(docs, key=sort_key)
 
         formatted_docs = []
+        seen_wiki_notices: set[tuple[str, str]] = set()
         for doc in sorted_docs:
             # Extract metadata
             title = doc.metadata.get("title", "Unknown")
@@ -611,8 +614,14 @@ class DocumentRetriever:
 
             # Determine protocol from metadata and content
             protocol = doc.metadata.get("protocol", "all")
-            if protocol == "all":
-                # Check content for protocol-specific information
+            reviewed_general = (
+                source_type == "wiki"
+                and reviewed_wiki_category(str(title)) == "general"
+            )
+            if protocol == "all" and not reviewed_general:
+                # Reviewed mixed-protocol articles retain their general label;
+                # incidental mentions must not override that source-scope review.
+                # Other unclassified chunks retain the existing keyword fallback.
                 content = doc.page_content.lower()
                 if "bisq 2" in content or "bisq2" in content or "bisq easy" in content:
                     protocol = "bisq_easy"
@@ -631,6 +640,11 @@ class DocumentRetriever:
             entry = f"[{protocol_display}] [{source_type.upper()}] {title}"
             if section:
                 entry += f" - {section}"
+            source_notice = wiki_context_notice(
+                doc.metadata, seen_notices=seen_wiki_notices
+            )
+            if source_notice:
+                entry += f"\n{source_notice}"
             entry += f"\n{doc.page_content}\n"
             formatted_docs.append(entry)
 
@@ -880,8 +894,13 @@ class DocumentRetriever:
                     metadata = dict(lc_doc.metadata or {})
                     if reranked_doc.id and "_retrieved_id" not in metadata:
                         metadata["_retrieved_id"] = reranked_doc.id
-                    metadata["_reranked"] = True
-                    metadata["_colbert_score"] = float(reranked_doc.score)
+                    # ColBERT marks its fallback explicitly; other protocol
+                    # implementations retain their existing success contract.
+                    metadata["_reranked"] = metadata.get("_reranked", True)
+                    if metadata["_reranked"]:
+                        metadata["_colbert_score"] = float(reranked_doc.score)
+                    else:
+                        metadata.pop("_colbert_score", None)
                     metadata["_retrieval_rank"] = len(reranked_docs)
                     lc_doc.metadata = metadata
                     reranked_docs.append(lc_doc)
