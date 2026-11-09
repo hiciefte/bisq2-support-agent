@@ -69,6 +69,7 @@ def _assert_web_runtime_package_pins(runtime: str) -> None:
     """Require the pinned installation to lead a RUN, with no fallback branch."""
     active = []
     pending = []
+    instruction = ""
     for line in runtime.splitlines():
         if pending:
             delimiter, strip_tabs = pending[0]
@@ -77,19 +78,34 @@ def _assert_web_runtime_package_pins(runtime: str) -> None:
             continue
         if line.lstrip().startswith("#"):
             continue
-        active.append(line)
-        if re.match(r"^\s*(?:RUN|COPY|ADD)\b", line, re.IGNORECASE):
-            pending.extend(_dockerfile_heredocs(line))
+        if instruction and not line.strip():
+            continue
+        segment = line.rstrip()
+        continued = segment.endswith("\\")
+        instruction += segment[:-1] if continued else segment
+        if continued:
+            continue
+        active.append(instruction)
+        if re.match(r"^\s*(?:RUN|COPY|ADD)\b", instruction, re.IGNORECASE):
+            pending.extend(_dockerfile_heredocs(instruction))
+        instruction = ""
     assert not pending, "unterminated Dockerfile heredoc"
+    assert not instruction, "unterminated Dockerfile instruction"
     active_lines = "\n".join(active)
-    logical_lines = re.sub(r"\\\r?\n", " ", active_lines)
     installations = []
-    for run in re.findall(r"^\s*RUN\s+(.+)$", logical_lines, re.MULTILINE):
+    for run in re.findall(
+        r"^\s*RUN\s+(.+)$", active_lines, re.MULTILINE | re.IGNORECASE
+    ):
         if not re.search(r"\bapk\b", run):
             continue
         lexer = shlex.shlex(run, posix=True, punctuation_chars=";&|()")
         lexer.whitespace_split = True
         tokens = list(lexer)
+        for i, token in enumerate(tokens):
+            if token.rsplit("/", 1)[-1] in {"sh", "bash", "ash"}:
+                assert not any(
+                    re.search(r"\bapk\b", argument) for argument in tokens[i + 1 :]
+                ), "shell-wrapped apk is unsupported"
         matches = [
             i
             for i, token in enumerate(tokens)
@@ -264,6 +280,46 @@ def test_web_pin_check_does_not_accept_pins_inside_heredoc() -> None:
         _assert_web_runtime_package_pins(runtime)
 
 
+def test_web_pin_check_rejects_continued_heredoc_decoy() -> None:
+    """A heredoc in a continued instruction cannot supply a fake RUN."""
+    pins = " ".join(sorted(WEB_RUNTIME_PACKAGES))
+    with pytest.raises(AssertionError):
+        _assert_web_runtime_package_pins(
+            "COPY \\\n    <<EOF /data\nRUN apk add --no-cache " + pins + "\nEOF"
+        )
+
+
+def test_web_pin_check_accepts_valid_install_after_continued_heredoc() -> None:
+    """A real install after a continued heredoc remains visible."""
+    pins = " ".join(sorted(WEB_RUNTIME_PACKAGES))
+    _assert_web_runtime_package_pins(
+        "COPY \\\n# ignored continuation comment\n    <<EOF /data\nRUN echo it's content \\\nEOF\nRUN apk add --no-cache "
+        + pins
+    )
+
+
+@pytest.mark.parametrize("separator", ["\nRUN ", " && "])
+@pytest.mark.parametrize("options", ["-c", "-ec", "-e -c"])
+def test_web_pin_check_rejects_shell_wrapped_additional_install(
+    separator: str, options: str
+) -> None:
+    """A shell command string cannot hide an extra package installation."""
+    pins = " ".join(sorted(WEB_RUNTIME_PACKAGES))
+    with pytest.raises(AssertionError):
+        _assert_web_runtime_package_pins(
+            "RUN apk add --no-cache "
+            + pins
+            + separator
+            + f'sh {options} "apk add --no-cache curl"'
+        )
+
+
+def test_web_pin_check_joins_continued_command_token_without_extra_space() -> None:
+    """Docker's escaped newline does not split adjacent command characters."""
+    pins = " ".join(sorted(WEB_RUNTIME_PACKAGES))
+    _assert_web_runtime_package_pins("RUN ap\\\nk add --no-cache " + pins)
+
+
 def test_web_pin_check_rejects_numeric_heredoc_decoy() -> None:
     """A numeric Dockerfile heredoc delimiter cannot turn data into a RUN."""
     pins = " ".join(sorted(WEB_RUNTIME_PACKAGES))
@@ -314,6 +370,8 @@ def test_web_pin_check_accepts_cleanup_stderr_redirection() -> None:
         "RUN apk --no-cache add curl",
         "RUN apk --root /tmp/root add curl",
         "RUN /sbin/apk --root /tmp/root add curl",
+        "run apk add curl",
+        "RuN apk add curl",
         "RUN apk add --no-cache {pins}",
         "repeat",
     ],
