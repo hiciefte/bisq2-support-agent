@@ -256,6 +256,7 @@ def test_publish_preserves_existing_heartbeat_inode_with_real_git(monitoring_hos
 def test_monitoring_publication_refuses_or_retains_partial_attempt(
     monitoring_host, monkeypatch, fault
 ):
+    """Refuse unsafe heartbeat publication and retain evidence of partial writes."""
     host, module = monitoring_host
     path = host.install / "docker/scripts/scheduler-heartbeat.sh"
     if fault == "not_paused":

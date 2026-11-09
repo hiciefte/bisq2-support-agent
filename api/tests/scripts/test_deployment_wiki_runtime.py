@@ -25,6 +25,7 @@ WIKI_MODULES = (
 
 @pytest.fixture
 def modules(monkeypatch):
+    """Import the release planner and host modules from the repository."""
     monkeypatch.syspath_prepend(str(ROOT / "scripts"))
     return (
         importlib.import_module("deploy_release"),
@@ -37,6 +38,7 @@ def modules(monkeypatch):
 def test_host_reclassifies_complete_wiki_delta(
     repository, tmp_path, modules, published, tamper
 ):
+    """Recheck the full candidate delta and reject tampered release scope."""
     planner, backend = modules
     root, previous = repository
     candidate = commit(
@@ -91,6 +93,7 @@ def test_host_reclassifies_complete_wiki_delta(
 
 @pytest.mark.parametrize("path", WIKI_MODULES)
 def test_wiki_module_symlink_is_not_an_api_source_exception(repository, tmp_path, path):
+    """Reject symlinked wiki modules before creating a release operation."""
     root, previous = repository
     target = root / path
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -108,6 +111,7 @@ def test_wiki_module_symlink_is_not_an_api_source_exception(repository, tmp_path
 def test_wiki_classification_keeps_active_pilot_refusal(
     tmp_path, modules, enabled_field
 ):
+    """Keep active sync and generation blocked despite wiki classification."""
     planner, backend = modules
     assert planner.classify_services(list(WIKI_MODULES)) == ["api"]
     host = backend.DeploymentHost.__new__(backend.DeploymentHost)

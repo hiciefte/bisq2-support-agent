@@ -149,6 +149,7 @@ def assert_error(result, code):
 def test_plan_binds_immutable_source_and_selected_service_without_worktree_writes(
     repository, tmp_path, changes, requested, expected
 ):
+    """Bind selected services to committed changes without altering local edits."""
     root, previous = repository
     candidate = commit(root, changes)
     # Planning uses committed objects and neither cleans nor stages local edits.
@@ -209,6 +210,7 @@ def test_plan_binds_immutable_source_and_selected_service_without_worktree_write
     ],
 )
 def test_unsupported_changes_refuse_before_saving(repository, tmp_path, path):
+    """Reject unsupported source paths before creating an operation."""
     root, previous = repository
     candidate = commit(root, {"api/app/example.py": "NEW = 2\n", path: "fixture\n"})
     operation = tmp_path / "operation"
