@@ -33,6 +33,38 @@ WEB_RUNTIME_PACKAGES = {
 }
 
 
+def _dockerfile_heredocs(line: str) -> list[tuple[str, bool]]:
+    """Find unquoted literal heredoc openings in one Dockerfile instruction."""
+    result = []
+    quote = None
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if char == "\\" and quote != "'":
+            index += 2
+            continue
+        if char in "'\"":
+            if quote is None:
+                quote = char
+            elif quote == char:
+                quote = None
+        elif quote is None and line.startswith("<<", index):
+            match = re.match(
+                r"<<(-?)[ \t]*(?:(['\"])([A-Za-z0-9_][\w.-]*)\2|([A-Za-z0-9_][\w.-]*))",
+                line[index:],
+            )
+            assert match, "unsupported Dockerfile heredoc"
+            end = index + match.end()
+            assert (
+                end == len(line) or line[end] in " \t;&|()<>"
+            ), "unsupported Dockerfile heredoc delimiter"
+            result.append((match.group(3) or match.group(4), bool(match.group(1))))
+            index += match.end()
+            continue
+        index += 1
+    return result
+
+
 def _assert_web_runtime_package_pins(runtime: str) -> None:
     """Require the pinned installation to lead a RUN, with no fallback branch."""
     active = []
@@ -47,22 +79,22 @@ def _assert_web_runtime_package_pins(runtime: str) -> None:
             continue
         active.append(line)
         if re.match(r"^\s*(?:RUN|COPY|ADD)\b", line, re.IGNORECASE):
-            for match in re.finditer(
-                r"<<(-?)[ \t]*(?:(['\"])([A-Za-z_][\w.-]*)\2|([A-Za-z_][\w.-]*))",
-                line,
-            ):
-                pending.append((match.group(3) or match.group(4), bool(match.group(1))))
+            pending.extend(_dockerfile_heredocs(line))
     assert not pending, "unterminated Dockerfile heredoc"
     active_lines = "\n".join(active)
     logical_lines = re.sub(r"\\\r?\n", " ", active_lines)
     installations = []
     for run in re.findall(r"^\s*RUN\s+(.+)$", logical_lines, re.MULTILINE):
-        if not re.search(r"\bapk\s+add\b", run):
+        if not re.search(r"\bapk\b", run):
             continue
         lexer = shlex.shlex(run, posix=True, punctuation_chars=";&|()")
         lexer.whitespace_split = True
         tokens = list(lexer)
-        matches = [i for i in range(len(tokens)) if tokens[i : i + 2] == ["apk", "add"]]
+        matches = [
+            i
+            for i, token in enumerate(tokens)
+            if token == "apk" or token.endswith("/apk")
+        ]
         if not matches:
             continue
         assert matches == [0], "additional or conditional apk installation"
@@ -232,6 +264,31 @@ def test_web_pin_check_does_not_accept_pins_inside_heredoc() -> None:
         _assert_web_runtime_package_pins(runtime)
 
 
+def test_web_pin_check_rejects_numeric_heredoc_decoy() -> None:
+    """A numeric Dockerfile heredoc delimiter cannot turn data into a RUN."""
+    pins = " ".join(sorted(WEB_RUNTIME_PACKAGES))
+    with pytest.raises(AssertionError):
+        _assert_web_runtime_package_pins(
+            "COPY <<1 /data\nRUN apk add --no-cache " + pins + "\n1"
+        )
+
+
+@pytest.mark.parametrize("word", ["EOF:", 'E"ND"', "END!", r"E\ND"])
+def test_web_pin_check_rejects_partial_heredoc_delimiter(word: str) -> None:
+    """Unsupported delimiter suffixes cannot make heredoc content look active."""
+    pins = " ".join(sorted(WEB_RUNTIME_PACKAGES))
+    with pytest.raises(AssertionError, match="unsupported Dockerfile heredoc"):
+        _assert_web_runtime_package_pins(
+            "COPY <<" + word + " /data\nE\nRUN apk add --no-cache " + pins + "\nEND"
+        )
+
+
+def test_web_pin_check_ignores_quoted_heredoc_operator() -> None:
+    """A quoted literal is not an actual heredoc opening."""
+    pins = " ".join(sorted(WEB_RUNTIME_PACKAGES))
+    _assert_web_runtime_package_pins("RUN echo '<<EOF'\nRUN apk add --no-cache " + pins)
+
+
 def test_web_pin_check_rejects_redirection_followed_by_fallback() -> None:
     """A valid redirect cannot mask a later shell failure-suppression branch."""
     pins = " ".join(sorted(WEB_RUNTIME_PACKAGES))
@@ -254,6 +311,9 @@ def test_web_pin_check_accepts_cleanup_stderr_redirection() -> None:
     [
         "RUN echo ok && apk add --no-cache libcrypto3 || true",
         "RUN echo ok && apk add libcrypto3",
+        "RUN apk --no-cache add curl",
+        "RUN apk --root /tmp/root add curl",
+        "RUN /sbin/apk --root /tmp/root add curl",
         "RUN apk add --no-cache {pins}",
         "repeat",
     ],
