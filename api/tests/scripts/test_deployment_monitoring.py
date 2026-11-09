@@ -256,14 +256,26 @@ def test_publish_preserves_existing_heartbeat_inode_with_real_git(monitoring_hos
 def test_monitoring_publication_refuses_or_retains_partial_attempt(
     monitoring_host, monkeypatch, fault
 ):
+    """Refuse unsafe heartbeat publication and retain evidence of partial writes."""
     host, module = monitoring_host
     path = host.install / "docker/scripts/scheduler-heartbeat.sh"
     if fault == "not_paused":
         host._inspect = lambda: {"scheduler": {"State": {"Paused": False}}}
     elif fault == "changed_inode":
-        path.unlink()
-        path.write_text("old\n")
-        path.chmod(0o755)
+        # Create the replacement while the old inode is still allocated; an
+        # unlink followed by creation can reuse that inode on Linux filesystems.
+        before = path.stat()
+        replacement = path.with_name("replacement-heartbeat.sh")
+        replacement.write_bytes(path.read_bytes())
+        replacement.chmod(before.st_mode & 0o777)
+        replacement.replace(path)
+        after = path.stat()
+        assert (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino)
+        assert (after.st_mode, after.st_uid, after.st_gid) == (
+            before.st_mode,
+            before.st_uid,
+            before.st_gid,
+        )
     elif fault == "changed_bytes":
         path.write_text("unknown\n")
     else:
@@ -272,7 +284,8 @@ def test_monitoring_publication_refuses_or_retains_partial_attempt(
             raise OSError("injected partial failure")
 
         monkeypatch.setattr(module.os, "write", partial)
-    with pytest.raises((module.JournalError, OSError)):
+    expected = "host_monitoring_heartbeat_changed" if fault == "changed_inode" else None
+    with pytest.raises((module.JournalError, OSError), match=expected):
         host._monitoring_publish_heartbeat()
     assert (
         host._git(host.install, "rev-parse", "HEAD")

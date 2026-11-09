@@ -42,6 +42,14 @@ The planner accepts a conservative subset of selective API/web source changes.
 The production web image recipe (`docker/web/Dockerfile`) selects a web rebuild,
 including for a runtime-package security update. Other Docker recipes remain
 outside this capability.
+The four API ingestion modules `download_bisq2_media_wiki.py`,
+`process_wiki_dump.py`, `wiki_text.py`, and `wiki_atomic.py` under
+`api/app/scripts/` also select an API rebuild. This is an exact source-path
+exception: other scripts, including the update wrapper and index/recovery tools,
+remain refused. Classifying these files does not run ingestion, promote wiki
+files, rebuild an index, or authorize a data change. Existing channel-policy,
+approval, backup and rollback requirements still apply; the controller does not
+support preserving an active Matrix staff pilot during a release.
 By default it refuses operational scripts, migrations, runtime data, catalogues,
 Compose, unknown paths and mismatched services. The explicit capabilities below
 admit only their individually bound exceptions. Dependency

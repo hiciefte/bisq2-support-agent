@@ -35,6 +35,17 @@ from lib.deployment_protocol import (
     validate_plan,
 )
 
+# These modules run in the API image's wiki ingestion path. This exact exception
+# does not admit other operational scripts or authorize a corpus/index update.
+WIKI_RUNTIME_MODULES = frozenset(
+    {
+        "api/app/scripts/download_bisq2_media_wiki.py",
+        "api/app/scripts/process_wiki_dump.py",
+        "api/app/scripts/wiki_atomic.py",
+        "api/app/scripts/wiki_text.py",
+    }
+)
+
 
 def full_commit(value: object) -> bool:
     return isinstance(value, str) and bool(re.fullmatch(r"[0-9a-f]{40}", value))
@@ -150,6 +161,9 @@ def classify_services(
             "CONTRIBUTING.md",
             "LICENSE",
         }:
+            continue
+        if path in WIKI_RUNTIME_MODULES:
+            selected.add("api")
             continue
         parts = PurePosixPath(path).parts
         require(
