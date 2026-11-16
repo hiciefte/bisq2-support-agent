@@ -38,6 +38,7 @@ from .deployment_journal import (
     require,
     timestamp,
 )
+from .deployment_protocol import MONITORING_SCHEMAS, STAFF_PILOT_ALERT
 from .docker_identity import container_identity_sha256
 from .lifecycle_lock import verify_inherited_lock
 
@@ -287,6 +288,7 @@ class DeploymentHost:
                 "deployment-plan-v3",
                 "deployment-plan-v4",
                 "deployment-plan-v5",
+                "deployment-plan-v6",
             },
             "host_plan_version",
         )
@@ -413,6 +415,7 @@ class DeploymentHost:
             monitoring_hashes,
             preserved_heap_hashes,
             python_runner_hashes,
+            staff_monitoring_hashes,
             tooling_hashes,
         )
 
@@ -421,6 +424,7 @@ class DeploymentHost:
         source = self.plan["source"]
         heap = bool(self.plan.get("preserved_heap_sha256"))
         monitoring = self.plan["schema"] == "deployment-plan-v5"
+        staff = self.plan["schema"] == "deployment-plan-v6"
         for path, prefix in (
             (self.install, "candidate" if published else "previous"),
             (self.candidate, "candidate"),
@@ -456,6 +460,7 @@ class DeploymentHost:
             "deployment-plan-v3",
             "deployment-plan-v4",
             "deployment-plan-v5",
+            "deployment-plan-v6",
         }
         require(
             classify_services(
@@ -463,6 +468,7 @@ class DeploymentHost:
                 include_deployment_tooling=tooling,
                 preserve_bisq2_heap_repair=heap,
                 include_retention_monitoring=monitoring,
+                include_staff_pilot_monitoring=staff,
                 include_python_runner_pins=bool(self.plan.get("python_runner_sha256")),
             )
             == self.plan["services"],
@@ -494,6 +500,22 @@ class DeploymentHost:
                 == self.plan["preserved_heap_sha256"]
                 == self.approval["preserved_heap_sha256"],
                 "host_preserved_heap",
+            )
+        if staff:
+            actual, preserved = staff_monitoring_hashes(
+                self.candidate,
+                source["previous_commit"],
+                source["candidate_commit"],
+                paths,
+            )
+            require(
+                actual
+                == self.plan["staff_monitoring_sha256"]
+                == self.approval["staff_monitoring_sha256"]
+                and preserved
+                == self.plan["preserved_retention_sha256"]
+                == self.approval["preserved_retention_sha256"],
+                "host_staff_monitoring_source",
             )
         if monitoring:
             require(
@@ -652,6 +674,8 @@ class DeploymentHost:
             "PrivacyRetentionLogJobStale",
             "PrivacyRetentionWindowExceeded",
         }
+        if self.plan["schema"] == "deployment-plan-v6":
+            wanted.add(STAFF_PILOT_ALERT)
         expected = {}
         for index in range(1, len(blocks), 3):
             kind, name, body = blocks[index : index + 3]
@@ -727,6 +751,8 @@ class DeploymentHost:
             "PrivacyRetentionLogJobStale",
             "PrivacyRetentionWindowExceeded",
         }
+        if self.plan["schema"] == "deployment-plan-v6":
+            wanted.add(STAFF_PILOT_ALERT)
         selected = [rule for rule in rules if rule.get("name") in wanted]
         require(
             len(selected) == len(wanted) and {r["name"] for r in selected} == wanted,
@@ -775,6 +801,12 @@ class DeploymentHost:
                 == self.baseline["monitoring"]["expected_rules"][name],
                 "host_monitoring_loaded_expression",
             )
+            if name == STAFF_PILOT_ALERT:
+                require(
+                    rule.get("labels", {}).get("component") == "monitoring"
+                    and rule.get("duration") == 120,
+                    "host_staff_monitoring_loaded_rule",
+                )
             if name in {
                 "PrivacyRetentionMetricsMissing",
                 "PrivacyRetentionJobStale",
@@ -988,7 +1020,7 @@ class DeploymentHost:
 
     def _monitoring_preserved(self, containers):
         """Require the latest proved process and the original single-file bind identity."""
-        if self.plan["schema"] != "deployment-plan-v5":
+        if self.plan["schema"] not in MONITORING_SCHEMAS:
             return
         require(
             process_identity(containers["prometheus"])
@@ -1004,6 +1036,11 @@ class DeploymentHost:
             ),
             "host_monitoring_inode_changed",
         )
+        if self.plan["schema"] == "deployment-plan-v6":
+            require(
+                current["sha256"] == before["sha256"],
+                "host_staff_monitoring_heartbeat_changed",
+            )
         self._monitoring_mounts(containers)
 
     @staticmethod
@@ -1253,7 +1290,7 @@ class DeploymentHost:
         self, phase, intent_sha256, canonical_receipt_sha256
     ):
         """Adopt one proved explicit start; all later checks require exact continuity."""
-        if self.plan["schema"] != "deployment-plan-v5":
+        if self.plan["schema"] not in MONITORING_SCHEMAS:
             return
         # The owner verified the previous process immediately before capture.
         # Accept only a restart inside this successfully completed backup's
@@ -1373,13 +1410,21 @@ class DeploymentHost:
         """Publish one HUP only from the latest proved startup reload state."""
         containers = self._inspect()
         self._monitoring_mounts(containers)
-        for name in (
-            "docker/scripts/scheduler-heartbeat.sh",
-            "docker/prometheus/alert_rules.yml",
-        ):
+        published_pins = (
+            self.plan["staff_monitoring_sha256"]
+            | self.plan["preserved_retention_sha256"]
+            if self.plan["schema"] == "deployment-plan-v6"
+            else {
+                name: self.plan["monitoring_sha256"][name]
+                for name in (
+                    "docker/scripts/scheduler-heartbeat.sh",
+                    "docker/prometheus/alert_rules.yml",
+                )
+            }
+        )
+        for name, expected_sha256 in published_pins.items():
             require(
-                self._monitoring_file(name)["sha256"]
-                == self.plan["monitoring_sha256"][name],
+                self._monitoring_file(name)["sha256"] == expected_sha256,
                 "host_monitoring_published_bytes",
             )
         prometheus = containers["prometheus"]
@@ -2218,7 +2263,7 @@ class DeploymentHost:
                 "protected_data": self._preserved_data(containers),
                 "scheduler_jobs": self._scheduler_jobs(containers["scheduler"]),
             }
-            if self.plan["schema"] == "deployment-plan-v5":
+            if self.plan["schema"] in MONITORING_SCHEMAS:
                 self.baseline["monitoring"] = self._monitoring_baseline(containers)
             for service in sorted(set(self.plan["services"]) | {"api"}):
                 if service == "api":
@@ -2629,7 +2674,7 @@ class DeploymentHost:
         source = self.plan["source"]
         self._source()
         heap = bool(self.plan.get("preserved_heap_sha256"))
-        monitoring = self.plan["schema"] == "deployment-plan-v5"
+        monitoring = self.plan["schema"] in MONITORING_SCHEMAS
         if heap:
             # The effect journal already owns this once-only publication. Adopt
             # only the reviewed candidate-identical blob, without rewriting the
@@ -2646,7 +2691,7 @@ class DeploymentHost:
                 "--cacheinfo",
                 "100644," + blob + "," + name,
             )
-        if monitoring:
+        if self.plan["schema"] == "deployment-plan-v5":
             self._monitoring_publish_heartbeat()
         self._git(
             self.install, "merge", "--ff-only", "--no-edit", source["candidate_commit"]
@@ -2843,7 +2888,7 @@ class DeploymentHost:
             "job_config_preserved": True,
             "unrelated_preserved": True,
         }
-        if self.plan["schema"] == "deployment-plan-v5":
+        if self.plan["schema"] in MONITORING_SCHEMAS:
             self._monitoring_observe_heartbeat(resumed_at)
             result["monitoring_heartbeat_observed"] = True
         return result

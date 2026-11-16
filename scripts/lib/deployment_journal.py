@@ -132,6 +132,7 @@ class DeploymentJournal:
                 "deployment-plan-v3",
                 "deployment-plan-v4",
                 "deployment-plan-v5",
+                "deployment-plan-v6",
             },
             "plan_schema",
         )

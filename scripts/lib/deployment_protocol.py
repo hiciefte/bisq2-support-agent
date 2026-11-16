@@ -32,6 +32,24 @@ RETENTION_MONITORING_FILES = frozenset(
         "scripts/validate-monitoring-config.sh",
     }
 )
+# Source publication only: installing/arming host units needs its own lifecycle.
+STAFF_PILOT_MONITORING_FILES = frozenset(
+    {
+        "scripts/staff_pilot_watchdog.py",
+        "scripts/staff_pilot_watchdog_adapter.py",
+        "docker/prometheus/alert_rules.yml",
+        "docker/prometheus/tests/staff_pilot_watchdog.test.yml",
+    }
+)
+PRESERVED_RETENTION_FILES = RETENTION_MONITORING_FILES - {
+    "docker/prometheus/alert_rules.yml"
+}
+# v6 admits exactly the reviewed append-only alert group, not arbitrary rules.
+STAFF_PILOT_RULE_APPEND_SHA256 = (
+    "8b88599824b7b747f94e139ea0bf7ed2ccb20c15d7533d69f0067ac57b9533d8"
+)
+STAFF_PILOT_ALERT = "StaffPilotWatchdogMissingOrFailed"
+MONITORING_SCHEMAS = frozenset({"deployment-plan-v5", "deployment-plan-v6"})
 PYTHON_RUNNER_FILES = frozenset(
     {".github/workflows/ci.yml", ".github/workflows/ai-quality-gate.yml"}
 )
@@ -174,11 +192,13 @@ def phases_for(services: list[str], *, publish_source: bool = True) -> list[str]
 
 def validate_plan(plan: dict) -> None:
     monitoring = isinstance(plan, dict) and plan.get("schema") == "deployment-plan-v5"
+    staff = isinstance(plan, dict) and plan.get("schema") == "deployment-plan-v6"
     heap = isinstance(plan, dict) and plan.get("schema") == "deployment-plan-v4"
     tooling = isinstance(plan, dict) and plan.get("schema") in {
         "deployment-plan-v3",
         "deployment-plan-v4",
         "deployment-plan-v5",
+        "deployment-plan-v6",
     }
     _keys(
         plan,
@@ -194,15 +214,22 @@ def validate_plan(plan: dict) -> None:
         }
         | ({"tooling_sha256"} if tooling else set())
         | ({"preserved_heap_sha256"} if heap or monitoring else set())
-        | ({"monitoring_sha256", "python_runner_sha256"} if monitoring else set()),
+        | ({"monitoring_sha256", "python_runner_sha256"} if monitoring else set())
+        | (
+            {"staff_monitoring_sha256", "preserved_retention_sha256"}
+            if staff
+            else set()
+        ),
         "release_plan_schema",
     )
     require(
-        (monitoring and plan["kind"] == "selective-api-web-with-monitoring-v1")
+        (staff and plan["kind"] == "selective-api-web-with-staff-monitoring-v1")
+        or (monitoring and plan["kind"] == "selective-api-web-with-monitoring-v1")
         or (heap and plan["kind"] == "selective-api-web-preserved-heap-v1")
         or (
             not heap
             and not monitoring
+            and not staff
             and tooling
             and plan["kind"] == "selective-api-web-with-tooling-v1"
         )
@@ -246,7 +273,7 @@ def validate_plan(plan: dict) -> None:
         "release_source",
     )
     if tooling:
-        if not (heap or monitoring) or plan["tooling_sha256"] != {}:
+        if not (heap or monitoring or staff) or plan["tooling_sha256"] != {}:
             validate_tooling_sha256(plan["tooling_sha256"])
     if heap or (monitoring and plan["preserved_heap_sha256"] != {}):
         _pins(plan["preserved_heap_sha256"], PRESERVED_HEAP_FILES)
@@ -254,6 +281,11 @@ def validate_plan(plan: dict) -> None:
         _pins(plan["monitoring_sha256"], RETENTION_MONITORING_FILES)
         if plan["python_runner_sha256"] != {}:
             _pins(plan["python_runner_sha256"], PYTHON_RUNNER_FILES)
+
+    if staff:
+        require("api" in plan["services"], "staff_monitoring_requires_api")
+        _pins(plan["staff_monitoring_sha256"], STAFF_PILOT_MONITORING_FILES)
+        _pins(plan["preserved_retention_sha256"], PRESERVED_RETENTION_FILES)
 
 
 def validate_tooling_sha256(tooling: object) -> None:
@@ -425,10 +457,12 @@ def validate_approval(approval: dict, plan: dict, profile: dict) -> None:
     validate_profile(profile)
     heap = plan["schema"] in {"deployment-plan-v4", "deployment-plan-v5"}
     monitoring = plan["schema"] == "deployment-plan-v5"
+    staff = plan["schema"] == "deployment-plan-v6"
     tooling = plan["schema"] in {
         "deployment-plan-v3",
         "deployment-plan-v4",
         "deployment-plan-v5",
+        "deployment-plan-v6",
     }
     _keys(
         approval,
@@ -447,18 +481,31 @@ def validate_approval(approval: dict, plan: dict, profile: dict) -> None:
         }
         | ({"tooling_sha256"} if tooling else set())
         | ({"preserved_heap_sha256"} if heap else set())
-        | ({"monitoring_sha256", "python_runner_sha256"} if monitoring else set()),
+        | ({"monitoring_sha256", "python_runner_sha256"} if monitoring else set())
+        | (
+            {"staff_monitoring_sha256", "preserved_retention_sha256"}
+            if staff
+            else set()
+        ),
         "approval_schema",
     )
     require(
         approval["schema"]
         == (
-            "deployment-approval-v5"
-            if monitoring
+            "deployment-approval-v6"
+            if staff
             else (
-                "deployment-approval-v4"
-                if heap
-                else "deployment-approval-v3" if tooling else "deployment-approval-v2"
+                "deployment-approval-v5"
+                if monitoring
+                else (
+                    "deployment-approval-v4"
+                    if heap
+                    else (
+                        "deployment-approval-v3"
+                        if tooling
+                        else "deployment-approval-v2"
+                    )
+                )
             )
         )
         and approval["plan_sha256"] == canonical_sha256(plan)
@@ -483,6 +530,13 @@ def validate_approval(approval: dict, plan: dict, profile: dict) -> None:
         require(
             approval["python_runner_sha256"] == plan["python_runner_sha256"],
             "approval_python_runner",
+        )
+    if staff:
+        require(
+            approval["staff_monitoring_sha256"] == plan["staff_monitoring_sha256"]
+            and approval["preserved_retention_sha256"]
+            == plan["preserved_retention_sha256"],
+            "approval_staff_monitoring",
         )
     require(
         isinstance(approval["operator"], str)
@@ -548,6 +602,7 @@ def effect_guard(
             "deployment-plan-v3",
             "deployment-plan-v4",
             "deployment-plan-v5",
+            "deployment-plan-v6",
         },
         "effect_plan_version",
     )
@@ -660,7 +715,7 @@ def _validate_payload(phase: str, payload: dict, plan: dict) -> None:
         )
         flags = ["validated"]
     elif phase == "resume_scheduler":
-        monitoring = plan["schema"] == "deployment-plan-v5"
+        monitoring = plan["schema"] in MONITORING_SCHEMAS
         _keys(
             payload,
             {
@@ -684,7 +739,7 @@ def _validate_payload(phase: str, payload: dict, plan: dict) -> None:
             flags.append("monitoring_heartbeat_observed")
     elif phase == "publish_source":
         heap = bool(plan.get("preserved_heap_sha256"))
-        monitoring = plan["schema"] == "deployment-plan-v5"
+        monitoring = plan["schema"] in MONITORING_SCHEMAS
         _keys(
             payload,
             {
