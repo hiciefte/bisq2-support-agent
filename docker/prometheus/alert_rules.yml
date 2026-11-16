@@ -499,3 +499,36 @@ groups:
         annotations:
           summary: "Container {{ $labels.name }} CPU throttling >25%"
           description: "Container {{ $labels.name }} is frequently throttled and may be CPU-starved."
+
+  - name: staff_pilot_watchdog
+    interval: 30s
+    rules:
+      # An independently installed expectation file arms this alert only for a
+      # reviewed pilot. Missing result series cannot masquerade as healthy.
+      - alert: StaffPilotWatchdogMissingOrFailed
+        expr: |
+          (staff_pilot_watchdog_expected{job="node-exporter"} == 1)
+          unless on (job, instance, binding)
+          (
+            ((staff_pilot_watchdog_finalized{job="node-exporter"} == 1)
+              and on (job, instance, binding)
+                (staff_pilot_watchdog_last_attempt_success{job="node-exporter"} == 1))
+            or
+            (
+              (staff_pilot_watchdog_last_attempt_success{job="node-exporter"} == 1)
+              and on (job, instance, binding)
+                ((time() - staff_pilot_watchdog_last_success_timestamp_seconds{job="node-exporter"}) >= 0)
+              and on (job, instance, binding)
+                ((time() - staff_pilot_watchdog_last_success_timestamp_seconds{job="node-exporter"}) < 44100)
+              and on (job, instance, binding)
+                (staff_pilot_watchdog_cutoff_timestamp_seconds{job="node-exporter"} > (time() - 900))
+            )
+          )
+        for: 2m
+        labels:
+          severity: critical
+          component: monitoring
+        annotations:
+          summary: "Staff pilot host watchdog needs attention"
+          description: "A bound pilot has missing, failed or overdue host checks, or lacks verified finalization after cutoff. Inspect canonical receipts; never retry an ambiguous terminal phase."
+          runbook_url: "docs/runbooks/staff-pilot-watchdog.md"
