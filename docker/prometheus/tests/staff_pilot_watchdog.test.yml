@@ -1,0 +1,119 @@
+rule_files:
+  - ../alert_rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: no pilot requires no alert
+    interval: 1m
+    input_series: []
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: StaffPilotWatchdogMissingOrFailed
+        exp_alerts: []
+  - name: bound pilot with missing status alerts
+    interval: 1m
+    input_series:
+      - series: 'staff_pilot_watchdog_expected{job="node-exporter",instance="node",binding="test"}'
+        values: '1+0x5'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: StaffPilotWatchdogMissingOrFailed
+        exp_alerts:
+          - exp_labels: {job: node-exporter, instance: node, binding: test, severity: critical, component: monitoring}
+            exp_annotations:
+              summary: "Staff pilot host watchdog needs attention"
+              description: "A bound pilot has missing, failed or overdue host checks, or lacks verified finalization after cutoff. Inspect canonical receipts; never retry an ambiguous terminal phase."
+              runbook_url: "docs/runbooks/staff-pilot-watchdog.md"
+  - name: healthy fresh host checks are quiet
+    interval: 1m
+    input_series:
+      - series: 'staff_pilot_watchdog_expected{job="node-exporter",instance="node",binding="test"}'
+        values: '1+0x800'
+      - series: 'staff_pilot_watchdog_last_attempt_success{job="node-exporter",instance="node",binding="test"}'
+        values: '1+0x800'
+      - series: 'staff_pilot_watchdog_last_success_timestamp_seconds{job="node-exporter",instance="node",binding="test"}'
+        values: '0+0x800'
+      - series: 'staff_pilot_watchdog_cutoff_timestamp_seconds{job="node-exporter",instance="node",binding="test"}'
+        values: '100000+0x800'
+    alert_rule_test:
+      - eval_time: 12h
+        alertname: StaffPilotWatchdogMissingOrFailed
+        exp_alerts: []
+      - eval_time: 12h18m
+        alertname: StaffPilotWatchdogMissingOrFailed
+        exp_alerts:
+          - exp_labels: {job: node-exporter, instance: node, binding: test, severity: critical, component: monitoring}
+            exp_annotations:
+              summary: "Staff pilot host watchdog needs attention"
+              description: "A bound pilot has missing, failed or overdue host checks, or lacks verified finalization after cutoff. Inspect canonical receipts; never retry an ambiguous terminal phase."
+              runbook_url: "docs/runbooks/staff-pilot-watchdog.md"
+  - name: failed attempt does not get a fresh success grace period
+    interval: 1m
+    input_series:
+      - series: 'staff_pilot_watchdog_expected{job="node-exporter",instance="node",binding="test"}'
+        values: '1+0x10'
+      - series: 'staff_pilot_watchdog_last_attempt_success{job="node-exporter",instance="node",binding="test"}'
+        values: '0+0x10'
+      - series: 'staff_pilot_watchdog_last_success_timestamp_seconds{job="node-exporter",instance="node",binding="test"}'
+        values: '0+0x10'
+      - series: 'staff_pilot_watchdog_cutoff_timestamp_seconds{job="node-exporter",instance="node",binding="test"}'
+        values: '100000+0x10'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: StaffPilotWatchdogMissingOrFailed
+        exp_alerts:
+          - exp_labels: {job: node-exporter, instance: node, binding: test, severity: critical, component: monitoring}
+            exp_annotations:
+              summary: "Staff pilot host watchdog needs attention"
+              description: "A bound pilot has missing, failed or overdue host checks, or lacks verified finalization after cutoff. Inspect canonical receipts; never retry an ambiguous terminal phase."
+              runbook_url: "docs/runbooks/staff-pilot-watchdog.md"
+  - name: cutoff without finalized receipt alerts even with fresh health
+    interval: 1m
+    input_series:
+      - series: 'staff_pilot_watchdog_expected{job="node-exporter",instance="node",binding="test"}'
+        values: '1+0x25'
+      - series: 'staff_pilot_watchdog_last_attempt_success{job="node-exporter",instance="node",binding="test"}'
+        values: '1+0x25'
+      - series: 'staff_pilot_watchdog_last_success_timestamp_seconds{job="node-exporter",instance="node",binding="test"}'
+        values: '0+60x25'
+      - series: 'staff_pilot_watchdog_cutoff_timestamp_seconds{job="node-exporter",instance="node",binding="test"}'
+        values: '60+0x25'
+    alert_rule_test:
+      - eval_time: 19m
+        alertname: StaffPilotWatchdogMissingOrFailed
+        exp_alerts:
+          - exp_labels: {job: node-exporter, instance: node, binding: test, severity: critical, component: monitoring}
+            exp_annotations:
+              summary: "Staff pilot host watchdog needs attention"
+              description: "A bound pilot has missing, failed or overdue host checks, or lacks verified finalization after cutoff. Inspect canonical receipts; never retry an ambiguous terminal phase."
+              runbook_url: "docs/runbooks/staff-pilot-watchdog.md"
+  - name: finalized retained record stays quiet without further polling
+    interval: 1m
+    input_series:
+      - series: 'staff_pilot_watchdog_last_attempt_success{job="node-exporter",instance="node",binding="test"}'
+        values: '1+0x900'
+      - series: 'staff_pilot_watchdog_expected{job="node-exporter",instance="node",binding="test"}'
+        values: '1+0x900'
+      - series: 'staff_pilot_watchdog_finalized{job="node-exporter",instance="node",binding="test"}'
+        values: '1+0x900'
+    alert_rule_test:
+      - eval_time: 14h
+        alertname: StaffPilotWatchdogMissingOrFailed
+        exp_alerts: []
+  - name: a stale predecessor result cannot cover a new binding
+    interval: 1m
+    input_series:
+      - series: 'staff_pilot_watchdog_expected{job="node-exporter",instance="node",binding="new"}'
+        values: '1+0x10'
+      - series: 'staff_pilot_watchdog_finalized{job="node-exporter",instance="node",binding="old"}'
+        values: '1+0x10'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: StaffPilotWatchdogMissingOrFailed
+        exp_alerts:
+          - exp_labels: {job: node-exporter, instance: node, binding: new, severity: critical, component: monitoring}
+            exp_annotations:
+              summary: "Staff pilot host watchdog needs attention"
+              description: "A bound pilot has missing, failed or overdue host checks, or lacks verified finalization after cutoff. Inspect canonical receipts; never retry an ambiguous terminal phase."
+              runbook_url: "docs/runbooks/staff-pilot-watchdog.md"

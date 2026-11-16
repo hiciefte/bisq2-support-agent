@@ -30,6 +30,7 @@ from lib.deployment_journal import (  # noqa: E402
 from lib.deployment_protocol import canonical_sha256  # noqa: E402
 from lib.deployment_protocol import (  # noqa: E402
     MAX_RECORD_BYTES,
+    MONITORING_SCHEMAS,
     decode_object,
     effect_guard,
     encode_object,
@@ -205,7 +206,7 @@ class Owner:
             result_path = self.operation / "host" / f"{phase}.result.json"
             if phase.endswith("_backup"):
                 host_path = self.operation / "recovery" / phase / "capture-intent.json"
-                if self.plan["schema"] == "deployment-plan-v5":
+                if self.plan["schema"] in MONITORING_SCHEMAS:
                     monitoring_intent = (
                         self.operation
                         / "recovery"
@@ -341,7 +342,7 @@ class Owner:
                     "intent_sha256": intent,
                     "deadline": self.approval["deadline"],
                 }
-                if self.plan["schema"] == "deployment-plan-v5":
+                if self.plan["schema"] in MONITORING_SCHEMAS:
                     window_intent = {
                         "schema": "deployment-monitoring-capture-intent-v1",
                         "binding": binding,

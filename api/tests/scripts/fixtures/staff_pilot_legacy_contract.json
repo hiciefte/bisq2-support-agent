@@ -1,0 +1,142 @@
+{
+  "health": {
+    "api_container_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "api_healthy": true,
+    "attention_required": true,
+    "captured_at": "2026-12-01T12:00:00+00:00",
+    "cursor": {
+      "changed_since_checkpoint": true,
+      "cursor_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "same_established_identity": true,
+      "same_established_session": true,
+      "saved_cursor_present": true
+    },
+    "deadline_reached": true,
+    "descriptor_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "end_at": "2026-12-01T11:59:57+00:00",
+    "feedback_assessment": "not_read_or_assessed",
+    "finalization_due": true,
+    "finding": "none",
+    "health_changed": true,
+    "health_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "healthy": true,
+    "ledger": {
+      "called_or_uncertain_cases_without_usage": 0,
+      "cap_exceeded": false,
+      "cap_reached": true,
+      "case_metadata_hashes": {
+        "1": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "deadline_reached": true,
+      "descriptor_bound": true,
+      "durable_context_cases": 24,
+      "incident_messages_recorded": 30,
+      "late_incident_updates_needing_review": 1,
+      "max_cases": 20,
+      "missing_reserved_case_count": 0,
+      "model_calls_recorded_true": 20,
+      "omitted_case_digest_count": 23,
+      "recorded_complete_threads": 2,
+      "reported_usage_totals": {
+        "completion_tokens": 200,
+        "prompt_tokens": 2000,
+        "total_tokens": 2200
+      },
+      "reserved_cases": 20,
+      "returned_preview_silence_after_model_call": 18,
+      "status_counts": {
+        "awaiting_review": 0,
+        "deferred": 4,
+        "delivered": 2,
+        "delivery_pending": 0,
+        "delivery_uncertain": 0,
+        "needs_human": 18,
+        "preparing": 0
+      },
+      "summary_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "uncertain_or_active_count": 0,
+      "unknown_status_count": 0
+    },
+    "ledger_changed": true,
+    "limitations": [
+      "Unchanged saved cursor is not proof of a failed or healthy active sync loop.",
+      "Recorded threads are unverified transport claims; feedback has not been read.",
+      "No provider outcome or cost beyond durable reported usage is inferred."
+    ],
+    "listener_configured_stopped": true,
+    "matrix_requests": 0,
+    "next_checkpoint": {
+      "captured_at": "2026-12-01T12:00:00+00:00",
+      "cursor_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "descriptor_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "health_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "ledger_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "policy": {
+      "canary_disabled": true,
+      "generation_enabled": false,
+      "global_delivery_disabled": true,
+      "scope_safe": true,
+      "shadow_mode": true
+    },
+    "predecessor_history_preserved": true,
+    "provider_calls": 0,
+    "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "scheduler_guard": {
+      "command_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "deadline_guard_expired": true,
+      "guard_configuration_retained": true,
+      "owned_command_matches": true,
+      "owned_overlay_matches": true
+    },
+    "scheduler_healthy": true,
+    "trial_id": "pilot-contract-fixture",
+    "writes": 0
+  },
+  "receipts": {
+    "stop": {
+      "api_container_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "api_healthy": true,
+      "completed_at": "2026-12-01T12:00:00+00:00",
+      "descriptor_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "exclusive_lifecycle_window": true,
+      "generation_enabled": false,
+      "identity_preserved": true,
+      "maintenance_resume_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "matrix_messages_by_controller": 0,
+      "model_requests_by_controller": 0,
+      "original_histories_preserved": true,
+      "original_resume_failure_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "other_services_unchanged": true,
+      "phase": "stop",
+      "resume_authority_kind": "explicit_generation_suffix",
+      "retry": false,
+      "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "runtime_env_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "success": true,
+      "sync_enabled": false,
+      "trial_ledger_preserved": true
+    },
+    "scheduler-finalize": {
+      "cleanup_owner_next_authorized_canonical_lifecycle": true,
+      "completed_at": "2026-12-01T12:00:00+00:00",
+      "descriptor_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "exclusive_lifecycle_window": true,
+      "expired_overlay_retained": true,
+      "indefinite_selected_job_hold_retained": true,
+      "maintenance_resume_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "matrix_messages_by_controller": 0,
+      "model_requests_by_controller": 0,
+      "original_resume_failure_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "other_services_unchanged": true,
+      "phase": "scheduler-finalize",
+      "resume_authority_kind": "explicit_generation_suffix",
+      "retry": false,
+      "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scheduler_command_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "scheduler_healthy": true,
+      "scheduler_recreated": false,
+      "success": true
+    }
+  }
+}

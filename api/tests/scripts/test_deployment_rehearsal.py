@@ -32,6 +32,50 @@ MONITORING_FILES = (
     "scripts/validate-monitoring-config.sh",
 )
 
+STAFF_MONITORING_FILES = (
+    "scripts/staff_pilot_watchdog.py",
+    "scripts/staff_pilot_watchdog_adapter.py",
+    "docker/prometheus/alert_rules.yml",
+    "docker/prometheus/tests/staff_pilot_watchdog.test.yml",
+)
+
+
+def staff_rule_append(source):
+    raw = (source / "docker/prometheus/alert_rules.yml").read_text()
+    return (
+        "\n  - name: staff_pilot_watchdog\n"
+        + raw.split("\n  - name: staff_pilot_watchdog\n", 1)[1]
+    )
+
+
+def staff_rule(source):
+    text = (
+        staff_rule_append(source)
+        .split("        expr: |\n", 1)[1]
+        .split("        for:", 1)[0]
+    )
+    return {
+        "name": "StaffPilotWatchdogMissingOrFailed",
+        "type": "alerting",
+        "query": "\n".join(line[10:] for line in text.splitlines()),
+        "health": "ok",
+        "duration": 120,
+        "labels": {"severity": "critical", "component": "monitoring"},
+    }
+
+
+def fixture_privacy_rules():
+    return "groups:\n  - name: fixture\n    rules:\n" + "".join(
+        "      - "
+        + ("record" if rule["type"] == "recording" else "alert")
+        + ": "
+        + rule["name"]
+        + "\n        expr: "
+        + rule["query"]
+        + "\n"
+        for rule in monitoring_rules()
+    )
+
 
 def monitoring_rules():
     names = [
@@ -169,7 +213,8 @@ def container(service, install, build_id):
 
 def prepare(source, root, scenario):
     """Create a disposable Git and runtime fixture with explicit external doubles."""
-    monitoring = scenario == "monitoring_success"
+    staff = scenario in {"staff_monitoring_success", "staff_monitoring_rule_missing"}
+    monitoring = scenario == "monitoring_success" or staff
     root.mkdir(mode=0o700, parents=True, exist_ok=False)
     candidate, install = root / "candidate", root / "install"
     candidate.mkdir()
@@ -204,26 +249,33 @@ def prepare(source, root, scenario):
                 else "# Original fixture\n"
             )
             path.chmod(0o755 if name.endswith(".sh") else 0o644)
+    if staff:
+        (candidate / "docker/prometheus/alert_rules.yml").write_text(
+            fixture_privacy_rules()
+        )
+        for name in STAFF_MONITORING_FILES:
+            if name.endswith(".py"):
+                (candidate / name).unlink()
     git(candidate, "init", "-q")
     previous = commit(candidate)
     (candidate / "api/app/release_fixture.py").write_text("VERSION = 2\n")
     (candidate / "web/src/release_fixture.ts").write_text("export const version = 2;\n")
-    if monitoring:
+    if staff:
+        for name in STAFF_MONITORING_FILES:
+            if name != "docker/prometheus/alert_rules.yml":
+                target = candidate / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source / name, target)
+        (candidate / "docker/prometheus/alert_rules.yml").write_text(
+            fixture_privacy_rules() + staff_rule_append(source)
+        )
+    elif monitoring:
         for name in MONITORING_FILES:
             with (candidate / name).open("a") as stream:
                 stream.write("# Candidate fixture\n")
-        rules = "groups:\n  - name: fixture\n    rules:\n" + "".join(
-            "      - "
-            + ("record" if rule["type"] == "recording" else "alert")
-            + ": "
-            + rule["name"]
-            + "\n"
-            + "        expr: "
-            + rule["query"]
-            + "\n"
-            for rule in monitoring_rules()
+        (candidate / "docker/prometheus/alert_rules.yml").write_text(
+            fixture_privacy_rules()
         )
-        (candidate / "docker/prometheus/alert_rules.yml").write_text(rules)
     revision = commit(candidate)
     subprocess.run(
         [
@@ -346,7 +398,12 @@ def prepare(source, root, scenario):
         state.update(
             monitoring_reload_timestamp=time.time() - 50,
             monitoring_heartbeat_timestamp=int(time.time()) - 5,
-            monitoring_rules=monitoring_rules(),
+            monitoring_rules=monitoring_rules()
+            + (
+                [staff_rule(source)]
+                if staff and scenario != "staff_monitoring_rule_missing"
+                else []
+            ),
             monitoring_hups=0,
             monitoring_backup_restarts=0,
             monitoring_heartbeat_forced=0,
@@ -379,7 +436,11 @@ def prepare(source, root, scenario):
         deadline,
         "--operation",
         str(operation),
-        *(("--include-retention-monitoring",) if monitoring else ()),
+        *(
+            ("--include-staff-pilot-monitoring",)
+            if staff
+            else ("--include-retention-monitoring",) if monitoring else ()
+        ),
     )
     assert planned.returncode == 0, planned.stderr
     plan = json.loads((operation / "plan.json").read_text())
@@ -455,7 +516,14 @@ def prepare(source, root, scenario):
         "data_compatible_rollback": True,
         "policy": "private-disabled-channels",
     }
-    if monitoring:
+    if staff:
+        approval.update(
+            schema="deployment-approval-v6",
+            tooling_sha256=plan["tooling_sha256"],
+            staff_monitoring_sha256=plan["staff_monitoring_sha256"],
+            preserved_retention_sha256=plan["preserved_retention_sha256"],
+        )
+    elif monitoring:
         approval.update(
             schema="deployment-approval-v5",
             tooling_sha256=plan["tooling_sha256"],
@@ -484,6 +552,14 @@ def run_case(source, root, scenario):
     for command in ("git", "flock", "jq", "openssl", "bash", "python3"):
         assert shutil.which(command), "missing local fixture tool: " + command
     candidate, install, operation, env, plan, original = prepare(source, root, scenario)
+    heartbeat_before = None
+    if scenario.startswith("staff_monitoring_"):
+        heartbeat = install / "docker/scripts/scheduler-heartbeat.sh"
+        heartbeat_before = (
+            heartbeat.stat().st_ino,
+            heartbeat.stat().st_mtime_ns,
+            sha(heartbeat.read_bytes()),
+        )
     data_before = {
         path.name: sha(path.read_bytes()) for path in (install / "api/data").iterdir()
     }
@@ -533,7 +609,7 @@ def run_case(source, root, scenario):
             "real ciphertext framing/receive hashing and fsync run over synthetic bytes",
         ],
     }
-    if scenario in {"success", "monitoring_success"}:
+    if scenario in {"success", "monitoring_success", "staff_monitoring_success"}:
         assert applied.returncode == 0, applied.stderr
         outcome = json.loads(applied.stdout)
         assert outcome["completed"] is True
@@ -561,7 +637,7 @@ def run_case(source, root, scenario):
             list((operation / "receipts").glob("*.json"))
         )
         report["already_complete_no_replay"] = True
-        if scenario == "monitoring_success":
+        if scenario in {"monitoring_success", "staff_monitoring_success"}:
             assert state["monitoring_backup_restarts"] == 2
             assert (
                 state["monitoring_hups"] == 1
@@ -593,6 +669,25 @@ def run_case(source, root, scenario):
             report["monitoring_backups_checkpointed"] = 2
             report["monitoring_publish_hups"] = 1
             report["monitoring_heartbeat_forced"] = False
+    elif scenario == "staff_monitoring_rule_missing":
+        assert applied.returncode == 2 and state["monitoring_hups"] == 1
+        assert state["provider_calls"] == ["standard", "live_mcp"]
+        assert not (operation / "receipts/publish_source.json").exists()
+        assert (operation / "publish_source.intent.json").exists()
+        assert state["containers"]["scheduler"]["State"]["Paused"] is True
+        continued = invoke(candidate, env, "continue", "--operation", str(operation))
+        assert continued.returncode == 2
+        reconciled = invoke(candidate, env, "reconcile", "--operation", str(operation))
+        assert reconciled.returncode == 0, reconciled.stderr
+        after = json.loads((root / "boundary-state.json").read_text())
+        assert (
+            after["monitoring_hups"] == 1
+            and after["provider_calls"] == state["provider_calls"]
+        )
+        assert after["switches"] == state["switches"]
+        report["missing_loaded_staff_rule_refused"] = True
+        report["failed_publication_not_replayed"] = True
+        report["read_only_reconciliation"] = True
     elif scenario == "preflight_refusal":
         assert (
             applied.returncode == 2
@@ -646,6 +741,15 @@ def run_case(source, root, scenario):
     assert data_before == {
         path.name: sha(path.read_bytes()) for path in (install / "api/data").iterdir()
     }
+    if heartbeat_before is not None:
+        heartbeat = install / "docker/scripts/scheduler-heartbeat.sh"
+        assert (
+            heartbeat.stat().st_ino,
+            heartbeat.stat().st_mtime_ns,
+            sha(heartbeat.read_bytes()),
+        ) == heartbeat_before
+        report["unchanged_retention_heartbeat_not_rewritten"] = True
+        report["host_timer_installation_or_arming_exercised"] = False
     report["synthetic_identity_cursor_history_unchanged"] = True
     report["passed"] = True
     private_record(root / "result.json", report)
@@ -778,6 +882,18 @@ class ExternalBoundaryRegression(unittest.TestCase):
     "explicit isolated Linux rehearsal only",
 )
 class OrdinaryDeploymentRehearsal(unittest.TestCase):
+    def test_staff_monitoring_publication_preserves_legacy_retention(self):
+        with tempfile.TemporaryDirectory() as parent:
+            run_case(
+                SOURCE, Path(parent) / "staff-monitoring", "staff_monitoring_success"
+            )
+
+    def test_staff_monitoring_missing_loaded_rule_refuses_without_replay(self):
+        with tempfile.TemporaryDirectory() as parent:
+            run_case(
+                SOURCE, Path(parent) / "staff-refusal", "staff_monitoring_rule_missing"
+            )
+
     def test_monitoring_survives_both_backup_boundaries(self):
         with tempfile.TemporaryDirectory() as parent:
             run_case(SOURCE, Path(parent) / "monitoring", "monitoring_success")
@@ -801,7 +917,14 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
         "--scenario",
-        choices=["success", "preflight_refusal", "lost_smoke", "monitoring_success"],
+        choices=[
+            "success",
+            "preflight_refusal",
+            "lost_smoke",
+            "monitoring_success",
+            "staff_monitoring_success",
+            "staff_monitoring_rule_missing",
+        ],
         required=True,
     )
     args = parser.parse_args()

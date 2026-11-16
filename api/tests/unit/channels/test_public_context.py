@@ -975,3 +975,213 @@ def test_moderation_prompt_preserves_attribution_and_context_limits():
     assert "A neutral technical\nsubquestion does not override" in PUBLIC_CONTEXT_PROMPT
     assert "profanity alone" in PUBLIC_CONTEXT_PROMPT
     assert "quoted/reported abuse" in PUBLIC_CONTEXT_PROMPT
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Which release is shown in About?",
+        "Does the missing value affect every asset or only one?",
+        "What exact startup error is shown, with private values omitted?",
+        "What error appeared after restarting?",
+        "Welche Version wird angezeigt?",
+        "你使用哪个版本？",
+    ],
+)
+def test_staff_only_clarification_is_one_uncited_review_question(text):
+    llm = llm_output(
+        action="clarification",
+        text=text,
+        source_ids=[],
+        reason="missing_diagnostic_detail",
+    )
+    preview = PublicContextService(llm).preview(request(audience="staff_only"))
+    assert preview.decision.action == "clarification"
+    assert preview.decision.source_ids == []
+    assert preview.rendered_note == "AI context · " + text
+    assert preview.requires_review is True and preview.model_called is True
+    assert preview.usage == {"total_tokens": 50}
+    llm.invoke.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Please share the app version.",
+        "Which release? What error?",
+        "The relay is broken. Which version?",
+        "Your wallet is corrupted, which release are you using?",
+        "This must be a server outage, right?",
+        "Since the wallet is damaged, which backup will you restore?",
+        "Why is your wallet corrupted?",
+        "Can you restore the backup?",
+        "How can you disable the sandbox?",
+        "Would deleting your wallet and restoring it fix the problem?",
+        "Is it possible for you to disable the Tor sandbox?",
+        "Could you please delete the wallet and restart?",
+        "Have you tried disabling the protection?",
+        "What happens if you remove the data directory?",
+        "Restart the app and tell me if it works?",
+        "What are your seed words?",
+        "What is your recovery phrase?",
+        "What are your twelve recovery words?",
+        "What is your recovery seed?",
+        "Which private key belongs to the wallet?",
+        "Could you upload the full logs?",
+        "What is your pairing token?",
+        "What is your email address?",
+        "Can you DM the account number?",
+    ],
+)
+def test_staff_clarification_rejects_obvious_assertions_procedures_or_private_requests(
+    text,
+):
+    preview = PublicContextService(
+        llm_output(action="clarification", text=text, source_ids=[])
+    ).preview(request(audience="staff_only"))
+    assert preview.rendered_note is None
+    assert preview.decision.action == "silence"
+    assert preview.validation_diagnostic == "invalid_clarification"
+
+
+def test_staff_clarification_cannot_cite_a_question_as_a_supported_fact():
+    preview = PublicContextService(
+        llm_output(
+            action="clarification", text="Which release?", source_ids=["public-doc"]
+        )
+    ).preview(request(audience="staff_only"))
+    assert (
+        preview.rendered_note is None
+        and preview.validation_diagnostic == "invalid_clarification"
+    )
+
+
+@pytest.mark.parametrize("audience", ["public", "staff_only"])
+def test_question_only_note_does_not_bypass_clarification_contract(audience):
+    preview = PublicContextService(
+        llm_output(text="Which release?", source_ids=["public-doc"])
+    ).preview(request(audience=audience))
+    assert preview.decision.reason == "clarification_suppressed"
+
+
+@pytest.mark.parametrize(
+    "gate",
+    [
+        "no_evidence",
+        "staff_active",
+        "already_resolved",
+        "recent_bot_reply",
+        "high_risk_action",
+        "moderation",
+    ],
+)
+def test_staff_clarification_keeps_existing_pre_generation_gates(gate):
+    llm = llm_output(action="clarification", text="Which release?", source_ids=[])
+    overrides = {"audience": "staff_only"}
+    if gate == "no_evidence":
+        overrides["evidence"] = []
+    elif gate == "moderation":
+        overrides["question"] = "Please give me his home address."
+    else:
+        overrides[gate] = True
+    preview = PublicContextService(llm).preview(request(**overrides))
+    assert not preview.model_called and preview.rendered_note is None
+    llm.invoke.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Which " + "diagnostic " * 55 + "detail?",
+        "Which release is shown at https://example.invalid?",
+        "Which release, @helper?",
+    ],
+)
+def test_staff_clarification_keeps_common_length_and_format_validation(text):
+    preview = PublicContextService(
+        llm_output(action="clarification", text=text, source_ids=[])
+    ).preview(request(audience="staff_only"))
+    assert preview.rendered_note is None
+    assert preview.validation_diagnostic in {"note_too_long", "non_plain_note"}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "A recovery phrase alone does not preserve application trade records; preserve the full application backup before changes.",
+        "The guide does not establish that pairing causes every notification failure.",
+        "The guide distinguishes a full application backup from a recovery phrase. What exact error is shown?",
+    ],
+)
+def test_staff_safety_and_correction_notes_do_not_require_a_remedy(text):
+    llm = llm_output(text=text)
+    evidence = [
+        PublicEvidence(
+            id="public-doc",
+            title="Synthetic safety guide",
+            content=text,
+            url="https://bisq.wiki/Support",
+        )
+    ]
+    preview = PublicContextService(llm).preview(
+        request(audience="staff_only", evidence=evidence)
+    )
+    assert preview.decision.action == "note" and preview.rendered_note is not None
+    assert preview.decision.source_ids == ["public-doc"]
+    uncited = PublicContextService(llm_output(text=text, source_ids=[])).preview(
+        request(audience="staff_only")
+    )
+    assert (
+        uncited.rendered_note is None
+        and uncited.validation_diagnostic == "missing_note_citation"
+    )
+
+
+def test_staff_prompt_resolves_clarification_conflict_without_changing_public_policy():
+    llm = llm_output(action="clarification", text="Which release?", source_ids=[])
+    PublicContextService(llm).preview(request(audience="staff_only"))
+    prompt = llm.invoke.call_args.kwargs["system_content"]
+    assert '"action":"note|clarification|silence"' in prompt
+    assert "do not ask again for facts already supplied" in prompt
+    assert (
+        "related architecture or historical background alone is not useful progress"
+        in prompt
+    )
+    assert (
+        "A material safety boundary or correction can still help without a remedy"
+        in prompt
+    )
+    assert "The legacy clarification action is suppressed" not in prompt
+    assert "Do not ask the room\nfor clarification" not in prompt
+    assert (
+        "Add only materially new, relevant evidence; otherwise choose silence"
+        not in prompt
+    )
+    assert "Choose silence if no useful, complete supported claim" not in prompt
+    assert '"action":"note|silence"' in PUBLIC_CONTEXT_PROMPT
+    assert "The legacy clarification action is suppressed" in PUBLIC_CONTEXT_PROMPT
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Can you reset your wallet?",
+        "What are your seed words?",
+        "Which release? What error?",
+        "Can you reset your wallet? The guide describes backups. What error is shown?",
+        "What are your seed words? The guide describes backups.",
+        "Can you reset your wallet? The guide describes backups.",
+        "What error is shown? The guide describes backups.",
+    ],
+)
+def test_cited_staff_note_cannot_hide_an_unsafe_clarification(question):
+    text = (
+        "The guide distinguishes application backups from recovery phrases. " + question
+    )
+    preview = PublicContextService(llm_output(text=text)).preview(
+        request(audience="staff_only")
+    )
+    assert (
+        preview.rendered_note is None
+        and preview.validation_diagnostic == "invalid_clarification"
+    )

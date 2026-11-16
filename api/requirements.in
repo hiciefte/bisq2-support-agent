@@ -66,6 +66,8 @@ langchain-openai
 
 # Web scraping and parsing
 beautifulsoup4
+# Soup Sieve selector denial-of-service fixes (CVE-2026-126190/126191).
+soupsieve>=4.0.1
 requests
 urllib3>=2.8.0  # Security fixes for CVE-2026-97687 and CVE-2026-97689
 mwclient

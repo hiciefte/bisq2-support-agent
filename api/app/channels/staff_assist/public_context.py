@@ -287,27 +287,85 @@ class StaffEvidence(_StrictModel):
 
 ContextEvidence = PublicEvidence | StaffEvidence
 
-STAFF_CONTEXT_PROMPT = PUBLIC_CONTEXT_PROMPT.replace(
-    "You prepare a short AI context note for a public Bisq\n"
-    "support conversation with human support staff. You assist the existing discussion.",
-    "Draft the exact user-facing reply proposed for the public Bisq support "
-    "conversation. Address the original user directly. Staff will review this "
-    "same reply body; do not write instructions to staff or describe an internal "
-    "investigation, guide title, review status or evidence pipeline.",
-).replace(
-    "Use only supplied public evidence for facts, and return its IDs in source_ids.\n"
-    "Do not treat a prior AI answer as evidence. Do not use private code facts.",
-    "Use only supplied evidence for facts, and return its IDs in source_ids. "
-    "Reviewed internal LLM-wiki guidance is usable staff evidence; it is not a "
-    "public webpage. Its page-level references do not establish that every claim "
-    "appears in each original source. Return the compiled guide's evidence ID; "
-    "the renderer may list its eligible public references as Further reading, "
-    "not claim-level citations. Cite an original public source only when its "
-    "supplied content supports the claim. Code facts have explicit source "
-    "release scope, not proof of the user's release or cause. Live tool results "
-    "are timestamped observations from the configured node, not whole-network "
-    "truth. Preserve unavailable, stale and partial coverage. Do not treat a prior "
-    "AI answer as evidence.",
+STAFF_CONTEXT_PROMPT = (
+    PUBLIC_CONTEXT_PROMPT.replace(
+        "You prepare a short AI context note for a public Bisq\n"
+        "support conversation with human support staff. You assist the existing discussion.",
+        "Draft the exact user-facing reply proposed for the public Bisq support "
+        "conversation. Address the original user directly. Staff will review this "
+        "same reply body; do not write instructions to staff or describe an internal "
+        "investigation, guide title, review status or evidence pipeline.",
+    )
+    .replace(
+        "Use only supplied public evidence for facts, and return its IDs in source_ids.\n"
+        "Do not treat a prior AI answer as evidence. Do not use private code facts.",
+        "Use only supplied evidence for facts, and return its IDs in source_ids. "
+        "Reviewed internal LLM-wiki guidance is usable staff evidence; it is not a "
+        "public webpage. Its page-level references do not establish that every claim "
+        "appears in each original source. Return the compiled guide's evidence ID; "
+        "the renderer may list its eligible public references as Further reading, "
+        "not claim-level citations. Cite an original public source only when its "
+        "supplied content supports the claim. Code facts have explicit source "
+        "release scope, not proof of the user's release or cause. Live tool results "
+        "are timestamped observations from the configured node, not whole-network "
+        "truth. Preserve unavailable, stale and partial coverage. Do not treat a prior "
+        "AI answer as evidence.",
+    )
+    .replace(
+        "checking. Add only materially new, relevant evidence; otherwise choose silence.",
+        "checking. Add only materially new, relevant evidence or a useful missing-detail "
+        "question under the clarification rules below; otherwise choose silence.",
+    )
+    .replace(
+        "Choose silence when your contribution would repeat existing information or add no\n"
+        "useful evidence. A note must add a relevant finding from the supplied evidence,",
+        "Choose silence when your contribution would repeat existing information or add "
+        "no useful progress. A note must add a relevant finding from the supplied evidence,",
+    )
+    .replace(
+        "Choose silence if no useful, complete supported claim fits within the word limit.",
+        "If no useful, complete supported claim fits within the word limit, choose a "
+        "focused clarification under the rules below or silence.",
+    )
+    .replace(
+        "Never post a generic clarification or a question-only note. Choose silence if you\n"
+        "cannot add a useful supported fact without first asking for more information.",
+        "For a confirmed unresolved support request, you may choose clarification when "
+        "one specific missing non-sensitive diagnostic detail would determine the next "
+        "useful step. Ask one focused question, not a generic request for more information. "
+        "Use the captured requester context: do not ask again for facts already supplied "
+        "or a question a human already asked. A volunteered hypothesis does not by itself "
+        "require a clarification. Otherwise choose silence.",
+    )
+    .replace(
+        "step. A scoped fact may still help; otherwise choose silence. Do not ask the room\n"
+        "for clarification.",
+        "step. A material safety boundary or correction can still help without a remedy. "
+        "Otherwise choose a focused clarification or silence; do not invent a diagnosis "
+        "or a troubleshooting action from general background.",
+    )
+    .replace(
+        "If useful evidence establishes only a related concept,\n"
+        "FIRST state specifically what the evidence cannot determine about the asked\n"
+        "proposition, then give the narrowly scoped supported context.",
+        "For an unresolved diagnostic request, related architecture or historical "
+        "background alone is not useful progress: prefer a focused clarification or "
+        "silence. A supported material safety boundary, correction of an unsupported "
+        "claim, or direct answer to a conceptual question can be useful without a remedy. "
+        "When giving such partial help, FIRST state what remains undetermined, then the "
+        "narrowly scoped supported context.",
+    )
+    .replace('{"action":"note|silence",', '{"action":"note|clarification|silence",')
+    .replace(
+        "source ID. The legacy clarification action is suppressed and never shown.",
+        "source ID. A clarification has no source IDs and contains exactly one "
+        "non-sensitive question, without a diagnosis, factual preamble, suggested "
+        "procedure or promise. Ask about an existing observation, never suggest an "
+        "operation by phrasing it as a question. Never request secrets, private keys, "
+        "seed words, passwords, pairing tokens, personal identifiers, DMs or full logs. "
+        "A useful factual note may end with one focused diagnostic question, retaining "
+        "its supported facts and citations. A question alone must use clarification.",
+    )
 )
 
 
@@ -441,6 +499,7 @@ ValidationDiagnostic = Literal[
     "note_too_long",
     "non_plain_note",
     "missing_note_citation",
+    "invalid_clarification",
     "validation_failed",
     "rendering_failed",
 ]
@@ -499,6 +558,44 @@ def _question_only(text: str) -> bool:
     )
     statements = re.split(r"(?<=[.!。！])\s+", checked)
     return all(part.rstrip().endswith(("?", "？", "؟")) for part in statements)
+
+
+def _staff_clarification(text: str) -> bool:
+    """Reject obvious non-questions, presuppositions and disguised requests.
+
+    This is a structural guard, not semantic proof that a question is relevant,
+    assumption-free or safe in every language. Staff still reviews the draft.
+    """
+    if not _question_only(text) or sum(text.count(mark) for mark in "?？؟") != 1:
+        return False
+    if re.search(
+        r"^(?:since|because|given|clearly|obviously|your|our|their|this|that|the|it|you|we)\b|"
+        r"^(?:please\s+)?(?:try|run|restart|reset|restore|delete|remove|replace|"
+        r"disable|enable|install|update|send|share|paste|upload|provide|tell|give)\b|"
+        r"^(?:why|should)\b|\b(?:because|caused by|due to|must be|definitely)\b|"
+        r",\s*(?:right|correct|isn['’]t it|doesn['’]t it)\s*[?？؟]$|"
+        r"\b(?:have you tried|why don['’]t you|what happens if you)\b|"
+        r"\b(?:(?:how\s+)?(?:can|could|would|will)|how (?:do|should)) "
+        r"(?:you|i|we)\s+(?:(?:please|first|now|just)\s+)*"
+        r"(?:try|run|restart|reset|restore|delete|remove|replace|disable|enable|"
+        r"install|update|reinstall|re-?pair|send|share|paste|upload|provide|pay|"
+        r"transfer|move|contact|message|dm)\b|"
+        # State-changing/sending procedures remain procedures in impersonal
+        # questions too. Ambiguous uses are conservatively held for Staff.
+        r"\b(?:reset(?:ting)?|restor(?:e|ing)|delet(?:e|ing)|remov(?:e|ing)|"
+        r"replac(?:e|ing)|disabl(?:e|ing)|enabl(?:e|ing)|install(?:ing)?|"
+        r"reinstall(?:ing)?|re-?pair(?:ing)?|updat(?:e|ing)|send(?:ing)?|"
+        r"shar(?:e|ing)|past(?:e|ing)|upload(?:ing)?|provid(?:e|ing)|pay(?:ing)?|"
+        r"transfer(?:ring)?|mov(?:e|ing))\b|"
+        r"\b(?:seed (?:words?|phrase)|recovery (?:words?|phrase|seed)|mnemonic|"
+        r"private keys?|password|passphrase|"
+        r"pairing (?:token|code)|access token|api key|account number|iban|"
+        r"home address|email address|phone number|(?:full|raw|unredacted) logs?|dm)\b",
+        text,
+        re.I,
+    ):
+        return False
+    return True
 
 
 def _markdown_literal(text: str) -> str:
@@ -574,7 +671,7 @@ class PublicContextService:
                     ),
                 )
             diagnostic = "validation_failed"
-            if decision.action == "clarification":
+            if decision.action == "clarification" and request.audience != "staff_only":
                 return _silence(
                     "clarification_suppressed", model_called=True, usage=usage
                 )
@@ -603,10 +700,27 @@ class PublicContextService:
             if decision.action == "note" and not decision.source_ids:
                 diagnostic = "missing_note_citation"
                 raise ValueError("factual note needs evidence")
-            if _question_only(text):
+            if decision.action == "clarification":
+                diagnostic = "invalid_clarification"
+                if decision.source_ids or not _staff_clarification(text):
+                    raise ValueError("clarification must ask one non-sensitive detail")
+            elif _question_only(text):
                 return _silence(
                     "clarification_suppressed", model_called=True, usage=usage
                 )
+            elif request.audience == "staff_only" and any(
+                mark in text for mark in "?？؟"
+            ):
+                # A supported safety/correction note may end with one question;
+                # its factual prefix is not a bypass for a disguised procedure.
+                question = re.split(r"(?<=[.!。！])\s+", text)[-1]
+                diagnostic = "invalid_clarification"
+                if (
+                    sum(text.count(mark) for mark in "?？؟") != 1
+                    or not text.endswith(("?", "？", "؟"))
+                    or not _staff_clarification(question)
+                ):
+                    raise ValueError("note ends with an invalid clarification")
             diagnostic = "rendering_failed"
             links = []
             guide_links = _guide_reference_links(

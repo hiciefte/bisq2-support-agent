@@ -287,6 +287,7 @@ def bindings(
                 "deployment-plan-v3",
                 "deployment-plan-v4",
                 "deployment-plan-v5",
+                "deployment-plan-v6",
             },
             "effect_plan_version",
         )

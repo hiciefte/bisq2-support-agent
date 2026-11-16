@@ -178,6 +178,42 @@ already returned to its original running state; preserve the recorded attempt
 and reconcile without replay. The six held jobs, scheduler command/crontab,
 Prometheus runtime configuration, and unrelated services remain preserved.
 
+### Publish the fixed Staff watchdog source and alert
+
+`--include-staff-pilot-monitoring` selects `deployment-plan-v6` and
+`deployment-approval-v6`, kind `selective-api-web-with-staff-monitoring-v1`.
+This capability requires an API source change and exactly pins the two Staff
+watchdog Python files, `docker/prometheus/alert_rules.yml`, and
+`docker/prometheus/tests/staff_pilot_watchdog.test.yml`. The shared alert file
+must preserve every prior byte and append only the reviewed
+`staff_pilot_watchdog` group. A fixed digest identifies that exact addition;
+other appended rules or modified expressions require a separately reviewed
+capability change. Existing v1–v5 capabilities do not admit these files.
+
+A separate `preserved_retention_sha256` map binds unchanged heartbeat,
+privacy-retention rule test, and monitoring-validator bytes in both revisions.
+Changed controller files require `--include-deployment-tooling` and its existing
+exact pin map. Combining this capability with retention publication, carried
+heap repair or runner substitutions is refused. It adds no generic script or
+configuration exception.
+
+The host repeats the source comparison and approval checks before effects.
+Publication uses the existing journal, backups/restores, exact image-consumer
+approval (including the relay when it shares the API image), smoke and quality
+gates. It retains the monitoring baseline, canonical backup process/reload
+proofs, one validated Prometheus HUP and ordinary heartbeat observation described
+above. Unlike v5 it never writes the unchanged heartbeat: its bytes and original
+bind inode remain preserved. The actual loaded rules must include the preserved
+privacy rules and the exact Staff expression, critical/monitoring labels and
+two-minute duration. Missing loaded coverage fails publication, with no retry.
+
+This publishes source and alert rules only. It neither installs nor arms host
+units or the expectation metric, binds a pilot descriptor, enables generation,
+or grants conversation reads. Follow the separately reviewed
+[Staff watchdog lifecycle](staff-pilot-watchdog.md) for installation acceptance,
+absolute cutoff, cap, health and finalization. A source-publication receipt is
+not a commissioning or pilot-activation receipt.
+
 ## Protected profile and explicit approval
 
 `scripts/lib/deployment_protocol.py` is the shared producer/consumer contract.

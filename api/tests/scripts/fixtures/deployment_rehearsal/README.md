@@ -38,3 +38,14 @@ The standalone stdlib runner needs Git, Bash, flock, jq, OpenSSL and Python. Its
 Use separate output directories for `success`, `preflight_refusal` and
 `lost_smoke` scenarios. Do not reuse or mutate a failed operation to obtain a
 passing result.
+
+The `staff_monitoring_success` case exercises v6 through those real entrypoints,
+including separate Staff/preserved-retention approval pins, both canonical
+backup process checkpoints, one modeled Prometheus reload, required loaded Staff
+and privacy rules, and unchanged heartbeat bytes/inode/mtime. Continuation of a
+completed operation performs no new effects. `staff_monitoring_rule_missing`
+omits the Staff rule from modeled Prometheus readback: publication must fail,
+leave the scheduler paused, preserve the attempted phase, and refuse replay of
+the HUP, switches or modeled smoke calls. Read-only reconciliation remains
+available. Neither scenario installs or arms host watchdog units; these fixtures
+do not establish live commissioning, actual container recovery or semantic quality.

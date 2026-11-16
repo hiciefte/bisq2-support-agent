@@ -2,7 +2,9 @@
 
 import asyncio
 import json
-from datetime import datetime, timezone
+import sqlite3
+from contextlib import closing
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace as NS
 from unittest.mock import AsyncMock, Mock
 
@@ -1156,3 +1158,119 @@ async def test_rejected_model_output_retains_only_bounded_validation_code(runtim
     assert case.channel_metadata["validation_diagnostic"] == "invalid_json"
     assert "SECRET-RAW-INVALID-MODEL-OUTPUT" not in json.dumps(case.channel_metadata)
     bundle.sender.assert_not_awaited()
+
+
+def clarification_response():
+    return NS(
+        content=json.dumps(
+            {
+                "action": "clarification",
+                "text": "What status does the trade screen show?",
+                "source_ids": [],
+                "reason": "missing_trade_status",
+            }
+        ),
+        usage={"total_tokens": 25},
+    )
+
+
+@pytest.mark.asyncio
+async def test_staff_clarification_reuses_trial_reservation_thread_and_frozen_incident(
+    runtime_case,
+):
+    bundle = runtime_case
+    now = datetime.now(timezone.utc)
+    bundle.runtime.settings.MATRIX_CONTEXT_TRIAL_ID = "synthetic-clarification"
+    bundle.runtime.settings.MATRIX_CONTEXT_TRIAL_START_AT = (
+        now - timedelta(minutes=1)
+    ).isoformat()
+    bundle.runtime.settings.MATRIX_CONTEXT_TRIAL_END_AT = (
+        now + timedelta(hours=1)
+    ).isoformat()
+    bundle.runtime.settings.MATRIX_CONTEXT_TRIAL_MAX_CASES = 2
+    bundle.engine = MatrixContextRuntime(bundle.runtime)
+    bundle.llm.invoke.return_value = clarification_response()
+    case = await run(bundle)
+    assert case.channel_metadata["model_decision"]["action"] == "clarification"
+    assert case.channel_metadata["context_status"] == "delivered"
+    assert case.channel_metadata["model_called"] is True
+    assert case.channel_metadata["model_call_status"] == "completed"
+    assert case.channel_metadata["model_usage"] == {"total_tokens": 25}
+    assert case.channel_metadata["staff_note_event_id"] == "$staff-note"
+    assert (
+        bundle.sender.call_args_list[1].kwargs["thread_root_event_id"] == "$staff-root"
+    )
+    assert case.sources == []
+    frozen = case.channel_metadata["generation_version"]
+    followup = bundle.incoming.model_copy(
+        update={
+            "message_id": "$followup",
+            "question": "The status is waiting for payment.",
+            "channel_metadata": {
+                "room_id": SOURCE_ROOM,
+                "reply_to_event_id": "$source",
+            },
+        }
+    )
+    await bundle.engine.process(followup, bundle.channel)
+    await bundle.engine.drain()
+    saved = await saved_case(bundle)
+    assert saved.channel_metadata["generation_version"] == frozen
+    assert saved.channel_metadata["incident_late_meaningful_update"] is True
+    bundle.llm.invoke.assert_called_once()
+    assert bundle.sender.await_count == 2
+    with closing(sqlite3.connect(bundle.repository.db_path)) as db:
+        assert (
+            db.execute("SELECT COUNT(*) FROM matrix_context_trial_cases").fetchone()[0]
+            == 1
+        )
+    no_public_delivery(bundle)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["staff_help", "source_edit", "late_update"])
+async def test_staff_clarification_keeps_post_generation_publication_guards(
+    runtime_case, monkeypatch, change
+):
+    bundle = runtime_case
+    bundle.llm.invoke.return_value = clarification_response()
+    if change == "staff_help":
+        staff_reply = NS(
+            event_id="$staff-question",
+            sender="@staff:example.org",
+            body="What status is shown in the trade screen?",
+            server_timestamp=int(datetime.now(timezone.utc).timestamp() * 1000),
+            source={
+                "content": {"m.relates_to": {"m.in_reply_to": {"event_id": "$source"}}}
+            },
+        )
+        bundle.client.room_context.side_effect = [
+            context(),
+            context(after=[staff_reply]),
+        ]
+    if change == "source_edit":
+        bundle.client.room_context.side_effect = [
+            context(),
+            context(body="An edited support request."),
+        ]
+    if change == "late_update":
+        original = ContextReviewStore.update
+
+        async def update(store, case_id, **kwargs):
+            await original(store, case_id, **kwargs)
+            if kwargs.get("status") == "awaiting_review":
+                await original(store, case_id, incident_late_meaningful_update=True)
+
+        monkeypatch.setattr(ContextReviewStore, "update", update)
+    case = await run(bundle)
+    assert case.channel_metadata["model_decision"]["action"] == "clarification"
+    assert case.channel_metadata["context_status"] == "deferred"
+    expected = {
+        "staff_help": "staff_active",
+        "source_edit": "source_changed_or_redacted",
+        "late_update": "incident_updated_after_generation",
+    }
+    assert case.channel_metadata["context_reason"] == expected[change]
+    bundle.llm.invoke.assert_called_once()
+    bundle.sender.assert_not_awaited()
+    no_public_delivery(bundle)
