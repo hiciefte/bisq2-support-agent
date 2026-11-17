@@ -40,7 +40,10 @@ class RequestGateDecision(BaseModel):
     material_change: bool
     request_resolved: bool = False
     resolution_event_id: str | None = None
-    reason: str = Field(min_length=1, max_length=500)
+    # The explanation never controls event membership or delivery. Preserve the
+    # model's bounded output rather than rejecting an otherwise valid decision
+    # for a cosmetic character limit.
+    reason: str = Field(min_length=1)
 
 
 class RequestGateError(ValueError):

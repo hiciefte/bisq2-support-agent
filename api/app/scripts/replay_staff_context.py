@@ -25,6 +25,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from app.channels.staff_assist.context_conversation import (
+    MAX_EXCHANGE_TURNS,
     ConversationTurn,
     StaffConversationCoordinator,
     conversation_turn,
@@ -886,21 +887,10 @@ def _reference_category(case_ids: list[int], references: dict[str, Any]) -> str:
     return "unassessed"
 
 
-async def replay(
-    plan: dict[str, Any], inputs: dict[str, Any], output: Path, calls: ReplayCalls
-) -> dict[str, Any]:
-    repository = EscalationRepository(calls.store.db_path)
-    await repository.initialize()
-    service = EscalationService(
-        repository, None, None, None, SimpleNamespace(ESCALATION_CLAIM_TTL_MINUTES=30)
-    )
-    coordinator = StaffConversationCoordinator(
-        service,
-        calls.store.trial.trial_id,
-        first_response_delay_seconds=plan["first_response_delay_seconds"],
-    )
+def ordered_turns(
+    inputs: dict[str, Any], delay_ms: int
+) -> tuple[list[ConversationTurn], int, list[dict[str, Any]]]:
     sessions = inputs["index"]["sessions"]
-    delay_ms = int(plan["first_response_delay_seconds"] * 1000)
     end_ms = max(session["last_anchor_ms"] for session in sessions) + delay_ms
     event_map, limitations = {}, []
     for session in sessions:
@@ -915,11 +905,59 @@ async def replay(
         event_map.values(),
         key=lambda turn: (turn.timestamp_ms, turn.room_id, turn.event_id),
     )
+    return ordered, end_ms, limitations
+
+
+def hydrate_recent(
+    coordinator: StaffConversationCoordinator, consumed: list[ConversationTurn]
+) -> None:
+    """Restore only bounded in-memory neighbors; never replay case transitions."""
+    for turn in consumed:
+        if turn.is_bot:
+            continue
+        recent = coordinator._recent.setdefault(turn.room_id, [])
+        if not any(item.event_id == turn.event_id for item in recent):
+            recent.append(turn)
+            del recent[:-MAX_EXCHANGE_TURNS]
+
+
+async def replay(
+    plan: dict[str, Any],
+    inputs: dict[str, Any],
+    output: Path,
+    calls: ReplayCalls,
+    *,
+    continuation: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    repository = EscalationRepository(calls.store.db_path)
+    await repository.initialize()
+    service = EscalationService(
+        repository, None, None, None, SimpleNamespace(ESCALATION_CLAIM_TTL_MINUTES=30)
+    )
+    coordinator = StaffConversationCoordinator(
+        service,
+        calls.store.trial.trial_id,
+        first_response_delay_seconds=plan["first_response_delay_seconds"],
+    )
+    sessions = inputs["index"]["sessions"]
+    delay_ms = int(plan["first_response_delay_seconds"] * 1000)
+    ordered, end_ms, limitations = ordered_turns(inputs, delay_ms)
     formed, generations, gates, capacity_limited = [], [], [], []
     skipped_versions: set[tuple[int, str]] = set()
     last_time = ordered[0].timestamp_ms if ordered else 0
     stopped = None
     processed_event_count = 0
+    if continuation is not None:
+        processed_event_count = continuation["processed_event_count"]
+        last_time = continuation["last_time"]
+        formed = list(continuation["formed_cases"])
+        generations = list(continuation["drafts"])
+        gates = list(continuation["gates"])
+        capacity_limited = list(continuation.get("capacity_limited_snapshots", []))
+        hydrate_recent(coordinator, ordered[:processed_event_count])
+    skipped_versions.update(
+        (row["case_id"], row["snapshot_version"]) for row in capacity_limited
+    )
 
     async def run_due(until: int) -> None:
         nonlocal last_time, stopped
@@ -1051,7 +1089,7 @@ async def replay(
             last_time = virtual
 
     try:
-        position = 0
+        position = processed_event_count
         while position < len(ordered):
             timestamp = ordered[position].timestamp_ms
             await run_due(timestamp - 1)
