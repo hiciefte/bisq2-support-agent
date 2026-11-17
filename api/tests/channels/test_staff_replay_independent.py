@@ -81,7 +81,10 @@ class FakeCalls:
     """An in-process test adapter with no provider or Matrix dependency."""
 
     def __init__(self, path, *, fail=False):
-        self.store = NS(db_path=str(path), trial=NS(trial_id="synthetic-replay"))
+        self.store = NS(
+            db_path=str(path),
+            trial=NS(trial_id="synthetic-replay", reason=lambda: None),
+        )
         self.calls = 0
         self.requests = []
         self.fail = fail
@@ -93,7 +96,13 @@ class FakeCalls:
             self.requests.append((kind, virtual_time_ms, payload))
             if self.fail:
                 raise RuntimeError("Synthetic uncertain provider outcome")
-            if kind == "gate":
+            if "candidate_event_ids" in payload:
+                body = {
+                    "relation": "same_request",
+                    "new_request_event_ids": [],
+                    "reason": "The requester supplies a follow-up to the same issue.",
+                }
+            elif kind == "gate":
                 staff_seen = any(row["role"] == "staff" for row in payload["messages"])
                 body = {
                     "category": (
@@ -124,7 +133,7 @@ class FakeCalls:
                 usage={"input_tokens": 10, "output_tokens": 10},
             )
 
-        return NS(invoke=invoke, reason=None)
+        return NS(invoke=invoke, reason=None, before_call=None, started=True)
 
 
 def plan(tmp_path):
@@ -164,6 +173,33 @@ async def test_model_silence_is_a_note_generation_but_not_a_rendered_reply(tmp_p
     assert report["after"]["limitation_opening_share"] is None
     assert report["after"]["staff_verdicts"] is None
     assert report["provider_invocations_started_or_uncertain"] == calls.calls
+
+
+@pytest.mark.asyncio
+async def test_final_quiet_deadline_drains_same_request_admission_and_update(tmp_path):
+    data = inputs()
+    for event_id in ("$staff", "$edit"):
+        del data["events"][(ROOM, event_id)]
+    calls = FakeCalls(tmp_path / "replay.db")
+    report = await replay(plan(tmp_path), data, tmp_path, calls)
+    assert report["stopped_reason"] is None
+    assert [kind for kind, _, _ in calls.requests] == [
+        "gate",
+        "note",
+        "gate",
+        "gate",
+        "update",
+    ]
+    assert [at for _, at, _ in calls.requests[-3:]] == [50000, 50000, 50000]
+    with closing(sqlite3.connect(calls.store.db_path)) as db:
+        rows = db.execute("SELECT channel_metadata FROM escalations").fetchall()
+    assert len(rows) == 1
+    metadata = json.loads(rows[0][0])
+    assert metadata["conversation_generation_count"] == 2
+    assert (
+        metadata["conversation_admission_history"][0]["decision"]["relation"]
+        == "same_request"
+    )
 
 
 @pytest.mark.asyncio

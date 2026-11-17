@@ -10,7 +10,10 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from app.channels.models import SendResult
 from app.channels.plugins.matrix.message_handler import MatrixMessageHandler
-from app.channels.staff_assist.context_conversation import ConversationTurn
+from app.channels.staff_assist.context_conversation import (
+    ConversationTurn,
+    conversation_turn,
+)
 from app.channels.staff_assist.context_runtime import ContextReviewStore
 
 from tests.channels.test_context_conversation_runtime import (
@@ -41,13 +44,7 @@ async def runtime_case(tmp_path):
 
 
 def message(bundle, source):
-    turn = ConversationTurn(
-        SOURCE_ROOM,
-        source.event_id,
-        source.sender,
-        source.server_timestamp,
-        source.body,
-    )
+    turn = conversation_turn(SOURCE_ROOM, source, is_staff=False)
     return bundle.incoming.model_copy(
         update={
             "message_id": turn.event_id,
@@ -217,10 +214,15 @@ async def test_final_delivery_lock_orders_concurrent_intake(runtime_case):
 
     bundle.sender.side_effect = send
     update_task = asyncio.create_task(
-        incoming(bundle, event(bundle, "$facts", "The trade period expired"))
+        incoming(
+            bundle,
+            event(bundle, "$facts", "The trade period expired", relation="$source"),
+        )
     )
     await asyncio.wait_for(entered.wait(), timeout=3)
-    late = event(bundle, "$late", "A new confirmation just appeared")
+    late = event(
+        bundle, "$late", "A new confirmation just appeared", relation="$source"
+    )
     intake = asyncio.create_task(
         bundle.engine.process(message(bundle, late), bundle.channel)
     )

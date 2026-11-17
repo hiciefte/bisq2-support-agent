@@ -14,6 +14,7 @@ from app.channels.staff_assist.context_conversation import (
     selected_staff_request,
 )
 from app.channels.staff_assist.context_gate import (
+    RequestAdmissionDecision,
     RequestGateDecision,
     RequestGateError,
     RequestGateService,
@@ -366,8 +367,19 @@ async def test_resolved_request_facts_do_not_leak_into_new_request(coordinator):
     second = await coordinator.ingest(
         turn("$new", "How can I change the display language?", 20000), now_ms=20000
     )
-    assert second.created and second.case_id != first.case_id
-    current = await coordinator.snapshot(second.case_id, now_ms=30000)
+    assert not second.created and second.case_id == first.case_id
+    pending = await coordinator.snapshot(first.case_id, now_ms=30000)
+    assert await coordinator.claim(pending)
+    admitted = await coordinator.record_admission(
+        pending,
+        RequestAdmissionDecision(
+            relation="new_request",
+            new_request_event_ids=["$new"],
+            reason="Distinct language question",
+        ),
+    )
+    await coordinator.finish(pending)
+    current = await coordinator.snapshot(admitted.case_id, now_ms=30000)
     assert [item.event_id for item in current.turns if item.sender_id == REQUESTER] == [
         "$new"
     ]
@@ -396,7 +408,12 @@ async def test_staff_answer_keeps_request_open_but_suppresses_further_drafts(
         snapshot, decision(["$one", "$staff"], category="already_answered")
     )
     followup = await coordinator.ingest(
-        turn("$two", "Version 2.1.9; the startup error still happens", 12000),
+        turn(
+            "$two",
+            "Version 2.1.9; the startup error still happens",
+            12000,
+            reply_to_event_id="$staff",
+        ),
         now_ms=12000,
     )
     assert followup.case_id == first.case_id and not followup.created

@@ -10,6 +10,8 @@ import asyncio
 import hashlib
 import json
 import re
+import sqlite3
+from contextlib import closing
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
@@ -23,7 +25,10 @@ from app.channels.staff_assist.context_incidents import (
     new_issue,
 )
 from app.channels.staff_assist.public_context import RoomMessage
-from app.channels.staff_assist.staff_context import StaffContextRequest
+from app.channels.staff_assist.staff_context import (
+    StaffContextRequest,
+    StaffConversationCoverage,
+)
 from app.models.escalation import EscalationCreate
 
 WORKFLOW_VERSION = 3
@@ -36,6 +41,13 @@ def _digest(value: Any) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, ensure_ascii=False).encode()
     ).hexdigest()
+
+
+def obvious_acknowledgement(text: str) -> bool:
+    """A yes/no or action confirmation can answer a diagnostic question."""
+    return gratitude_only(text) or bool(
+        re.fullmatch(r"(?:ok(?:ay)?|great)[.! ]*", text.strip(), re.I)
+    )
 
 
 @dataclass(frozen=True)
@@ -166,17 +178,52 @@ class RequestSnapshot:
     speaker_aliases: dict[str, str] = field(default_factory=dict)
     request_started_at_ms: int = 0
     staff_replied: bool = False
+    admission_event_ids: tuple[str, ...] = ()
+    prior_request: dict[str, Any] | None = None
 
     def should_draft(self, decision: Any) -> bool:
         """A withheld first draft can use the one bounded replacement slot."""
         return (
-            decision.category == "unanswered_support_request"
+            self.kind != "admission"
+            and decision.category == "unanswered_support_request"
             and not self.staff_replied
             and not self.staff_reply_event_ids(decision.selected_event_ids)
             and (
                 self.kind == "note"
-                or decision.material_change
+                or (decision.material_change and self.has_new_requester_facts)
                 or self.replacement_allowed
+            )
+        )
+
+    @property
+    def has_new_requester_facts(self) -> bool:
+        previous_ids = {
+            message["event_id"]
+            for message in (self.previous_generated_snapshot or {}).get("messages", [])
+            if message.get("role") == "requester"
+        }
+        return any(
+            turn.sender_id == self.requester_id
+            and not turn.is_staff
+            and turn.event_id not in previous_ids
+            and not obvious_acknowledgement(turn.text)
+            for turn in self.turns
+        )
+
+    def valid_new_request_evidence(self, event_ids: list[str]) -> bool:
+        selected = set(event_ids)
+        return (
+            bool(selected)
+            and len(selected) == len(event_ids)
+            and selected <= set(self.admission_event_ids)
+            and any(
+                turn.event_id in selected
+                and turn.sender_id == self.requester_id
+                and not turn.is_staff
+                and not turn.is_bot
+                and bool(turn.text.strip())
+                and not acknowledgement_only(turn.text)
+                for turn in self.turns
             )
         )
 
@@ -219,9 +266,10 @@ class RequestSnapshot:
 
     @property
     def version(self) -> str:
-        return _digest(
-            [self.case_id, self.revision, [asdict(turn) for turn in self.turns]]
-        )
+        value = [self.case_id, self.revision, [asdict(turn) for turn in self.turns]]
+        if self.kind == "admission":
+            value = ["request-admission-v1", *value, self.prior_request]
+        return _digest(value)
 
     @property
     def anchor(self) -> ConversationTurn:
@@ -257,11 +305,15 @@ class RequestSnapshot:
                     "thread_root": turn.thread_root_event_id,
                 }
             )
-        return {
+        payload = {
             "messages": messages,
             "previous_generated_request": self.previous_generated_snapshot,
             "omitted_event_ids": list(self.omitted_event_ids),
         }
+        if self.kind == "admission":
+            payload["candidate_event_ids"] = list(self.admission_event_ids)
+            payload["prior_request"] = self.prior_request
+        return payload
 
 
 def selected_staff_request(
@@ -299,6 +351,22 @@ def selected_staff_request(
         question="\n".join(own),
         recent_messages=messages,
         evidence=evidence,
+        conversation_coverage=StaffConversationCoverage(
+            status="bounded_observed",
+            missing_parent_event_ids=sorted(
+                {
+                    target
+                    for turn in turns
+                    for target in (turn.reply_to_event_id, turn.thread_root_event_id)
+                    if target and target not in selected
+                }
+            )[:256],
+            omitted_event_ids=list(snapshot.omitted_event_ids)[:256],
+            attachment_event_ids=[turn.event_id for turn in turns if turn.non_text][
+                :256
+            ],
+            unselected_event_count=len(snapshot.turns) - len(turns),
+        ),
         high_risk_action=any(
             re.search(pattern, "\n".join(own), re.I) for pattern in _HIGH_RISK_PATTERNS
         ),
@@ -367,7 +435,11 @@ class StaffConversationCoordinator:
             known_member = any(
                 any(
                     item["event_id"] == turn.event_id
-                    for item in metadata.get("incident_messages", [])
+                    for item in [
+                        *metadata.get("incident_messages", []),
+                        *metadata.get("conversation_admission_pending", []),
+                        *metadata.get("conversation_admission_observed", []),
+                    ]
                 )
                 for _, metadata in states
             )
@@ -394,7 +466,10 @@ class StaffConversationCoordinator:
             )
             linked = []
             for row, metadata in states:
-                members = metadata.get("incident_messages", [])
+                members = [
+                    *metadata.get("incident_messages", []),
+                    *metadata.get("conversation_admission_pending", []),
+                ]
                 found = next(
                     (item for item in members if item["event_id"] == target), None
                 )
@@ -406,21 +481,48 @@ class StaffConversationCoordinator:
                 (row, metadata)
                 for row, metadata in states
                 if row["user_id"] == turn.sender_id
-                and row["status"] in {"pending", "in_review"}
-                and not metadata.get("conversation_resolved")
             ]
-            chosen = (
-                linked[-1]
-                if linked and (turn.replaces_event_id or not new_issue(turn.text))
-                else own[-1] if own and not new_issue(turn.text) else None
-            )
-            if chosen is None and acknowledgement_only(turn.text):
-                previous = [
-                    (row, metadata)
-                    for row, metadata in states
-                    if row["user_id"] == turn.sender_id
-                ]
-                chosen = previous[-1] if previous else None
+            chosen = linked[-1] if linked else own[-1] if own else None
+            admission = False
+            if chosen is not None:
+                row, metadata = chosen
+                pending_ids = {
+                    item["event_id"]
+                    for item in metadata.get("conversation_admission_pending", [])
+                }
+                pending_target = target in pending_ids
+                prior_finished = (
+                    row["status"] not in {"pending", "in_review"}
+                    or metadata.get("conversation_resolved")
+                    or metadata.get("conversation_staff_replied")
+                    or metadata.get("conversation_staff_replied_after_draft")
+                    or metadata.get("conversation_generation_count", 0) >= 1
+                )
+                # Native chains, edits and acknowledgements remain with their
+                # known request. Unlinked new questions require semantic proof.
+                admission = (
+                    pending_target
+                    or bool(
+                        not linked
+                        and metadata.get("conversation_admission_pending")
+                        and turn.sender_id == row["user_id"]
+                        and not turn.is_staff
+                    )
+                    or bool(
+                        allow_new
+                        and not linked
+                        and not turn.is_staff
+                        and not turn.replaces_event_id
+                        and not turn.redacts_event_id
+                        and not acknowledgement_only(turn.text)
+                        and not metadata.get("conversation_delivery_uncertain")
+                        and (
+                            prior_finished
+                            or metadata.get("conversation_admission_pending")
+                            or new_issue(turn.text)
+                        )
+                    )
+                )
             created = False
             if (
                 allow_new
@@ -473,9 +575,9 @@ class StaffConversationCoordinator:
                 created = True
             affected = []
             for row, metadata in states:
-                if row["status"] not in {"pending", "in_review"}:
-                    continue
                 is_chosen = chosen is not None and row["id"] == chosen[0]["id"]
+                if row["status"] not in {"pending", "in_review"} and not is_chosen:
+                    continue
                 if metadata.get("conversation_resolved") and not is_chosen:
                     continue
                 exchange = metadata.get("conversation_exchange", [])
@@ -486,7 +588,10 @@ class StaffConversationCoordinator:
                 elif not any(item["event_id"] == turn.event_id for item in exchange):
                     exchange = [*exchange, asdict(turn)]
                 members = metadata.get("incident_messages", [])
-                if is_chosen:
+                pending = list(metadata.get("conversation_admission_pending", []))
+                if is_chosen and admission:
+                    pending.append(asdict(turn))
+                elif is_chosen:
                     members = [*members, asdict(turn)]
                 # A Staff reply can arrive before its requester event. Reconcile
                 # captured native relations now, before optional context is trimmed,
@@ -527,24 +632,27 @@ class StaffConversationCoordinator:
                 )
                 for item in exchange:
                     aliases.setdefault(item["sender_id"], f"participant-{len(aliases)}")
-                changes = {
+                changes: dict[str, Any] = {
                     "conversation_exchange": exchange,
                     "incident_messages": members,
                     "conversation_speaker_aliases": aliases,
                 }
-                obvious_ack = (
-                    (
-                        gratitude_only(turn.text)
-                        or bool(
-                            re.fullmatch(
-                                r"(?:ok(?:ay)?|great)[.! ]*", turn.text.strip(), re.I
-                            )
-                        )
+                if is_chosen and admission:
+                    affected.append(row["id"])
+                elif (
+                    pending
+                    and metadata.get("conversation_admission_running_revision")
+                    is not None
+                ):
+                    changes["conversation_admission_revision"] = (
+                        metadata.get("conversation_admission_revision", 0) + 1
                     )
+                obvious_ack = (
+                    obvious_acknowledgement(turn.text)
                     and not turn.replaces_event_id
                     and not turn.redacts_event_id
                 )
-                changed = (is_chosen and not obvious_ack) or (
+                changed = (is_chosen and not admission and not obvious_ack) or (
                     turn.sender_id != row["user_id"]
                     and not obvious_ack
                     and metadata.get("conversation_running_revision") is not None
@@ -566,12 +674,19 @@ class StaffConversationCoordinator:
                         metadata.get("conversation_revision", 0) + 1
                     )
                     affected.append(row["id"])
-                if is_chosen and turn.sender_id == row["user_id"] and not turn.is_staff:
+                if (
+                    is_chosen
+                    and not admission
+                    and turn.sender_id == row["user_id"]
+                    and not turn.is_staff
+                ):
                     changes["conversation_last_requester_at_ms"] = max(
                         turn.timestamp_ms,
                         metadata.get("conversation_last_requester_at_ms", 0),
                     )
                 await self._change(row["id"], **changes)
+                if is_chosen and admission:
+                    await self._queue_admission(row["id"], turn)
             return IntakeResult(
                 chosen[0]["id"] if chosen else None,
                 created,
@@ -584,6 +699,8 @@ class StaffConversationCoordinator:
         if case is None:
             raise ValueError("Request no longer exists")
         metadata = case.channel_metadata or {}
+        if metadata.get("conversation_admission_pending"):
+            return self._admission_snapshot(case, metadata, now_ms=now_ms)
         raw = [
             ConversationTurn.from_dict(item)
             for item in metadata.get("conversation_exchange", [])
@@ -667,10 +784,366 @@ class StaffConversationCoordinator:
             ),
         )
 
+    async def _queue_admission(self, case_id: int, turn: ConversationTurn) -> None:
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("BEGIN IMMEDIATE")
+            row = await (
+                await db.execute(
+                    "SELECT channel_metadata, user_id FROM escalations WHERE id=?",
+                    (case_id,),
+                )
+            ).fetchone()
+            metadata = json.loads(row[0] or "{}")
+            pending = metadata.get("conversation_admission_pending", [])
+            observed = [*pending, *metadata.get("conversation_admission_observed", [])]
+            if any(item["event_id"] == turn.event_id for item in observed):
+                return
+            metadata["conversation_admission_pending"] = [*pending, asdict(turn)]
+            metadata["conversation_admission_revision"] = (
+                metadata.get("conversation_admission_revision", 0) + 1
+            )
+            if turn.sender_id == row[1] and not turn.is_staff:
+                metadata["conversation_admission_last_requester_at_ms"] = max(
+                    turn.timestamp_ms,
+                    metadata.get("conversation_admission_last_requester_at_ms", 0),
+                )
+            await db.execute(
+                "UPDATE escalations SET channel_metadata=? WHERE id=?",
+                (json.dumps(metadata), case_id),
+            )
+            await db.commit()
+
+    def admission_call_guard(self, snapshot: RequestSnapshot) -> str | None:
+        """Recheck a claimed admission at the synchronous provider boundary."""
+        with closing(sqlite3.connect(self.db_path)) as db:
+            row = db.execute(
+                "SELECT channel_metadata FROM escalations WHERE id=?",
+                (snapshot.case_id,),
+            ).fetchone()
+        metadata = json.loads(row[0] or "{}") if row else {}
+        if (
+            not metadata.get("conversation_admission_pending")
+            or metadata.get("conversation_admission_revision") != snapshot.revision
+            or metadata.get("conversation_admission_running_revision")
+            != snapshot.revision
+            or metadata.get("conversation_admission_uncertain")
+            or metadata.get("conversation_delivery_uncertain")
+        ):
+            return "request_admission_changed"
+        return None
+
+    def _admission_snapshot(
+        self, case: Any, metadata: dict[str, Any], *, now_ms: int
+    ) -> RequestSnapshot:
+        pending = [
+            ConversationTurn.from_dict(item)
+            for item in metadata.get("conversation_admission_pending", [])
+            if item["timestamp_ms"] <= now_ms
+        ]
+        effective = effective_turns(pending)
+        own = [
+            turn
+            for turn in effective
+            if turn.sender_id == case.user_id and not turn.is_staff
+        ]
+        # Edits replace authored text, not the time the request first existed.
+        # Keep assistance that arrived between the original and its correction.
+        own_source_ids = {
+            event_id
+            for turn in own
+            for event_id in (turn.event_id, turn.replaces_event_id)
+            if event_id
+        }
+        start = min(
+            (turn.timestamp_ms for turn in pending if turn.event_id in own_source_ids),
+            default=now_ms,
+        )
+        pending_ids = {turn.event_id for turn in effective}
+        neighbors = effective_turns(
+            [
+                ConversationTurn.from_dict(item)
+                for item in metadata.get("conversation_exchange", [])
+                if start <= item["timestamp_ms"] <= now_ms
+                and item["sender_id"] != case.user_id
+            ]
+        )
+        selected = [
+            *effective,
+            *(turn for turn in neighbors if turn.event_id not in pending_ids),
+        ]
+        selected.sort(key=lambda turn: (turn.timestamp_ms, turn.event_id))
+        prior = [
+            ConversationTurn.from_dict(item)
+            for item in metadata.get("incident_messages", [])
+            if item["timestamp_ms"] <= now_ms
+        ]
+        prior_payload = {
+            "case_id": case.id,
+            "status": case.status.value,
+            "staff_replied": bool(
+                metadata.get("conversation_staff_replied")
+                or metadata.get("conversation_staff_replied_after_draft")
+            ),
+            "generation_count": metadata.get("conversation_generation_count", 0),
+            "messages": [
+                {
+                    "event_id": turn.event_id,
+                    "role": (
+                        "requester"
+                        if turn.sender_id == case.user_id
+                        else "staff" if turn.is_staff else "participant"
+                    ),
+                    "text": turn.text,
+                }
+                for turn in effective_turns(prior)
+            ],
+            "unassessed_candidate_event_ids": [
+                item["event_id"]
+                for item in metadata.get("conversation_admission_observed", [])
+            ],
+        }
+        overflow = (
+            len(selected) > MAX_EXCHANGE_TURNS
+            or sum(len(turn.text.encode("utf-8")) for turn in [*selected, *prior])
+            > MAX_EXCHANGE_BYTES
+        )
+        return RequestSnapshot(
+            case_id=case.id,
+            room_id=metadata["room_id"],
+            requester_id=case.user_id,
+            revision=metadata.get("conversation_admission_revision", 0),
+            turns=tuple(selected),
+            last_requester_at_ms=metadata.get(
+                "conversation_admission_last_requester_at_ms", 0
+            ),
+            kind="admission",
+            overflow=overflow,
+            observed_at_ms=now_ms,
+            speaker_aliases=metadata.get("conversation_speaker_aliases", {}),
+            request_started_at_ms=start,
+            admission_event_ids=tuple(turn.event_id for turn in own),
+            prior_request=prior_payload,
+        )
+
+    async def _claim_admission(self, snapshot: RequestSnapshot) -> bool:
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("BEGIN IMMEDIATE")
+            row = await (
+                await db.execute(
+                    "SELECT channel_metadata FROM escalations WHERE id=?",
+                    (snapshot.case_id,),
+                )
+            ).fetchone()
+            metadata = json.loads(row[0] or "{}") if row else {}
+            if (
+                not metadata.get("conversation_admission_pending")
+                or metadata.get("conversation_admission_revision") != snapshot.revision
+                or metadata.get("conversation_admission_last_gate_revision", -1)
+                >= snapshot.revision
+                or metadata.get("conversation_admission_running_revision") is not None
+                or metadata.get("conversation_admission_uncertain")
+                or metadata.get("conversation_delivery_uncertain")
+                or metadata.get("conversation_running_revision") is not None
+            ):
+                return False
+            metadata["conversation_admission_running_revision"] = snapshot.revision
+            await db.execute(
+                "UPDATE escalations SET channel_metadata=? WHERE id=?",
+                (json.dumps(metadata), snapshot.case_id),
+            )
+            await db.commit()
+            return True
+
+    async def record_admission(
+        self,
+        snapshot: RequestSnapshot,
+        decision: Any = None,
+        *,
+        failure: dict[str, Any] | None = None,
+        usage: Any = None,
+    ) -> IntakeResult:
+        """Settle a claimed boundary once; promotion and parent receipt commit together."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("BEGIN IMMEDIATE")
+            row = await (
+                await db.execute(
+                    "SELECT channel_metadata FROM escalations WHERE id=?",
+                    (snapshot.case_id,),
+                )
+            ).fetchone()
+            metadata = json.loads(row[0] or "{}") if row else {}
+            history = list(metadata.get("conversation_admission_history", []))
+            if any(item["snapshot_version"] == snapshot.version for item in history):
+                return IntakeResult()
+            if (
+                metadata.get("conversation_admission_running_revision")
+                != snapshot.revision
+            ):
+                return IntakeResult()
+            current = (
+                metadata.get("conversation_admission_revision") == snapshot.revision
+                and not metadata.get("conversation_delivery_uncertain")
+                and not metadata.get("conversation_admission_uncertain")
+            )
+            receipt = {
+                "snapshot_version": snapshot.version,
+                "revision": snapshot.revision,
+                "candidate_event_ids": list(snapshot.admission_event_ids),
+                "decision": decision.model_dump() if decision else None,
+                "failure": failure,
+                "usage": usage,
+                "current_at_settlement": current,
+                "new_case_id": None,
+            }
+            new_case_id = None
+            if current:
+                pending = list(metadata.get("conversation_admission_pending", []))
+                if decision is not None and decision.relation == "new_request":
+                    selected_ids = set(decision.new_request_event_ids)
+                    known = {turn.event_id: turn for turn in snapshot.turns}
+                    if not snapshot.valid_new_request_evidence(
+                        decision.new_request_event_ids
+                    ):
+                        raise ValueError("invalid_admission_requester_evidence")
+                    # Preserve original events needed to project a selected edit.
+                    selected_ids.update(
+                        known[key].replaces_event_id
+                        for key in list(selected_ids)
+                        if known[key].replaces_event_id
+                    )
+                    members = [
+                        item
+                        for item in pending
+                        if item["event_id"] in selected_ids
+                        or item.get("replaces_event_id") in selected_ids
+                        or item.get("redacts_event_id") in selected_ids
+                    ]
+                    own = [known[key] for key in decision.new_request_event_ids]
+                    anchor = min(
+                        own, key=lambda turn: (turn.timestamp_ms, turn.event_id)
+                    )
+                    new_metadata: dict[str, Any] = {
+                        "response_kind": "public_context",
+                        "delivery_audience": "staff_room",
+                        "context_workflow_version": WORKFLOW_VERSION,
+                        "context_trial_id": self.trial_id,
+                        "room_id": snapshot.room_id,
+                        "source_event_id": anchor.event_id,
+                        "conversation_requester_id": snapshot.requester_id,
+                        "conversation_request_started_at_ms": min(
+                            item["timestamp_ms"] for item in members
+                        ),
+                        "conversation_revision": 1,
+                        "conversation_last_gate_revision": -1,
+                        "conversation_last_requester_at_ms": max(
+                            turn.timestamp_ms for turn in own
+                        ),
+                        "conversation_exchange": [
+                            asdict(turn)
+                            for turn in snapshot.turns
+                            if turn.sender_id != snapshot.requester_id
+                            or turn.event_id in selected_ids
+                        ]
+                        + [item for item in members if item["event_id"] not in known],
+                        "incident_messages": members,
+                        "conversation_speaker_aliases": dict(snapshot.speaker_aliases),
+                        "conversation_admitted_from_case_id": snapshot.case_id,
+                        "conversation_admission_snapshot_version": snapshot.version,
+                        "context_status": "preparing",
+                        "context_reason": "request_waiting",
+                        "model_called": False,
+                        "model_call_status": "not_started",
+                    }
+                    native_staff_ids = [
+                        turn.event_id
+                        for turn in snapshot.turns
+                        if turn.is_staff
+                        and not turn.is_bot
+                        and turn.timestamp_ms
+                        >= new_metadata["conversation_request_started_at_ms"]
+                        and (
+                            turn.reply_to_event_id in selected_ids
+                            or turn.thread_root_event_id in selected_ids
+                        )
+                    ]
+                    if native_staff_ids:
+                        new_metadata["conversation_staff_replied"] = True
+                        new_metadata["conversation_staff_reply_event_ids"] = (
+                            native_staff_ids
+                        )
+                    data = EscalationCreate(
+                        message_id="matrix-context:"
+                        + _digest([snapshot.room_id, anchor.event_id]),
+                        channel="matrix",
+                        user_id=snapshot.requester_id,
+                        username=None,
+                        question="\n".join(turn.text for turn in own)[:4000],
+                        ai_draft_answer="No Staff draft generated yet.",
+                        confidence_score=0,
+                        routing_action="needs_human",
+                        routing_reason="request_waiting",
+                        channel_metadata=new_metadata,
+                    )
+                    created = await self.service.repository.create_in_transaction(
+                        db, data
+                    )
+                    new_case_id = created.id
+                    receipt["new_case_id"] = new_case_id
+                    receipt["unassigned_candidate_event_ids"] = [
+                        item["event_id"]
+                        for item in pending
+                        if item["event_id"] not in selected_ids
+                    ]
+                elif decision is not None and decision.relation == "same_request":
+                    members = metadata.get("incident_messages", [])
+                    existing = {item["event_id"] for item in members}
+                    metadata["incident_messages"] = [
+                        *members,
+                        *(item for item in pending if item["event_id"] not in existing),
+                    ]
+                    metadata["conversation_revision"] = (
+                        metadata.get("conversation_revision", 0) + 1
+                    )
+                    metadata["conversation_last_requester_at_ms"] = metadata.get(
+                        "conversation_admission_last_requester_at_ms", 0
+                    )
+                metadata["conversation_admission_observed"] = [
+                    *metadata.get("conversation_admission_observed", []),
+                    *pending,
+                ]
+                metadata["conversation_admission_pending"] = []
+            history.append(receipt)
+            metadata["conversation_admission_history"] = history
+            metadata["conversation_admission_last_gate_revision"] = snapshot.revision
+            await db.execute(
+                "UPDATE escalations SET channel_metadata=? WHERE id=?",
+                (json.dumps(metadata), snapshot.case_id),
+            )
+            await db.commit()
+            return IntakeResult(
+                new_case_id,
+                new_case_id is not None,
+                True,
+                (new_case_id,) if new_case_id else (snapshot.case_id,),
+            )
+
     async def due(self, *, now_ms: int) -> list[RequestSnapshot]:
         result = []
         for row in await self._rows():
             metadata = json.loads(row["channel_metadata"] or "{}")
+            if metadata.get("conversation_admission_pending"):
+                if (
+                    not metadata.get("conversation_admission_uncertain")
+                    and not metadata.get("conversation_delivery_uncertain")
+                    and metadata.get("conversation_admission_running_revision") is None
+                    and metadata.get("conversation_admission_revision", 0)
+                    > metadata.get("conversation_admission_last_gate_revision", -1)
+                    and now_ms
+                    >= metadata.get("conversation_admission_last_requester_at_ms", 0)
+                    + self.delay_ms
+                ):
+                    result.append(await self.snapshot(row["id"], now_ms=now_ms))
+                continue
             if (
                 row["status"] not in {"pending", "in_review"}
                 or metadata.get("conversation_resolved")
@@ -704,6 +1177,8 @@ class StaffConversationCoordinator:
         return result
 
     async def claim(self, snapshot: RequestSnapshot) -> bool:
+        if snapshot.kind == "admission":
+            return await self._claim_admission(snapshot)
         if snapshot.staff_replied or snapshot.staff_reply_event_ids():
             return False
         async with aiosqlite.connect(self.db_path) as db:
@@ -838,6 +1313,13 @@ class StaffConversationCoordinator:
     async def finish(
         self, snapshot: RequestSnapshot, *, uncertain: bool = False
     ) -> None:
+        if snapshot.kind == "admission":
+            await self._change(
+                snapshot.case_id,
+                conversation_admission_running_revision=None,
+                conversation_admission_uncertain=uncertain,
+            )
+            return
         await self._change(
             snapshot.case_id,
             conversation_running_revision=None,
@@ -847,6 +1329,12 @@ class StaffConversationCoordinator:
     async def is_current(self, snapshot: RequestSnapshot) -> bool:
         case = await self.service.repository.get_by_id(snapshot.case_id)
         metadata = case.channel_metadata or {} if case else {}
+        if snapshot.kind == "admission":
+            return bool(
+                case
+                and not metadata.get("conversation_admission_uncertain")
+                and metadata.get("conversation_admission_revision") == snapshot.revision
+            )
         return bool(
             case
             and case.status.value in {"pending", "in_review"}

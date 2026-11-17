@@ -81,6 +81,24 @@ label a draft “Money at risk” rather than preventing generation. The safegua
 against requesting seed words/private keys, promising outcomes or claiming that
 Staff have acted remain. Scam concerns retain the existing safety warning.
 
+Evidence applicability is separate from relevance. Requester product facts can
+scope retrieval; a nearby helper's product mention cannot choose that scope.
+Unknown requester scope stays broad rather than falling back to keyword product
+selection. Staff retrieval keeps the full candidate set when ColBERT is disabled,
+unavailable or returns invalid/ambiguous results; it does not label an unranked
+prefix as successfully reranked. Other callers retain their existing defaults.
+Explicit product conflicts are excluded before the evidence limit, with the
+original text and declarations retained for Admin. Unknown or contradictory
+source labels are not silently corrected. The draft receives product/scope and
+public-link availability, plus missing-parent, omitted-event and attachment
+coverage. Retrieved procedures do not establish the requester's asset, role or
+trade stage; a missing fact that decides the remedy requires a question.
+
+A public-link indicator means an allowed URL was supplied, not that its current
+page or the draft's factual claims were independently verified. Internal evidence
+remains Staff-only. Multiple participants reporting symptoms are attributed
+observations, not proof of a shared network incident.
+
 Length is a style target, not a reason to discard output. Invalid or withheld
 output remains on the Admin case as literal text. A silence caused by missing
 knowledge records a short topic in `knowledge_gap`; the gap itself is not posted.
@@ -102,8 +120,9 @@ fallback set. Do not commit private examples, pilot inputs or generated outputs.
 New spend-bound trials use one open request owned by the requester. Follow-ups,
 product clarification, edits and acknowledgements attach to that request. Native
 replies preserve who said what; nearby participants' words remain attributed
-context. A requester reporting resolution can close the request, while a Staff
-answer alone does not prevent a later unanswered follow-up.
+context. A requester reporting resolution can close the request. Related trusted
+Staff assistance holds further drafts for that request without falsely recording
+resolution. Unrelated Staff chatter does not suppress another request.
 
 The first-response delay restarts when the requester adds a message. Before
 reserving a draft call, a separately accounted model gate classifies the exchange
@@ -112,8 +131,18 @@ participant helping another. It selects only supplied event IDs for the draft.
 Unrelated Staff activity is context rather than a room-wide suppression rule.
 Obvious acknowledgements do not create requests or call a model on their own.
 
+After a request is closed, handled by Staff or has had a generation,
+an unthreaded later message is held as a boundary candidate on the existing case.
+After the quiet delay, a separately budgeted gate compares it with the prior
+request. Only a validated distinct request creates a new case, atomically with
+the boundary receipt. Time gaps and topic-marker phrases are not proof. Native
+follow-ups and acknowledgements stay with their known request; ambiguous or
+invalid decisions remain visible for Admin. Restart cannot retry an uncertain
+boundary call, and creating a case cannot reset the trial's spend.
+
 After a draft, material new requester facts can produce at most one update in the
-same Staff thread. A completed, renderable first draft withheld because the
+same Staff thread. Helper-only additions do not consume that update. A completed,
+renderable first draft withheld because the
 conversation changed before its note was attempted can use that one remaining
 generation after a fresh gate; this does not retry an uncertain delivery.
 Knowledge-gap silence or rejected output does not qualify for an unchanged-input

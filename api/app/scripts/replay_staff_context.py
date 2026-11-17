@@ -33,6 +33,7 @@ from app.channels.staff_assist.context_conversation import (
 )
 from app.channels.staff_assist.context_gate import (
     REQUEST_GATE_PROMPT,
+    RequestAdmissionService,
     RequestGateService,
 )
 from app.channels.staff_assist.context_trial import (
@@ -291,6 +292,7 @@ def evidence_at(
                     kind="saved_excerpt",
                     source_refs=[],
                     provenance={
+                        **provenance,
                         "original_kind": kind,
                         "original_url_unavailable": True,
                         "source_case_id": anchor["case_id"],
@@ -323,6 +325,7 @@ def model_code_hashes() -> dict[str, str]:
             "staff_context.py",
             "staff_prompt.py",
             "public_context.py",
+            "evidence_applicability.py",
         )
     ]
     paths.extend(
@@ -330,6 +333,7 @@ def model_code_hashes() -> dict[str, str]:
             "scripts/replay_staff_context.py",
             "scripts/summarize_staff_context.py",
             "services/rag/openai_responses.py",
+            "services/escalation/escalation_repository.py",
             "channels/ingress/service.py",
             "channels/plugins/matrix/context_text.py",
             "channels/staff_assist/context_incidents.py",
@@ -961,6 +965,7 @@ async def replay(
 
     async def run_due(until: int) -> None:
         nonlocal last_time, stopped
+        admission_settled = False
         pending = await coordinator.due(now_ms=until)
         for initial in sorted(
             pending, key=lambda row: (row.last_requester_at_ms + delay_ms, row.case_id)
@@ -975,7 +980,19 @@ async def replay(
             ) in skipped_versions or not await coordinator.claim(snapshot):
                 continue
             gate_llm = calls.adapter(snapshot, kind="gate", virtual_time_ms=virtual)
-            gate_service = RequestGateService(gate_llm)
+            if snapshot.kind == "admission":
+                prior_guard = gate_llm.before_call
+                gate_llm.before_call = (
+                    lambda bound_snapshot=snapshot, bound_guard=prior_guard: (
+                        coordinator.admission_call_guard(bound_snapshot)
+                        or (bound_guard() if bound_guard else None)
+                    )
+                )
+            gate_service = (
+                RequestAdmissionService(gate_llm)
+                if snapshot.kind == "admission"
+                else RequestGateService(gate_llm)
+            )
             failed = False
             note_llm = None
             try:
@@ -993,6 +1010,33 @@ async def replay(
                 }
                 append_private(output / "gates.jsonl", gate_row)
                 gates.append(gate_row)
+                if snapshot.kind == "admission":
+                    if calls.store.trial.reason():
+                        await coordinator.record_admission(
+                            snapshot,
+                            failure={
+                                "reason": calls.store.trial.reason(),
+                                "completed_decision": gate.model_dump(),
+                                "usage": gate_service.usage,
+                            },
+                        )
+                        raise ValueError("context_trial_expired_before_admission")
+                    admission = await coordinator.record_admission(
+                        snapshot, gate, usage=gate_service.usage
+                    )
+                    admission_settled = admission.changed or admission_settled
+                    if admission.created:
+                        formed.append(
+                            {
+                                "case_id": admission.case_id,
+                                "source_event_id": gate.new_request_event_ids[0],
+                                "room_id": snapshot.room_id,
+                                "requester_id": snapshot.requester_id,
+                                "created_virtual_time_ms": virtual,
+                                "admitted_from_case_id": snapshot.case_id,
+                            }
+                        )
+                    continue
                 await coordinator.record_gate(snapshot, gate)
                 if not snapshot.should_draft(gate):
                     continue
@@ -1052,6 +1096,16 @@ async def replay(
                         if type(exc).__name__ == "RequestGateError"
                         else type(exc).__name__
                     )
+                if snapshot.kind == "admission":
+                    await coordinator.record_admission(
+                        snapshot,
+                        failure={
+                            "reason": reason,
+                            "raw_output": getattr(exc, "raw", None),
+                            "usage": gate_service.usage,
+                            "model_called": gate_llm.started,
+                        },
+                    )
                 capacity = reason in {
                     "conversation_input_capacity_reached",
                     "context_trial_invalid_call_bound",
@@ -1086,7 +1140,9 @@ async def replay(
                 # A failed run is never resumed, regardless of whether transport
                 # was proved absent; its durable call ledger remains intact.
                 await coordinator.finish(snapshot, uncertain=failed)
-            last_time = virtual
+                last_time = virtual
+        if admission_settled:
+            await run_due(until)
 
     try:
         position = processed_event_count

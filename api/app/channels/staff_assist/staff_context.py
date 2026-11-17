@@ -10,6 +10,10 @@ from typing import Any, Literal
 from urllib.parse import quote
 
 from app.channels.staff_assist.context_feedback import STAFF_CONTEXT_VERDICT_HINT
+from app.channels.staff_assist.evidence_applicability import (
+    source_applicability,
+    staff_requester_product,
+)
 from app.channels.staff_assist.public_context import (
     ContextEvidence,
     PublicContextRequest,
@@ -26,6 +30,25 @@ from app.channels.staff_assist.staff_prompt import (
 from app.prompts.runtime_policy import SAFETY_REFLEX_WARNING, should_apply_safety_reflex
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+PublicCitationReadiness = Literal[
+    "not_applicable",
+    "public_links_provided",
+    "partial_public_links",
+    "internal_evidence_only",
+]
+
+
+class StaffConversationCoverage(BaseModel):
+    """Observed input boundaries, never a claim of complete room history."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    status: Literal["unknown", "bounded_observed"] = "unknown"
+    missing_parent_event_ids: list[str] = Field(default_factory=list, max_length=256)
+    omitted_event_ids: list[str] = Field(default_factory=list, max_length=256)
+    attachment_event_ids: list[str] = Field(default_factory=list, max_length=256)
+    unselected_event_count: int = Field(default=0, ge=0)
+
 
 class StaffContextRequest(PublicContextRequest):
     """A bounded attributed conversation; public preview limits stay unchanged."""
@@ -33,6 +56,9 @@ class StaffContextRequest(PublicContextRequest):
     question: str = Field(min_length=1, max_length=32000)
     recent_messages: list[RoomMessage] = Field(default_factory=list, max_length=128)
     audience: Literal["staff_only"] = "staff_only"
+    conversation_coverage: StaffConversationCoverage = Field(
+        default_factory=StaffConversationCoverage
+    )
 
 
 class StaffContextDecision(BaseModel):
@@ -59,6 +85,8 @@ class StaffContextPreview(BaseModel):
     money_at_risk: bool = False
     examples_source: str = "synthetic_fallback"
     examples_sha256: str = ""
+    source_applicability: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    public_citation_readiness: PublicCitationReadiness = "not_applicable"
 
 
 def _silence(reason: str, **kwargs: Any) -> StaffContextPreview:
@@ -224,6 +252,16 @@ class StaffContextService:
         ).hexdigest()
 
     def preview(self, request: StaffContextRequest) -> StaffContextPreview:
+        product = staff_requester_product(request.question)
+        applicability = {
+            source.id: source_applicability(source, product=product)
+            for source in request.evidence
+        }
+        eligible = [
+            source
+            for source in request.evidence
+            if applicability[source.id]["eligible_for_reply"]
+        ]
         money_at_risk = request.high_risk_action or _money_at_risk_label(
             request.question,
             *(
@@ -236,12 +274,20 @@ class StaffContextService:
             "money_at_risk": money_at_risk,
             "examples_source": self.examples_source,
             "examples_sha256": self.examples_sha256,
+            "source_applicability": applicability,
         }
         if request.needs_moderation_review:
             return _silence("moderation_review_required", **common)
         if request.already_resolved or request.staff_active:
             return _silence("already_answered", **common)
-        payload = {**request.model_dump(), "style_examples": self.examples}
+        # Original bodies remain on the case's evidence snapshot. A conflicting
+        # source cannot influence generation or be smuggled back by its ID.
+        payload = {
+            **request.model_dump(),
+            "evidence": [source.model_dump() for source in eligible],
+            "evidence_applicability": applicability,
+            "style_examples": self.examples,
+        }
         try:
             response = self.llm.invoke(
                 json.dumps(payload, ensure_ascii=False),
@@ -273,6 +319,12 @@ class StaffContextService:
                 key not in sources for key in decision.source_ids
             ):
                 raise ValueError("invalid source IDs")
+            diagnostic = "inapplicable_source"
+            if any(
+                not applicability[key]["eligible_for_reply"]
+                for key in decision.source_ids
+            ):
+                raise ValueError("explicitly conflicting source cannot support draft")
             if decision.action == "silence":
                 diagnostic = "invalid_silence"
                 if decision.reply or decision.staff_note or decision.source_ids:
@@ -338,6 +390,29 @@ class StaffContextService:
             links = _citations(decision.source_ids, request.evidence)
             if links:
                 rendered += "\n\n" + links
+            selected_sources = [
+                source for source in eligible if source.id in decision.source_ids
+            ]
+            public_links = sum(bool(source.url) for source in selected_sources)
+            citation_readiness: PublicCitationReadiness = (
+                "not_applicable"
+                if not selected_sources
+                else (
+                    "public_links_provided"
+                    if public_links == len(selected_sources)
+                    else (
+                        "partial_public_links"
+                        if public_links
+                        else "internal_evidence_only"
+                    )
+                )
+            )
+            if citation_readiness in {"partial_public_links", "internal_evidence_only"}:
+                rendered += "\n\nStaff source check: " + (
+                    "Some supporting evidence has no public citation."
+                    if public_links
+                    else "Supporting evidence has no public citation."
+                )
             diagnostic = "rendered_draft_too_long"
             if len(rendered) + len(STAFF_CONTEXT_VERDICT_HINT) + 2 > 10000:
                 raise ValueError("case answer storage limit")
@@ -349,6 +424,8 @@ class StaffContextService:
                 money_at_risk=money_at_risk,
                 examples_source=self.examples_source,
                 examples_sha256=self.examples_sha256,
+                source_applicability=applicability,
+                public_citation_readiness=citation_readiness,
             )
         except (ValidationError, ValueError, TypeError, AttributeError):
             # Preserve the exact model text in the private case, including invalid

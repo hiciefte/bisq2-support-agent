@@ -7,7 +7,7 @@ from unittest.mock import Mock
 
 import pytest
 from app.channels.models import SendResult
-from app.channels.staff_assist.context_conversation import ConversationTurn
+from app.channels.staff_assist.context_conversation import conversation_turn
 from app.channels.staff_assist.context_runtime import MatrixContextRuntime
 from app.services.rag.openai_responses import OpenAIResponsesLLMWrapper
 
@@ -99,9 +99,7 @@ async def setup(bundle, responses):
 
 
 async def incoming(bundle, event):
-    turn = ConversationTurn(
-        SOURCE_ROOM, event.event_id, event.sender, event.server_timestamp, event.body
-    )
+    turn = conversation_turn(SOURCE_ROOM, event, is_staff=False)
     message = bundle.incoming.model_copy(
         update={
             "message_id": turn.event_id,
@@ -143,7 +141,12 @@ async def test_live_groups_update_under_same_root_and_ack_is_free(runtime_case):
     bundle.sender.side_effect = [SendResult(True, "$staff-update")]
     case = await incoming(
         bundle,
-        event(bundle, "$facts", "The trade period expired and the payment was sent."),
+        event(
+            bundle,
+            "$facts",
+            "The trade period expired and the payment was sent.",
+            relation="$source",
+        ),
     )
     assert case.channel_metadata["conversation_generation_count"] == 2
     assert case.channel_metadata["staff_root_event_id"] == "$staff-root"
@@ -205,7 +208,8 @@ async def test_live_reply_after_draft_prevents_update(runtime_case):
     )
     await bundle.engine.drain()
     case = await incoming(
-        bundle, event(bundle, "$facts", "The payment is now confirmed.")
+        bundle,
+        event(bundle, "$facts", "The payment is now confirmed.", relation="$source"),
     )
     assert case.channel_metadata["conversation_staff_replied_after_draft"]
     assert bundle.llm.invoke.call_count == 2
@@ -219,7 +223,8 @@ async def test_live_uncertain_update_never_retries_on_restart(runtime_case):
     )
     bundle.sender.side_effect = RuntimeError("transport outcome unknown")
     case = await incoming(
-        bundle, event(bundle, "$facts", "The payment is now confirmed.")
+        bundle,
+        event(bundle, "$facts", "The payment is now confirmed.", relation="$source"),
     )
     assert case.channel_metadata["conversation_delivery_uncertain"]
     assert case.channel_metadata["conversation_update_delivery_attempted"]

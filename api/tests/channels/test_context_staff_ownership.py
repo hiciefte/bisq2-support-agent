@@ -8,7 +8,10 @@ from unittest.mock import Mock
 
 import pytest
 from app.channels.staff_assist.context_conversation import StaffConversationCoordinator
-from app.channels.staff_assist.context_gate import RequestGateService
+from app.channels.staff_assist.context_gate import (
+    RequestAdmissionDecision,
+    RequestGateService,
+)
 
 from tests.channels.test_context_conversation_independent import (
     HELPER,
@@ -89,7 +92,13 @@ async def test_native_staff_reply_before_first_gate_is_a_durable_hold(
         coordinator.service, coordinator.trial_id, first_response_delay_seconds=10
     )
     followup = await restarted.ingest(
-        turn("$facts", "The normal network; the error persists", 13000), now_ms=13000
+        turn(
+            "$facts",
+            "The normal network; the error persists",
+            13000,
+            reply_to_event_id="$staff",
+        ),
+        now_ms=13000,
     )
     assert followup.case_id == first.case_id and not followup.created
     assert await restarted.due(now_ms=24000) == []
@@ -201,10 +210,21 @@ async def test_old_staff_context_does_not_hold_an_explicit_distinct_request(
         turn("$new", "Different question: how do I change the display language?", 3000),
         now_ms=3000,
     )
-    assert second.created and second.case_id != first.case_id
-    snapshot = await coordinator.snapshot(second.case_id, now_ms=13000)
-    assert "$staff" in {item.event_id for item in snapshot.turns}
-    result = classify(snapshot, ["$new", "$staff"])
+    assert not second.created and second.case_id == first.case_id
+    pending = await coordinator.snapshot(first.case_id, now_ms=13000)
+    assert await coordinator.claim(pending)
+    promoted = await coordinator.record_admission(
+        pending,
+        RequestAdmissionDecision(
+            relation="new_request",
+            new_request_event_ids=["$new"],
+            reason="Distinct display question",
+        ),
+    )
+    await coordinator.finish(pending)
+    snapshot = await coordinator.snapshot(promoted.case_id, now_ms=13000)
+    assert "$staff" not in {item.event_id for item in snapshot.turns}
+    result = classify(snapshot, ["$new"])
     assert result.category == "unanswered_support_request"
     assert snapshot.should_draft(result)
     assert await coordinator.claim(snapshot)
@@ -350,7 +370,8 @@ async def test_live_native_staff_reply_prevents_first_note_and_additional_gate(
         SOURCE_ROOM, staff, bundle.channel, is_staff=True
     )
     case = await incoming(
-        bundle, event(bundle, "$facts", "The normal network is selected")
+        bundle,
+        event(bundle, "$facts", "The normal network is selected", relation="$source"),
     )
     assert case.channel_metadata["conversation_staff_replied"]
     assert not case.channel_metadata.get("conversation_generation_count")
@@ -420,7 +441,10 @@ async def test_staff_reply_during_initial_draft_stops_publication(runtime_case):
     assert case.channel_metadata["conversation_generation_count"] == 1
     bundle.sender.assert_not_awaited()
     assert bundle.llm.invoke.call_count == 2
-    await incoming(bundle, event(bundle, "$more", "The payment is now confirmed"))
+    await incoming(
+        bundle,
+        event(bundle, "$more", "The payment is now confirmed", relation="$facts"),
+    )
     assert bundle.llm.invoke.call_count == 2
     bundle.sender.assert_not_awaited()
     no_public_delivery(bundle)

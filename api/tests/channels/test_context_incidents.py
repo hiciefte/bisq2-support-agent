@@ -360,7 +360,12 @@ async def test_linked_acknowledgements_are_stored_without_generation_or_late_cha
     ]
     assert text in case.question
     assert case.channel_metadata["incident_generation_question"] == ROOT
-    bundle.retrieve.assert_called_once_with(ROOT)
+    bundle.retrieve.assert_called_once_with(
+        ROOT,
+        detected_version=None,
+        detect_from_query=False,
+        require_reranker_success=True,
+    )
     prompt = json.loads(bundle.llm.invoke.call_args.args[0])
     assert prompt["question"] == ROOT
     assert all(m["content"] != text for m in prompt["recent_messages"])
@@ -905,7 +910,10 @@ async def test_anchored_question_followups_share_one_case_call_and_thread(runtim
         message.message_id for message in messages
     ]
     bundle.retrieve.assert_called_once_with(
-        "\n---\n".join(message.question for message in messages)
+        "\n---\n".join(message.question for message in messages),
+        detected_version="Bisq 1",
+        detect_from_query=False,
+        require_reranker_success=True,
     )
     bundle.llm.invoke.assert_called_once()
     assert bundle.sender.await_count == 2

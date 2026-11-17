@@ -198,7 +198,14 @@ def test_evidence_excludes_future_anchors_and_unproved_live_data():
             1: {
                 "channel_metadata": {
                     "evidence_snapshot": [
-                        source("document"),
+                        source(
+                            "document",
+                            protocol="bisq1",
+                            staff_applicability={
+                                "status": "explicit_conflict",
+                                "requester_product": "bisq2",
+                            },
+                        ),
                         source("missing_time", kind="live_tool"),
                         source(
                             "future_observation",
@@ -216,6 +223,10 @@ def test_evidence_excludes_future_anchors_and_unproved_live_data():
     assert evidence[0].kind == "saved_excerpt"
     assert evidence[0].source_refs == []
     assert evidence[0].provenance["original_kind"] == "faq"
+    assert evidence[0].provenance["protocol"] == "bisq1"
+    assert (
+        evidence[0].provenance["staff_applicability"]["status"] == "explicit_conflict"
+    )
     assert coverage["source_case_id"] == 1
     assert len(coverage["excluded"]) == 2
 

@@ -82,6 +82,102 @@ def answer(
 
 
 @pytest.mark.asyncio
+async def test_conflicting_sources_do_not_crowd_out_eligible_later_sources():
+    wrong = [
+        NS(
+            page_content=f"Bisq 2 procedure {index}.",
+            metadata={
+                "type": "wiki",
+                "title": f"Procedure {index}",
+                "url": f"https://bisq.wiki/Procedure_{index}",
+                "protocol": "bisq_easy",
+            },
+        )
+        for index in range(9)
+    ]
+    correct = NS(
+        page_content="Bisq 1 documented procedure.",
+        metadata={
+            "type": "wiki",
+            "title": "Applicable source",
+            "url": "https://bisq.wiki/Applicable_source",
+            "protocol": "multisig_v1",
+        },
+    )
+    grounding = NS(build=Mock(return_value=None))
+    result = await StaffEvidenceResolver(grounding_service=grounding).resolve(
+        question="Using Bisq 1; which procedure applies?", documents=wrong + [correct]
+    )
+    assert [entry.content for entry in result.evidence] == [correct.page_content]
+    assert len(result.excluded_evidence) == 9
+    assert [entry.content for entry in result.excluded_evidence] == [
+        entry.page_content for entry in wrong
+    ]
+    assert all(entry.id.startswith("excluded-") for entry in result.excluded_evidence)
+    assert len(grounding.build.call_args.kwargs["knowledge_sources"]) == 1
+    assert len(result.diagnostics) == 9
+
+
+@pytest.mark.asyncio
+async def test_explicit_metadata_conflict_is_retained_for_review_without_relabel():
+    row = NS(
+        id="42",
+        verified=True,
+        question="How do I recover the Bisq 1 client?",
+        answer="Preserve its data before changing state.",
+        protocol="bisq_easy",
+    )
+    result = await StaffEvidenceResolver(
+        faq_service=NS(get_faq_by_id=lambda _: row),
+        public_faq_service=publication(row),
+    ).resolve(question="Which recovery applies?", documents=[document("faq", id="42")])
+    assert not result.evidence
+    assert result.excluded_evidence[0].content == (
+        f"Question: {row.question}\nAnswer: {row.answer}"
+    )
+    assert result.excluded_evidence[0].provenance["protocol"] == "bisq_easy"
+    assert "source_product_metadata_conflict" in result.diagnostics[0]
+
+
+@pytest.mark.asyncio
+async def test_helper_product_and_version_are_not_requester_scope():
+    grounding = NS(build=Mock(return_value=None))
+    result = await StaffEvidenceResolver(grounding_service=grounding).resolve(
+        question="Mine is stuck. Other participant: I use Bisq 2 version 2.3.4.",
+        applicability_question="Mine is stuck.",
+        documents=[document("wiki", url="https://bisq.wiki/Support")],
+    )
+    args = grounding.build.call_args.kwargs
+    assert args["question"] == "Mine is stuck."
+    assert args["product"] is None
+    assert args["user_version"] is None
+    assert (
+        result.evidence[0].provenance["staff_applicability"][
+            "requester_explicit_product"
+        ]
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_negated_requester_product_does_not_exclude_other_product_source():
+    result = await StaffEvidenceResolver().resolve(
+        question="I am not using Bisq 1. Which steps apply?",
+        documents=[
+            document("wiki", protocol="bisq_easy", url="https://bisq.wiki/Support")
+        ],
+    )
+    assert len(result.evidence) == 1
+    assert not result.excluded_evidence
+    assert (
+        result.evidence[0].provenance["staff_applicability"][
+            "requester_explicit_product"
+        ]
+        is None
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("through_compiled_reference", [False, True])
 async def test_faq_authority_and_publication_reads_do_not_block_event_loop(
     through_compiled_reference,
@@ -567,7 +663,12 @@ async def test_published_link_only_faq_supplies_separate_scoped_guide_after_grou
     assert "trade period is ending" in guide.content
     assert "Bisq 1" in guide.content
     assert faq.content == f"Question: {row.question}\nAnswer: {row.answer}"
-    assert faq.provenance == {"faq_id": "42", "verified": True, "protocol": "all"}
+    assert {key: faq.provenance[key] for key in ("faq_id", "verified", "protocol")} == {
+        "faq_id": "42",
+        "verified": True,
+        "protocol": "all",
+    }
+    assert faq.provenance["staff_applicability"]["eligible_for_reply"]
     assert guide.provenance["linked_from_faq_id"] == "42"
     assert guide.provenance["linked_reference_url"] == fix.url
     assert guide.provenance["user_product"] == expected_product

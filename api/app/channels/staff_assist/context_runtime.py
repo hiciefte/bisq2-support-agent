@@ -40,7 +40,11 @@ from app.channels.staff_assist.context_conversation import (
     selected_staff_request,
 )
 from app.channels.staff_assist.context_feedback import STAFF_CONTEXT_VERDICT_HINT
-from app.channels.staff_assist.context_gate import RequestGateError, RequestGateService
+from app.channels.staff_assist.context_gate import (
+    RequestAdmissionService,
+    RequestGateError,
+    RequestGateService,
+)
 from app.channels.staff_assist.context_incidents import (
     ContextIncidentStore,
     answer_fragment,
@@ -569,6 +573,109 @@ class MatrixContextRuntime:
             None if await coordinator.is_current(snapshot) else "conversation_changed"
         )
 
+    async def _run_request_admission(self, case_id: int, channel: Any) -> None:
+        coordinator = self._conversation_coordinator()
+        policy = self.runtime.resolve_optional("channel_autoresponse_policy_service")
+        while not self._closed:
+            snapshot = await coordinator.snapshot(
+                case_id, now_ms=int(utc_now().timestamp() * 1000)
+            )
+            if snapshot.kind != "admission":
+                return
+            wait = (
+                snapshot.last_requester_at_ms
+                + coordinator.delay_ms
+                - int(utc_now().timestamp() * 1000)
+            ) / 1000
+            if wait > 0:
+                await asyncio.sleep(wait)
+                continue
+            if not await coordinator.claim(snapshot):
+                return
+            uncertain = False
+            classification_dispatched = False
+            llm = BudgetedContextLLM(
+                self._trial_store(),
+                self.runtime.rag_service.llm,
+                case_id,
+                kind="gate",
+                call_id=snapshot.version,
+                before_call=lambda: (
+                    "review_or_policy_changed"
+                    if self._closed or not is_staff_context_enabled(policy, "matrix")
+                    else coordinator.admission_call_guard(snapshot)
+                ),
+            )
+            service = RequestAdmissionService(llm)
+            result = None
+            try:
+                reason = (
+                    await self._trial_reason()
+                    or await self._verify_conversation_anchor(snapshot)
+                )
+                if reason:
+                    if reason == "conversation_changed":
+                        continue
+                    await coordinator.record_admission(
+                        snapshot, failure={"reason": reason, "model_called": False}
+                    )
+                    return
+                classification_dispatched = True
+                decision = await asyncio.to_thread(service.classify, snapshot)
+                reason = await self._trial_reason() or (
+                    "review_or_policy_changed"
+                    if self._closed or not is_staff_context_enabled(policy, "matrix")
+                    else None
+                )
+                if reason:
+                    await coordinator.record_admission(
+                        snapshot,
+                        failure={
+                            "reason": reason,
+                            "model_called": llm.started,
+                            "completed_decision": decision.model_dump(),
+                            "usage": service.usage,
+                        },
+                    )
+                    return
+                result = await coordinator.record_admission(
+                    snapshot, decision, usage=service.usage
+                )
+            except asyncio.CancelledError:
+                # A dispatched worker can cross the provider boundary after the
+                # coroutine is cancelled. Its outcome needs reconciliation.
+                uncertain = classification_dispatched or llm.started
+                raise
+            except Exception as exc:
+                uncertain = llm.started and not isinstance(exc, RequestGateError)
+                await coordinator.record_admission(
+                    snapshot,
+                    failure={
+                        "reason": (
+                            llm.reason or str(exc)
+                            if isinstance(exc, RequestGateError)
+                            else llm.reason or "request_admission_unavailable"
+                        ),
+                        "raw_output": getattr(exc, "raw", None),
+                        "usage": service.usage,
+                        "model_called": llm.started,
+                        "uncertain": uncertain,
+                    },
+                )
+                return
+            finally:
+                await coordinator.finish(snapshot, uncertain=uncertain)
+            if result and result.created:
+                await self._run_conversation(result.case_id, channel)
+                return
+            if result and not result.created:
+                current = await coordinator.service.repository.get_by_id(case_id)
+                if not (current.channel_metadata or {}).get(
+                    "conversation_admission_pending"
+                ):
+                    await self._run_conversation(case_id, channel)
+                    return
+
     async def _run_conversation(self, case_id: int, channel: Any) -> None:
         coordinator = self._conversation_coordinator()
         store = ContextReviewStore(coordinator.db_path)
@@ -577,6 +684,9 @@ class MatrixContextRuntime:
             while not self._closed:
                 case = await coordinator.service.repository.get_by_id(case_id)
                 metadata = case.channel_metadata or {}
+                if metadata.get("conversation_admission_pending"):
+                    await self._run_request_admission(case_id, channel)
+                    return
                 if (
                     case.status.value not in {"pending", "in_review"}
                     or metadata.get("conversation_resolved")
@@ -1276,6 +1386,14 @@ class MatrixContextRuntime:
             await store.update(case_id, status="deferred", reason=reason)
             return False
 
+        from app.channels.staff_assist.evidence_applicability import (
+            staff_requester_product,
+        )
+
+        # Use requester facts for the product filter. Nearby helpers may discuss
+        # another application; their words can enrich the query, not choose scope.
+        retrieval_product = staff_requester_product(question)
+
         def retrieve_documents(query):
             if self._trial:
                 reason = (
@@ -1283,7 +1401,14 @@ class MatrixContextRuntime:
                 )
                 if reason:
                     raise PublicationSuppressed(reason)
-            return retriever.retrieve_with_scores(query)
+            return retriever.retrieve_with_scores(
+                query,
+                detected_version={"bisq1": "Bisq 1", "bisq2": "Bisq 2"}.get(
+                    retrieval_product
+                ),
+                detect_from_query=False,
+                require_reranker_success=True,
+            )
 
         retrieval_query = build_retrieval_query(
             question, source_snapshot.confirmed_retrieval_messages
@@ -1327,7 +1452,12 @@ class MatrixContextRuntime:
             llm_wiki_loader=getattr(rag, "llm_wiki_loader", None),
             llm_wiki_dir=getattr(self.runtime.settings, "LLM_WIKI_DIR_PATH", None),
         )
-        resolved = await resolver.resolve(question=retrieval_query, documents=documents)
+        resolved = await resolver.resolve(
+            question=retrieval_query,
+            documents=documents,
+            product=retrieval_product,
+            applicability_question=question,
+        )
         if not await self._case_is_open(case_id) or not is_staff_context_enabled(
             policy_service, "matrix"
         ):
@@ -1340,11 +1470,20 @@ class MatrixContextRuntime:
             )
             return False
         evidence = resolved.evidence
-        request = StaffContextRequest(
-            question=question,
-            recent_messages=snapshot,
-            evidence=evidence,
-            high_risk_action=money_at_risk,
+        conversation_snapshot = incoming.channel_metadata.get("conversation_snapshot")
+        request = (
+            selected_staff_request(
+                conversation_snapshot,
+                incoming.channel_metadata["conversation_decision"],
+                evidence,
+            )
+            if conversation_snapshot is not None
+            else StaffContextRequest(
+                question=question,
+                recent_messages=snapshot,
+                evidence=evidence,
+                high_risk_action=money_at_risk,
+            )
         )
         staff_service = StaffContextService(
             rag.llm, data_dir=getattr(self.runtime.settings, "DATA_DIR", None)
@@ -1354,6 +1493,10 @@ class MatrixContextRuntime:
             "retrieval_query_version": _digest(retrieval_query),
             "evidence_version": _digest(evidence_json),
             "evidence_snapshot": evidence_json,
+            "excluded_evidence_snapshot": [
+                entry.model_dump() for entry in resolved.excluded_evidence
+            ],
+            "retrieval_requester_product": retrieval_product,
             "generation_version": _digest(
                 {
                     "prompt": STAFF_CONTEXT_PROMPT,
@@ -1484,6 +1627,9 @@ class MatrixContextRuntime:
             staff_examples_source=preview.examples_source,
             staff_examples_sha256=preview.examples_sha256,
             validation_diagnostic=preview.validation_diagnostic,
+            source_applicability=preview.source_applicability,
+            public_citation_readiness=preview.public_citation_readiness,
+            conversation_coverage=request.conversation_coverage.model_dump(),
         )
         if not preview.rendered_note:
             # Model silence is not evidence the customer's issue was resolved.

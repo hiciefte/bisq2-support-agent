@@ -249,7 +249,10 @@ def test_public_audience_remains_on_original_prompt_and_old_contract():
         )
     )
     public = PublicContextRequest.model_validate(
-        {**request().model_dump(), "audience": "public"}
+        {
+            **request().model_dump(exclude={"conversation_coverage"}),
+            "audience": "public",
+        }
     )
     result = PublicContextService(llm).preview(public)
     assert result.rendered_note.startswith("AI context · ")
