@@ -6,6 +6,7 @@ import asyncio
 import inspect
 import logging
 from contextlib import suppress
+from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any
 
@@ -20,6 +21,7 @@ from app.channels.plugins.matrix.room_filter import (
 from app.channels.policy import is_generation_enabled, is_staff_context_enabled
 from app.channels.response_dispatcher import ChannelResponseDispatcher
 from app.channels.staff import resolve_channel_staff_resolver
+from app.channels.staff_assist.context_conversation import conversation_turn
 from app.channels.staff_assist.context_feedback import is_context_feedback_room
 from app.channels.trust_monitor.executor import run_in_trust_monitor_executor
 
@@ -30,15 +32,30 @@ class _MissingNioEvent:
 
 RoomMessageTextType: Any = _MissingNioEvent
 MegolmEventType: Any = _MissingNioEvent
+AttachmentEventTypes: tuple[type, ...] = ()
 
 try:
     from nio import MegolmEvent as _NioMegolmEvent
+    from nio import (
+        RoomMessageAudio,
+        RoomMessageFile,
+        RoomMessageImage,
+    )
     from nio import RoomMessageText as _NioRoomMessageText
+    from nio import (
+        RoomMessageVideo,
+    )
 except ImportError:  # pragma: no cover - exercised in environments without nio
     pass
 else:
     RoomMessageTextType = _NioRoomMessageText
     MegolmEventType = _NioMegolmEvent
+    AttachmentEventTypes = (
+        RoomMessageAudio,
+        RoomMessageFile,
+        RoomMessageImage,
+        RoomMessageVideo,
+    )
 
 # Backward-compatible exported symbols used by tests and callers.
 RoomMessageText = RoomMessageTextType
@@ -80,6 +97,7 @@ class MatrixMessageHandler:
         self._sync_task: asyncio.Task[Any] | None = None
         self.trust_monitor_service = trust_monitor_service
         self._callback_registered = False
+        self._attachment_callback_registered = False
         self._dispatcher: ChannelResponseDispatcher | None = None
         self._orchestrator: InboundMessageOrchestrator | None = None
 
@@ -89,6 +107,14 @@ class MatrixMessageHandler:
             self.client.add_event_callback(self._on_message, RoomMessageText)
             if MegolmEvent is not RoomMessageText:
                 self.client.add_event_callback(self._on_message, MegolmEvent)
+            settings = getattr(getattr(self.channel, "runtime", None), "settings", None)
+            if AttachmentEventTypes and getattr(
+                settings, "MATRIX_CONTEXT_TRIAL_BUDGET_USD", None
+            ):
+                self.client.add_event_callback(
+                    self._on_context_attachment, AttachmentEventTypes
+                )
+                self._attachment_callback_registered = True
             self._callback_registered = True
 
         if self._sync_task is None or self._sync_task.done():
@@ -115,8 +141,41 @@ class MatrixMessageHandler:
                 self.client, "remove_event_callback"
             ):
                 self.client.remove_event_callback(self._on_message)
+                if self._attachment_callback_registered:
+                    self.client.remove_event_callback(self._on_context_attachment)
+                    self._attachment_callback_registered = False
                 self._callback_registered = False
             logger.info("Matrix message handler stopped")
+
+    async def _on_context_attachment(self, room: Any, event: Any) -> None:
+        """Capture attachment presence for Staff requests, never media contents."""
+        channel = self.channel
+        if channel is None or not is_staff_context_enabled(
+            self.autoresponse_policy_service, self.channel_id
+        ):
+            return
+        room_id = str(getattr(room, "room_id", "") or "")
+        if room_id not in resolve_allowed_context_source_rooms(
+            channel.runtime.settings
+        ):
+            return
+        if getattr(self.connection_manager, "room_state_ready", None) is False:
+            if self.connection_manager.defer_until_room_state_ready(
+                self._on_context_attachment, room, event
+            ):
+                return
+        sender = str(getattr(event, "sender", "") or "")
+        if self._is_self_sender(sender):
+            return
+        engine = channel.runtime.resolve_optional("matrix_context_runtime")
+        observe = getattr(engine, "observe_source_event", None)
+        if callable(observe):
+            await observe(
+                room_id,
+                event,
+                channel,
+                is_staff=self._is_context_staff_sender(sender),
+            )
 
     async def _on_message(self, room: Any, event: Any) -> None:
         """Process Matrix message events through the standard channel pipeline."""
@@ -160,6 +219,14 @@ class MatrixMessageHandler:
         if effective_event is None:
             return
 
+        content = (getattr(effective_event, "source", None) or {}).get("content", {})
+        if (
+            context_source
+            and isinstance(content, dict)
+            and content.get("msgtype") in {"m.image", "m.file", "m.audio", "m.video"}
+        ):
+            await self._on_context_attachment(room, effective_event)
+            return
         incoming = self._to_incoming_message(room, effective_event)
         if incoming is None:
             return
@@ -190,7 +257,19 @@ class MatrixMessageHandler:
         await self._record_trust_event(
             room_id=room_id, event=effective_event, sender_id=sender_id, room=room
         )
-        if self._is_staff_sender(room=room, event=effective_event, sender_id=sender_id):
+        is_staff = (
+            self._is_context_staff_sender(sender_id)
+            if context_source
+            else self._is_staff_sender(
+                room=room, event=effective_event, sender_id=sender_id
+            )
+        )
+        if is_staff:
+            if context_source:
+                engine = channel.runtime.resolve_optional("matrix_context_runtime")
+                observe = getattr(engine, "observe_source_event", None)
+                if callable(observe):
+                    await observe(room_id, effective_event, channel, is_staff=True)
             await self._record_staff_activity(room_id=room_id, staff_id=sender_id)
             await self._maybe_handle_staff_command(
                 room_id=room_id,
@@ -202,12 +281,21 @@ class MatrixMessageHandler:
             authored = context_text(effective_event)
             if not authored:
                 return
+            try:
+                turn_metadata = {
+                    "conversation_turn": asdict(
+                        conversation_turn(room_id, effective_event, is_staff=False)
+                    )
+                }
+            except ValueError:
+                turn_metadata = {}
             incoming = incoming.model_copy(
                 update={
                     "question": authored,
                     "channel_metadata": {
                         **incoming.channel_metadata,
                         **context_relationships(effective_event),
+                        **turn_metadata,
                     },
                 }
             )
@@ -351,6 +439,12 @@ class MatrixMessageHandler:
             return True
 
         return False
+
+    def _is_context_staff_sender(self, sender_id: str) -> bool:
+        """Conversation attribution trusts configured identities, never names."""
+        runtime = getattr(self.channel, "runtime", None)
+        resolver = self._resolve_staff_resolver(runtime)
+        return bool(resolver and resolver.is_staff(sender_id))
 
     def _is_staff_sender(self, *, room: Any, event: Any, sender_id: str) -> bool:
         channel = self.channel

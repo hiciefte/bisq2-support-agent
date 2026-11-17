@@ -282,7 +282,7 @@ class StaffEvidence(_StrictModel):
     id: str = Field(min_length=1, max_length=80, pattern=r"^[a-zA-Z0-9_-]+$")
     title: str = Field(min_length=1, max_length=160)
     content: str = Field(min_length=1, max_length=16000)
-    kind: Literal["llm_wiki", "code_fact", "live_tool"]
+    kind: Literal["llm_wiki", "code_fact", "live_tool", "saved_excerpt"]
     audience: Literal["staff_only"] = "staff_only"
     url: None = None
     source_refs: list[str] = Field(default_factory=list, max_length=30)

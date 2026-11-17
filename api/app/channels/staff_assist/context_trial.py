@@ -74,7 +74,12 @@ class ContextTrial:
             str(getattr(settings, name, "") or "").strip() for name in money_fields
         ]
         spend_bounded = any(values)
-        monetary = {}
+        budget: int | None = None
+        daily: int | None = None
+        input_rate: int | None = None
+        output_rate: int | None = None
+        model: str | None = None
+        maximum: int | None = None
         if spend_bounded:
             if not all(values):
                 raise ValueError(
@@ -92,14 +97,6 @@ class ContextTrial:
                 raise ValueError(
                     "Matrix spend trials require a model and bounded MAX_TOKENS"
                 )
-            monetary = dict(
-                budget_nanodollars=budget,
-                daily_budget_nanodollars=daily,
-                input_nanodollars_per_token=input_rate,
-                output_nanodollars_per_token=output_rate,
-                model=model,
-                max_output_tokens=maximum,
-            )
         days = 30 if spend_bounded else 7
         if not timedelta(0) < end_at - start_at <= timedelta(days=days):
             raise ValueError(
@@ -127,7 +124,12 @@ class ContextTrial:
             start_at,
             end_at,
             0 if spend_bounded else max_cases,
-            **monetary,
+            budget_nanodollars=budget,
+            daily_budget_nanodollars=daily,
+            input_nanodollars_per_token=input_rate,
+            output_nanodollars_per_token=output_rate,
+            model=model,
+            max_output_tokens=maximum,
         )
 
     def reason(self, now: datetime | None = None) -> str | None:

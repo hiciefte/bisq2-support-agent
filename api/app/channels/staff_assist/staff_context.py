@@ -303,7 +303,9 @@ class StaffContextService:
                 rendered_note=rendered,
                 model_called=True,
                 usage=usage,
-                **common,
+                money_at_risk=request.high_risk_action,
+                examples_source=self.examples_source,
+                examples_sha256=self.examples_sha256,
             )
         except (ValidationError, ValueError, TypeError, AttributeError):
             # Preserve the exact model text in the private case, including invalid

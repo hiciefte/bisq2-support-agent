@@ -703,6 +703,15 @@ class MatrixReactionHandler(ReactionHandlerBase):
         if not isinstance(redacts, str) or not redacts:
             return
         room_id = str(getattr(room, "room_id", "") or "").strip()
+        engine = self.runtime.resolve_optional("matrix_context_runtime")
+        observe = getattr(engine, "observe_source_event", None)
+        if callable(observe):
+            await observe(
+                room_id,
+                event,
+                None,
+                is_staff=self._is_staff_sender(str(getattr(event, "sender", "") or "")),
+            )
         if is_context_feedback_room(getattr(self.runtime, "settings", None), room_id):
             store = self._context_feedback_store()
             if store is not None and self._is_staff_sender(

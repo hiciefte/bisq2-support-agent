@@ -96,3 +96,65 @@ Keep real room examples in that private data directory, with no names, handles,
 trade identifiers or transaction identifiers. They illustrate style and are never
 factual grounding for a new answer. The repository contains only a small synthetic
 fallback set. Do not commit private examples, pilot inputs or generated outputs.
+
+## Conversation handling
+
+New spend-bound trials use one open request owned by the requester. Follow-ups,
+product clarification, edits and acknowledgements attach to that request. Native
+replies preserve who said what; nearby participants' words remain attributed
+context. A requester reporting resolution can close the request, while a Staff
+answer alone does not prevent a later unanswered follow-up.
+
+The first-response delay restarts when the requester adds a message. Before
+reserving a draft call, a separately accounted model gate classifies the exchange
+as an unanswered support request, not a request, already answered, or one
+participant helping another. It selects only supplied event IDs for the draft.
+Unrelated Staff activity is context rather than a room-wide suppression rule.
+Obvious acknowledgements do not create requests or call a model on their own.
+
+After a draft, material new requester facts can produce at most one update in the
+same Staff thread. A completed, renderable first draft withheld because the
+conversation changed before its note was attempted can use that one remaining
+generation after a fresh gate; this does not retry an uncertain delivery.
+Knowledge-gap silence or rejected output does not qualify for an unchanged-input
+replacement. An acknowledged root is reused rather than sent again. Draft and
+delivery claims are durable. A pending or uncertain
+attempt requires reconciliation; restart does not retry it. Both notes remain
+available for per-note judgments. Closed Admin cases, policy disablement, changed
+request snapshots and expired budgets prevent publication.
+
+The new workflow retains subscription turns in the existing escalation case and
+uses the existing bounded source check. It does not paginate room history or
+create a separate conversation database. Older immutable trials keep their
+original workflow and accounting for historical reconciliation.
+
+## Preparing and running a private replay
+
+`python -m app.scripts.replay_staff_context --help` exposes two distinct stages.
+`prepare` reads authorized local case/thread exports, a session index, comparison
+references and the private style examples. It makes no provider or Matrix calls.
+It writes an immutable input/code plan, conservative cost envelopes and a report
+whose after-values remain unmeasured.
+
+`execute` requires the owner's explicit paid-call approval and the exact prepared
+plan digest. It checks the inputs and implementation against that plan, reserves
+model spend through the same ledger as live work, and stops at the agreed dollar,
+call or elapsed-time limit. Each attempted run has its own intent and receipts;
+an interrupted or uncertain run is not resumed. Keep all input, plan, database and
+output files private and outside Git. Do not put credentials in command lines or
+reports.
+
+Replay uses the same event conversion, request coordinator, gate and Staff draft
+service. A chronological virtual clock exposes only messages observed by each
+quiet deadline. Later Staff answers are comparison evidence only. Saved document
+excerpts from an already-arrived anchor substitute for retrieval; their exact
+historical capture times can be unknown. Live observations with unproved or future
+timestamps are excluded. Sanitized excerpts without usable URLs are explicitly
+marked as saved excerpts, not given invented citations. This mode makes no fresh
+retrieval, embedding, Matrix or tool calls and cannot send a message.
+
+Report note/update calls separately from gate calls. Report reference coverage
+alongside non-request rates: a gate prediction is not independent ground truth.
+Action agreement and limitation-opening counts are descriptive mechanics; they
+are not Staff verdicts, actual reuse, measured time saved or public-readiness
+claims. Partial source windows and unknown comparison outcomes remain visible.

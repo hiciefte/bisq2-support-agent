@@ -320,6 +320,7 @@ async def runtime_case(tmp_path):
 @pytest.mark.asyncio
 async def test_runtime_without_trial_refuses_before_retrieval(runtime_case):
     from app.channels.staff_assist.context_runtime import MatrixContextRuntime
+
     from tests.channels.test_context_runtime_integration import run
 
     bundle = runtime_case
@@ -338,36 +339,24 @@ async def test_runtime_without_trial_refuses_before_retrieval(runtime_case):
 
 
 @pytest.mark.asyncio
-async def test_no_evidence_does_not_spend_note_reservation(runtime_case):
-    from tests.channels.test_context_runtime_integration import run
-    from tests.channels.test_context_trial import enable_trial
+async def test_gate_refusal_does_not_spend_note_reservation(runtime_case):
+    from tests.channels.test_context_conversation_runtime import gate, setup
 
     bundle = runtime_case
-    enable_trial(
-        bundle,
-        MATRIX_CONTEXT_TRIAL_ID="spend-runtime",
-        MATRIX_CONTEXT_TRIAL_BUDGET_USD="1",
-        MATRIX_CONTEXT_TRIAL_DAILY_BUDGET_USD="1",
-        MATRIX_CONTEXT_TRIAL_INPUT_USD_PER_MILLION="1",
-        MATRIX_CONTEXT_TRIAL_OUTPUT_USD_PER_MILLION="2",
-        OPENAI_MODEL="openai:gpt-6-astra",
-        MAX_TOKENS=50,
-    )
     bundle.retrieve.return_value = ([], [])
-    case = await run(bundle)
-    assert case.channel_metadata["model_called"] is False
+    case = await setup(bundle, [gate(["$source"], category="not_a_request")])
+    assert case.channel_metadata.get("conversation_generation_count", 0) == 0
     with closing(sqlite3.connect(bundle.repository.db_path)) as db:
         assert (
             db.execute(
-                "SELECT COUNT(*) FROM matrix_context_trial_cases WHERE trial_id='spend-runtime'"
+                "SELECT COUNT(*) FROM matrix_context_trial_cases WHERE trial_id='conversation-fixture'"
             ).fetchone()[0]
             == 0
         )
-        assert (
-            db.execute(
-                "SELECT 1 FROM sqlite_master WHERE name='matrix_context_trial_spend'"
-            ).fetchone()
-            is None
-        )
-    bundle.llm.invoke.assert_not_called()
+        receipts = db.execute(
+            "SELECT kind, status FROM matrix_context_trial_spend WHERE trial_id='conversation-fixture'"
+        ).fetchall()
+    assert receipts == [("gate", "settled")]
+    bundle.llm.invoke.assert_called_once()
+    bundle.retrieve.assert_not_called()
     bundle.sender.assert_not_awaited()

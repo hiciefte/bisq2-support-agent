@@ -83,6 +83,37 @@ def summarize(database: Path) -> list[dict[str, Any]]:
                         trial["verdict_counts"][verdict] += 1
             if row["staff_answer"]:
                 trial["cases_with_proposed_staff_answer"] += 1
+        spend_table = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE name='matrix_context_trial_spend' AND type='table'"
+        ).fetchone()
+        if spend_table:
+            for receipt in db.execute("SELECT * FROM matrix_context_trial_spend"):
+                trial = trials.setdefault(
+                    receipt["trial_id"], _empty(receipt["trial_id"])
+                )
+                kind = receipt["kind"]
+                if kind not in {"gate", "note", "update"}:
+                    continue
+                if trial["model_usage_by_kind"] is None:
+                    trial["model_usage_by_kind"] = _empty_model_usage()
+                usage = trial["model_usage_by_kind"][kind]
+                status = receipt["status"]
+                if status == "not_started":
+                    usage["cancelled_before_start"] += 1
+                    continue
+                usage["started_or_uncertain"] += 1
+                if status in {"settled", "overrun"}:
+                    usage["usage_observed"] += 1
+                if status == "uncertain":
+                    usage["uncertain"] += 1
+                for key in ("input_tokens", "output_tokens"):
+                    value = receipt[key]
+                    if isinstance(value, int) and value >= 0:
+                        usage["observed_" + key] += value
+                charged = receipt["actual_nanodollars"]
+                if charged is None:
+                    charged = receipt["reserved_nanodollars"]
+                usage["accounted_nanodollars"] += charged
         result = []
         for trial in trials.values():
             total = trial["notes_posted"]
@@ -107,6 +138,22 @@ def _empty(trial_id: str) -> dict[str, Any]:
         "verdict_counts": dict.fromkeys(VERDICTS, 0),
         "cases_with_proposed_staff_answer": 0,
         "outcome_counts_by_reason": Counter(),
+        "model_usage_by_kind": None,
+    }
+
+
+def _empty_model_usage() -> dict[str, dict[str, int]]:
+    return {
+        kind: {
+            "started_or_uncertain": 0,
+            "usage_observed": 0,
+            "uncertain": 0,
+            "cancelled_before_start": 0,
+            "observed_input_tokens": 0,
+            "observed_output_tokens": 0,
+            "accounted_nanodollars": 0,
+        }
+        for kind in ("gate", "note", "update")
     }
 
 
@@ -118,6 +165,7 @@ def main() -> None:
         json.dumps(
             {
                 "counting": "Notes posted means a durable delivered outcome with a note event ID. Verdict counts are latest active verdict per reviewer per note; disagreements remain separate. Neither proves actual reuse, delivery verification, or measured quality.",
+                "model_spend_scope": "Gate, note and update calls only. Accounted nanodollars use approved conservative prices and include uncertain reservations; one USD is 1000000000 nanodollars. Missing token usage is unknown, not zero-cost. Retrieval embeddings and other auxiliary costs are excluded.",
                 "trials": summarize(args.database),
             },
             indent=2,
