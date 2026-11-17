@@ -19,8 +19,9 @@ or acknowledgement alone is not resolution. A genuine request may be a fragment
 or problem report without a question mark. Thanks, acknowledgements and one user helping
 another do not need a draft. Staff activity matters only when addressing this requester;
 unrelated Staff chatter is not an answer. Select requester facts and relevant attributed
-exchange, without assigning another speaker's experience to the requester. A later
-requester question can remain unanswered despite earlier Staff discussion. Compare
+exchange, including Staff questions or assistance to this request even if it remains
+unresolved. Prior Staff discussion of a different request is context only. A trusted
+Staff reply to this request means no new draft, independently of resolution. Compare
 with previous_generated_request when supplied: material_change means new facts that
 change the useful reply, not thanks, repetition or unrelated chatter. Do not invent
 resolution, relationships or facts. request_summary is a short description, not a reply.
@@ -88,27 +89,13 @@ class RequestGateService:
                     or resolution.event_id not in ids
                 ):
                     raise ValueError("invalid_resolution_evidence")
-            # The model selected these Staff turns as belonging to this request.
-            # Once Staff has joined after the first draft, do not send an update.
-            generated_at = (snapshot.previous_generated_snapshot or {}).get(
-                "observed_at_ms", 0
-            )
-            if (
-                snapshot.kind == "update"
-                and generated_at
-                and any(
-                    turn.is_staff
-                    and turn.event_id in ids
-                    and turn.timestamp_ms >= generated_at
-                    for turn in snapshot.turns
-                )
-            ):
+            # Selected Staff assistance takes ownership of this request even
+            # before an initial draft. This is separate from request resolution.
+            if snapshot.staff_reply_event_ids(ids):
                 decision = decision.model_copy(
                     update={
                         "category": "already_answered",
-                        "request_resolved": False,
-                        "resolution_event_id": None,
-                        "reason": "staff_replied_after_first_draft",
+                        "reason": "staff_replied_to_request",
                     }
                 )
             return decision

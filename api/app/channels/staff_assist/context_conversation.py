@@ -164,11 +164,57 @@ class RequestSnapshot:
     draft_presented: bool = False
     replacement_allowed: bool = False
     speaker_aliases: dict[str, str] = field(default_factory=dict)
+    request_started_at_ms: int = 0
+    staff_replied: bool = False
 
     def should_draft(self, decision: Any) -> bool:
         """A withheld first draft can use the one bounded replacement slot."""
-        return decision.category == "unanswered_support_request" and (
-            self.kind == "note" or decision.material_change or self.replacement_allowed
+        return (
+            decision.category == "unanswered_support_request"
+            and not self.staff_replied
+            and not self.staff_reply_event_ids(decision.selected_event_ids)
+            and (
+                self.kind == "note"
+                or decision.material_change
+                or self.replacement_allowed
+            )
+        )
+
+    def staff_reply_event_ids(
+        self, selected_event_ids: list[str] | None = None
+    ) -> tuple[str, ...]:
+        """Native replies are certain; unthreaded membership comes from the gate.
+
+        A Staff diagnostic question already counts as taking the request, even
+        while the issue remains open. Prior Staff context for a distinct new
+        request must not count, nor may unrelated room presence create a hold.
+        """
+        own = [
+            turn
+            for turn in self.turns
+            if turn.sender_id == self.requester_id and not turn.is_staff
+        ]
+        started_at = self.request_started_at_ms or min(
+            (turn.timestamp_ms for turn in own), default=0
+        )
+        own_ids = {
+            event_id
+            for turn in own
+            for event_id in (turn.event_id, turn.replaces_event_id)
+            if event_id
+        }
+        selected = set(selected_event_ids or [])
+        return tuple(
+            turn.event_id
+            for turn in self.turns
+            if turn.is_staff
+            and not turn.is_bot
+            and turn.timestamp_ms >= started_at
+            and (
+                turn.reply_to_event_id in own_ids
+                or turn.thread_root_event_id in own_ids
+                or turn.event_id in selected
+            )
         )
 
     @property
@@ -395,6 +441,7 @@ class StaffConversationCoordinator:
                     "room_id": turn.room_id,
                     "source_event_id": turn.event_id,
                     "conversation_requester_id": turn.sender_id,
+                    "conversation_request_started_at_ms": turn.timestamp_ms,
                     "conversation_revision": 0,
                     "conversation_last_gate_revision": -1,
                     "conversation_last_requester_at_ms": turn.timestamp_ms,
@@ -441,6 +488,30 @@ class StaffConversationCoordinator:
                 members = metadata.get("incident_messages", [])
                 if is_chosen:
                     members = [*members, asdict(turn)]
+                # A Staff reply can arrive before its requester event. Reconcile
+                # captured native relations now, before optional context is trimmed,
+                # so proven Staff ownership survives trimming and process restart.
+                requester_members = [
+                    item
+                    for item in members
+                    if item["sender_id"] == row["user_id"] and not item.get("is_staff")
+                ]
+                requester_ids = {item["event_id"] for item in requester_members}
+                started_at = metadata.get("conversation_request_started_at_ms") or min(
+                    (item["timestamp_ms"] for item in requester_members), default=0
+                )
+                native_staff_ids = [
+                    item["event_id"]
+                    for item in exchange
+                    if item.get("is_staff")
+                    and not item.get("is_bot")
+                    and not item.get("redacts_event_id")
+                    and item["timestamp_ms"] >= started_at
+                    and (
+                        item.get("reply_to_event_id") in requester_ids
+                        or item.get("thread_root_event_id") in requester_ids
+                    )
+                ]
                 # Required requester/member turns survive neighborhood trimming.
                 required = {item["event_id"] for item in members}
                 optional = [
@@ -478,16 +549,18 @@ class StaffConversationCoordinator:
                     and not obvious_ack
                     and metadata.get("conversation_running_revision") is not None
                 )
-                target_member = next(
-                    (item for item in members if item["event_id"] == target), None
-                )
-                if (
-                    turn.is_staff
-                    and target_member
-                    and target_member["sender_id"] == row["user_id"]
-                    and metadata.get("conversation_generation_count", 0)
-                ):
-                    changes["conversation_staff_replied_after_draft"] = True
+                if native_staff_ids:
+                    changes["conversation_staff_replied"] = True
+                    changes["conversation_staff_reply_event_ids"] = list(
+                        dict.fromkeys(
+                            [
+                                *metadata.get("conversation_staff_reply_event_ids", []),
+                                *native_staff_ids,
+                            ]
+                        )
+                    )
+                    if metadata.get("conversation_generation_count", 0):
+                        changes["conversation_staff_replied_after_draft"] = True
                 if changed:
                     changes["conversation_revision"] = (
                         metadata.get("conversation_revision", 0) + 1
@@ -579,6 +652,19 @@ class StaffConversationCoordinator:
             bool(metadata.get("conversation_draft_presented")),
             bool(metadata.get("conversation_replacement_allowed")),
             aliases,
+            metadata.get("conversation_request_started_at_ms")
+            or min(
+                (
+                    item["timestamp_ms"]
+                    for item in metadata.get("incident_messages", [])
+                    if item["sender_id"] == case.user_id
+                ),
+                default=0,
+            ),
+            bool(
+                metadata.get("conversation_staff_replied")
+                or metadata.get("conversation_staff_replied_after_draft")
+            ),
         )
 
     async def due(self, *, now_ms: int) -> list[RequestSnapshot]:
@@ -590,6 +676,7 @@ class StaffConversationCoordinator:
                 or metadata.get("conversation_resolved")
                 or metadata.get("conversation_delivery_uncertain")
                 or metadata.get("conversation_staff_replied_after_draft")
+                or metadata.get("conversation_staff_replied")
             ):
                 continue
             if (
@@ -605,6 +692,8 @@ class StaffConversationCoordinator:
             ):
                 continue
             snapshot = await self.snapshot(row["id"], now_ms=now_ms)
+            if snapshot.staff_reply_event_ids():
+                continue
             if any(
                 turn.sender_id == snapshot.requester_id
                 and not turn.is_staff
@@ -615,6 +704,8 @@ class StaffConversationCoordinator:
         return result
 
     async def claim(self, snapshot: RequestSnapshot) -> bool:
+        if snapshot.staff_replied or snapshot.staff_reply_event_ids():
+            return False
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("BEGIN IMMEDIATE")
             row = await (
@@ -634,6 +725,7 @@ class StaffConversationCoordinator:
                 or metadata.get("conversation_running_revision") is not None
                 or metadata.get("conversation_delivery_uncertain")
                 or metadata.get("conversation_staff_replied_after_draft")
+                or metadata.get("conversation_staff_replied")
             ):
                 return False
             metadata["conversation_running_revision"] = snapshot.revision
@@ -658,22 +750,18 @@ class StaffConversationCoordinator:
                 not row
                 or row[1] not in {"pending", "in_review"}
                 or metadata.get("conversation_revision") != snapshot.revision
+                or metadata.get("conversation_staff_replied")
+                or metadata.get("conversation_staff_replied_after_draft")
             ):
                 return False
-            if (
-                snapshot.kind == "update"
-                and decision.category == "already_answered"
-                and any(
-                    turn.is_staff
-                    and turn.event_id in decision.selected_event_ids
-                    and turn.timestamp_ms
-                    >= (snapshot.previous_generated_snapshot or {}).get(
-                        "observed_at_ms", 0
-                    )
-                    for turn in snapshot.turns
-                )
-            ):
-                metadata["conversation_staff_replied_after_draft"] = True
+            staff_reply_ids = snapshot.staff_reply_event_ids(
+                decision.selected_event_ids
+            )
+            if staff_reply_ids:
+                metadata["conversation_staff_replied"] = True
+                metadata["conversation_staff_reply_event_ids"] = list(staff_reply_ids)
+                if metadata.get("conversation_generation_count", 0):
+                    metadata["conversation_staff_replied_after_draft"] = True
             metadata.update(
                 conversation_last_gate_revision=snapshot.revision,
                 conversation_gate=decision.model_dump(),
@@ -765,4 +853,6 @@ class StaffConversationCoordinator:
             and metadata.get("conversation_revision") == snapshot.revision
             and not metadata.get("conversation_resolved")
             and not metadata.get("conversation_delivery_uncertain")
+            and not metadata.get("conversation_staff_replied")
+            and not metadata.get("conversation_staff_replied_after_draft")
         )

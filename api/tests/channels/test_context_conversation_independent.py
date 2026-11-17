@@ -374,7 +374,9 @@ async def test_resolved_request_facts_do_not_leak_into_new_request(coordinator):
 
 
 @pytest.mark.asyncio
-async def test_staff_answer_is_not_requester_resolution(coordinator):
+async def test_staff_answer_keeps_request_open_but_suppresses_further_drafts(
+    coordinator,
+):
     first = await coordinator.ingest(
         turn("$one", "The application does not start", 1000), now_ms=1000
     )
@@ -398,8 +400,10 @@ async def test_staff_answer_is_not_requester_resolution(coordinator):
         now_ms=12000,
     )
     assert followup.case_id == first.case_id and not followup.created
-    due = await coordinator.due(now_ms=22000)
-    assert len(due) == 1 and due[0].case_id == first.case_id
+    case = await coordinator.service.repository.get_by_id(first.case_id)
+    assert not case.channel_metadata.get("conversation_resolved")
+    assert case.channel_metadata["conversation_staff_replied"]
+    assert await coordinator.due(now_ms=22000) == []
 
 
 @pytest.mark.asyncio
