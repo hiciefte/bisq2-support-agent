@@ -128,7 +128,9 @@ def _unsafe_reply(text: str) -> bool:
             r"\b(?:guaranteed|guarantee|will definitely|certainly will)\b", clause, re.I
         ):
             if not re.search(
-                r"\b(?:no|not|never|cannot|can't|can’t)\s+$",
+                r"\b(?:no|not|never|cannot|can['’]t|isn['’]t|aren['’]t|"
+                r"wasn['’]t|weren['’]t|won['’]t|doesn['’]t|don['’]t)"
+                r"(?:\s+(?:a|an|any))?\s+$",
                 clause[: match.start()],
                 re.I,
             ):
@@ -140,6 +142,35 @@ def _unsafe_reply(text: str) -> bool:
             text,
             re.I,
         )
+    )
+
+
+def _money_at_risk_label(*texts: str) -> bool:
+    """Conservative Staff display label, never a routing or safety decision."""
+    text = "\n".join(texts)
+    if re.search(
+        r"\b(?:deposit(?:s|ed|ing)?|refund(?:s|ed|ing)?|payments?|pay-?outs?|escrow|"
+        r"funds?|balances?|utxos?|unspent (?:transaction )?outputs?|withdrawals?|"
+        r"mediation|arbitration)\b",
+        text,
+        re.I,
+    ):
+        return True
+    asset = re.search(
+        r"\b(?:btc|bsq|bitcoin|coins?|satoshis?|eur|usd)\b|[€$£¥]", text, re.I
+    )
+    movement = re.search(
+        r"\b(?:send|sending|sent|transfer(?:s|red|ring)?|mov(?:e|ing)|release|"
+        r"spend|spent|burn|pay|buy|sell|swap|withdraw|consolidat\w*)\b",
+        text,
+        re.I,
+    )
+    wallet_operation = re.search(
+        r"\b(?:restor|recover|reset|sweep|empty|rebuild)\w*\b", text, re.I
+    )
+    return bool(
+        (asset and movement)
+        or (wallet_operation and re.search(r"\bwallets?\b", text, re.I))
     )
 
 
@@ -193,8 +224,16 @@ class StaffContextService:
         ).hexdigest()
 
     def preview(self, request: StaffContextRequest) -> StaffContextPreview:
+        money_at_risk = request.high_risk_action or _money_at_risk_label(
+            request.question,
+            *(
+                message.content
+                for message in request.recent_messages
+                if message.role == "user"
+            ),
+        )
         common = {
-            "money_at_risk": request.high_risk_action,
+            "money_at_risk": money_at_risk,
             "examples_source": self.examples_source,
             "examples_sha256": self.examples_sha256,
         }
@@ -224,6 +263,10 @@ class StaffContextService:
             decoded = json.loads(raw)
             diagnostic = "invalid_schema"
             decision = StaffContextDecision.model_validate(decoded)
+            money_at_risk = money_at_risk or _money_at_risk_label(
+                decision.reply, decision.staff_note
+            )
+            common["money_at_risk"] = money_at_risk
             sources = {source.id for source in request.evidence}
             diagnostic = "unknown_or_duplicate_sources"
             if len(set(decision.source_ids)) != len(decision.source_ids) or any(
@@ -287,7 +330,7 @@ class StaffContextService:
             )
             rendered = (
                 "AI reply"
-                + (" · money at risk" if request.high_risk_action else "")
+                + (" · money at risk" if money_at_risk else "")
                 + "\n\n"
                 + _markdown_literal(decision.reply)
             )
@@ -303,7 +346,7 @@ class StaffContextService:
                 rendered_note=rendered,
                 model_called=True,
                 usage=usage,
-                money_at_risk=request.high_risk_action,
+                money_at_risk=money_at_risk,
                 examples_source=self.examples_source,
                 examples_sha256=self.examples_sha256,
             )
