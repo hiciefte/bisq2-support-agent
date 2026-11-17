@@ -67,3 +67,32 @@ accounting. Do not describe this model budget as a total operating-cost cap.
 No deployment, activation, frozen-controller amendment or policy enablement is
 implied by these application changes. Existing pilot histories and limits remain
 unchanged.
+
+## Staff reply contract
+
+Staff drafts use an independent prompt. The model returns `reply`, `staff_note`,
+`source_ids`, `action` (`reply`, `question` or `silence`) and `reason`. The reply
+aims for fewer than 40 words: a supported cause and action, or one question when
+a missing fact decides the procedure. Supporting evidence and uncertainty belong
+in the separate Staff note. Source IDs must refer to evidence actually supplied.
+
+Documented remedies and menu paths are allowed in Staff drafts. Risk-word matches
+label a draft “Money at risk” rather than preventing generation. The safeguards
+against requesting seed words/private keys, promising outcomes or claiming that
+Staff have acted remain. Scam concerns retain the existing safety warning.
+
+Length is a style target, not a reason to discard output. Invalid or withheld
+output remains on the Admin case as literal text. A silence caused by missing
+knowledge records a short topic in `knowledge_gap`; the gap itself is not posted.
+
+Optional writing-style examples are loaded from
+`DATA_DIR/staff-context-examples.json`:
+
+```json
+[{"reply": "Which application version is installed?"}]
+```
+
+Keep real room examples in that private data directory, with no names, handles,
+trade identifiers or transaction identifiers. They illustrate style and are never
+factual grounding for a new answer. The repository contains only a small synthetic
+fallback set. Do not commit private examples, pilot inputs or generated outputs.

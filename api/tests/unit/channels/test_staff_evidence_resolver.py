@@ -69,8 +69,9 @@ def answer(
             return_value=NS(
                 content=json.dumps(
                     {
-                        "action": "note",
-                        "text": text,
+                        "action": "reply",
+                        "staff_note": "Supplied evidence supports the proposed reply.",
+                        "reply": text,
                         "source_ids": source_ids,
                         "reason": "Supported staff context.",
                     }
@@ -182,7 +183,7 @@ async def test_mixed_public_and_compiled_evidence_keeps_internal_page_unlinked()
     assert "/admin/" not in preview.rendered_note
     assert "https://" not in preview.rendered_note
     assert "wiki:Support" not in preview.rendered_note
-    assert "page-level references" in llm.invoke.call_args.kwargs["system_content"]
+    assert "page references" in llm.invoke.call_args.kwargs["system_content"]
     with pytest.raises(ValidationError, match="staff-only"):
         PublicContextRequest(question="Support?", evidence=result.evidence)
 
@@ -455,7 +456,21 @@ def test_identical_public_links_are_rendered_once():
         for i in (1, 2)
     ]
     request = PublicContextRequest(question="Support?", evidence=evidence)
-    preview = PublicContextService(answer(["e1", "e2"])).preview(request)
+    llm = NS(
+        invoke=Mock(
+            return_value=NS(
+                content=json.dumps(
+                    {
+                        "action": "note",
+                        "text": "The guidance describes the documented support workflow.",
+                        "source_ids": ["e1", "e2"],
+                        "reason": "Supported public context.",
+                    }
+                )
+            )
+        )
+    )
+    preview = PublicContextService(llm).preview(request)
     assert preview.rendered_note.count("https://bisq.wiki/Support") == 1
 
 

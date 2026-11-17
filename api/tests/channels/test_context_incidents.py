@@ -505,8 +505,9 @@ async def test_high_risk_linked_followup_does_not_lower_original_risk(runtime_ca
     release.set()
     await bundle.engine.drain()
     case = await saved_case(bundle)
-    assert case.channel_metadata["context_reason"] == "high_risk_action"
-    bundle.llm.invoke.assert_not_called()
+    assert case.channel_metadata["money_at_risk"] is True
+    assert "money at risk" in case.ai_draft_answer
+    bundle.llm.invoke.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -1152,7 +1153,10 @@ async def test_recent_activity_cannot_extend_absolute_heuristic_lifetime(
     linked = incoming(
         bundle, "$late-linked", "Does that change anything?", reply_to_event_id="$root"
     )
-    assert await store.find(linked, None) == (original.id, False)
+    assert await store.find(linked, original.channel_metadata["context_trial_id"]) == (
+        original.id,
+        False,
+    )
     await bundle.engine.close()
     bundle.llm.invoke.assert_not_called()
 

@@ -87,8 +87,8 @@ async def test_surrounding_discussion_is_attributed_without_case_ownership(
     assert len(case.channel_metadata["incident_messages"]) == 1
     assert OWNER not in json.dumps(prompt)
     assert OTHER not in json.dumps(prompt)
-    assert "possibly unrelated surrounding discussion" in STAFF_CONTEXT_PROMPT
-    assert "Do not answer a helper's question" in STAFF_CONTEXT_PROMPT
+    assert "discussing another problem" in STAFF_CONTEXT_PROMPT
+    assert "other speakers may be helping" in STAFF_CONTEXT_PROMPT
     bundle.llm.invoke.assert_called_once()
 
 

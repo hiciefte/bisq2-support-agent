@@ -84,8 +84,9 @@ async def runtime_case(tmp_path):
             return_value=NS(
                 content=json.dumps(
                     {
-                        "action": "note",
-                        "text": "The trade screen provides a mediation entry point after the trade period expires.",
+                        "action": "reply",
+                        "staff_note": "The supplied evidence supports this reply.",
+                        "reply": "The trade screen provides a mediation entry point after the trade period expires.",
                         "source_ids": ["e1"],
                         "reason": "documented_mediation_entry_point",
                     }
@@ -231,7 +232,7 @@ async def test_case_is_durable_before_generation_and_each_send(runtime_case):
     async def send(markdown, **kwargs):
         case = await saved_case(bundle)
         snapshots.append(case)
-        assert case.ai_draft_answer.startswith("AI context · ")
+        assert case.ai_draft_answer.startswith("AI reply")
         assert case.channel_metadata["evidence_snapshot"]
         assert kwargs["expected_room_id"] == STAFF_ROOM
         if len(snapshots) == 1:
@@ -306,13 +307,24 @@ async def test_only_public_wiki_evidence_enters_actual_context_prompt(runtime_ca
 
 
 @pytest.mark.asyncio
-async def test_no_public_evidence_retains_case_without_model_or_send(runtime_case):
+async def test_no_evidence_records_model_knowledge_gap_without_send(runtime_case):
     bundle = runtime_case
     bundle.retrieve.return_value = ([public_doc(type="faq")], [0.9])
+    bundle.llm.invoke.return_value = NS(
+        content=json.dumps(
+            {
+                "action": "silence",
+                "reply": "",
+                "staff_note": "",
+                "source_ids": [],
+                "reason": "knowledge_gap: missing procedure",
+            }
+        )
+    )
     case = await run(bundle)
     assert case.channel_metadata["context_status"] == "needs_human"
-    assert case.channel_metadata["context_reason"] == "no_eligible_evidence"
-    bundle.llm.invoke.assert_not_called()
+    assert case.channel_metadata["knowledge_gap"] == "missing procedure"
+    bundle.llm.invoke.assert_called_once()
     bundle.sender.assert_not_awaited()
 
 
@@ -363,8 +375,9 @@ async def test_published_faq_link_reaches_single_model_call_with_independent_gui
         return NS(
             content=json.dumps(
                 {
-                    "action": "note",
-                    "text": "Bisq 1 documentation relates this notification loop to P2P conditions, often an offline peer; it does not establish this case's cause.",
+                    "action": "reply",
+                    "staff_note": "The supplied evidence supports this reply.",
+                    "reply": "Bisq 1 documentation relates this notification loop to P2P conditions, often an offline peer; it does not establish this case's cause.",
                     "source_ids": [guide["id"]],
                     "reason": "Scoped documentation context.",
                 }
@@ -419,8 +432,9 @@ async def test_code_grounding_is_supplied_before_context_generation(runtime_case
         return NS(
             content=json.dumps(
                 {
-                    "action": "note",
-                    "text": "The Bisq 2 source release documents a mediation entry point; the user's installed release remains unconfirmed.",
+                    "action": "reply",
+                    "staff_note": "The supplied evidence supports this reply.",
+                    "reply": "The Bisq 2 source release documents a mediation entry point; the user's installed release remains unconfirmed.",
                     "source_ids": [code["id"]],
                     "reason": "Scoped staff investigation evidence.",
                 }
@@ -524,7 +538,7 @@ async def test_source_change_during_generation_preserves_note_but_suppresses_sen
     case = await run(bundle)
     assert case.channel_metadata["context_status"] == "deferred"
     assert case.channel_metadata["context_reason"] == "source_changed_or_redacted"
-    assert case.ai_draft_answer.startswith("AI context · ")
+    assert case.ai_draft_answer.startswith("AI reply")
     bundle.llm.invoke.assert_called_once()
     bundle.sender.assert_not_awaited()
 
@@ -625,7 +639,7 @@ async def test_known_staff_send_refusal_is_deferred_and_preserves_partial_root(
     case = await run(bundle)
     assert case.channel_metadata["context_status"] == "deferred"
     assert case.channel_metadata["context_reason"] == reason
-    assert case.ai_draft_answer.startswith("AI context · ")
+    assert case.ai_draft_answer.startswith("AI reply")
     assert (
         case.channel_metadata["staff_root_transaction_id"] == f"context-{case.id}-root"
     )
@@ -784,17 +798,20 @@ async def test_concurrent_runtime_instances_claim_one_generation_and_send(runtim
 
 
 @pytest.mark.asyncio
-async def test_trusted_high_risk_classification_defers_before_retrieval(runtime_case):
+async def test_trusted_high_risk_classification_generates_labeled_staff_draft(
+    runtime_case,
+):
     from app.channels.models import ClassificationDecision
 
     bundle = runtime_case
     bundle.incoming.classification = ClassificationDecision(topic_risk="high")
     case = await run(bundle)
-    assert case.channel_metadata["context_status"] == "needs_human"
-    assert case.channel_metadata["context_reason"] == "high_risk_action"
-    bundle.retrieve.assert_not_called()
-    bundle.llm.invoke.assert_not_called()
-    bundle.sender.assert_not_awaited()
+    assert case.channel_metadata["context_status"] == "delivered"
+    assert case.channel_metadata["money_at_risk"] is True
+    assert "money at risk" in case.ai_draft_answer
+    bundle.retrieve.assert_called_once()
+    bundle.llm.invoke.assert_called_once()
+    assert bundle.sender.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -1175,13 +1192,16 @@ async def test_real_nio_missing_staff_cache_defers_without_sync_or_send(runtime_
 
 
 @pytest.mark.asyncio
-async def test_rejected_model_output_retains_only_bounded_validation_code(runtime_case):
+async def test_rejected_model_output_retains_raw_text_in_admin_case_only(
+    runtime_case, caplog
+):
     bundle = runtime_case
     bundle.llm.invoke.return_value = NS(content="SECRET-RAW-INVALID-MODEL-OUTPUT")
     case = await run(bundle)
     assert case.channel_metadata["context_status"] == "needs_human"
     assert case.channel_metadata["validation_diagnostic"] == "invalid_json"
-    assert "SECRET-RAW-INVALID-MODEL-OUTPUT" not in json.dumps(case.channel_metadata)
+    assert case.channel_metadata["rejected_draft"] == "SECRET-RAW-INVALID-MODEL-OUTPUT"
+    assert "SECRET-RAW-INVALID-MODEL-OUTPUT" not in caplog.text
     bundle.sender.assert_not_awaited()
 
 
@@ -1189,8 +1209,9 @@ def clarification_response():
     return NS(
         content=json.dumps(
             {
-                "action": "clarification",
-                "text": "What status does the trade screen show?",
+                "action": "question",
+                "staff_note": "A missing detail decides the procedure.",
+                "reply": "What status does the trade screen show?",
                 "source_ids": [],
                 "reason": "missing_trade_status",
             }
@@ -1221,7 +1242,7 @@ async def test_staff_clarification_reuses_trial_reservation_thread_and_frozen_in
         )
     bundle.llm.invoke.return_value = clarification_response()
     case = await run(bundle)
-    assert case.channel_metadata["model_decision"]["action"] == "clarification"
+    assert case.channel_metadata["model_decision"]["action"] == "question"
     assert case.channel_metadata["context_status"] == "delivered"
     assert case.channel_metadata["model_called"] is True
     assert case.channel_metadata["model_call_status"] == "completed"
@@ -1293,7 +1314,7 @@ async def test_staff_clarification_keeps_post_generation_publication_guards(
 
         monkeypatch.setattr(ContextReviewStore, "update", update)
     case = await run(bundle)
-    assert case.channel_metadata["model_decision"]["action"] == "clarification"
+    assert case.channel_metadata["model_decision"]["action"] == "question"
     assert case.channel_metadata["context_status"] == "deferred"
     expected = {
         "staff_help": "staff_active",
@@ -1304,3 +1325,38 @@ async def test_staff_clarification_keeps_post_generation_publication_guards(
     bundle.llm.invoke.assert_called_once()
     bundle.sender.assert_not_awaited()
     no_public_delivery(bundle)
+
+
+@pytest.mark.asyncio
+async def test_missing_evidence_can_produce_a_question_and_structured_admin_fields(
+    runtime_case,
+):
+    bundle = runtime_case
+    bundle.retrieve.return_value = ([], [])
+    bundle.llm.invoke.return_value = clarification_response()
+    case = await run(bundle)
+    assert case.channel_metadata["context_status"] == "delivered"
+    assert (
+        case.channel_metadata["staff_reply"]
+        == "What status does the trade screen show?"
+    )
+    assert (
+        case.channel_metadata["staff_note"] == "A missing detail decides the procedure."
+    )
+    assert case.channel_metadata["knowledge_gap"] is None
+    assert case.channel_metadata["rejected_draft"] is None
+    assert len(case.channel_metadata["staff_examples_sha256"]) == 64
+    bundle.llm.invoke.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_pii_rejection_preserves_draft_for_admin_without_staff_post(runtime_case):
+    bundle = runtime_case
+    value = json.loads(bundle.llm.invoke.return_value.content)
+    value["reply"] = "Contact the person at person@example.org for this step."
+    bundle.llm.invoke.return_value = NS(content=json.dumps(value))
+    case = await run(bundle)
+    assert case.channel_metadata["context_reason"] == "context_pii_detected"
+    assert case.channel_metadata["rejected_draft"]
+    assert case.channel_metadata["staff_reply"] == value["reply"]
+    bundle.sender.assert_not_awaited()

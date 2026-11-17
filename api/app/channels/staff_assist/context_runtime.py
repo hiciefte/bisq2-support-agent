@@ -51,13 +51,15 @@ from app.channels.staff_assist.context_trial import (
     utc_now,
 )
 from app.channels.staff_assist.public_context import (
-    STAFF_CONTEXT_PROMPT,
-    PublicContextRequest,
-    PublicContextService,
     PublicEvidence,
     RoomMessage,
     _markdown_literal,
 )
+from app.channels.staff_assist.staff_context import (
+    StaffContextRequest,
+    StaffContextService,
+)
+from app.channels.staff_assist.staff_prompt import STAFF_CONTEXT_PROMPT
 from app.models.escalation import EscalationCreate
 
 logger = logging.getLogger(__name__)
@@ -744,12 +746,12 @@ class MatrixContextRuntime:
                 model_call_status="not_started",
             )
             return False
-        if getattr(
-            getattr(incoming, "classification", None), "topic_risk", None
-        ) == "high" or incoming.channel_metadata.get("incident_high_risk"):
-            await store.update(case_id, status="needs_human", reason="high_risk_action")
-            return False
-        if PublicContextRequest(question=question).needs_moderation_review:
+        money_at_risk = bool(
+            getattr(getattr(incoming, "classification", None), "topic_risk", None)
+            == "high"
+            or incoming.channel_metadata.get("incident_high_risk")
+        )
+        if StaffContextRequest(question=question).needs_moderation_review:
             await store.update(
                 case_id,
                 status="needs_human",
@@ -760,7 +762,7 @@ class MatrixContextRuntime:
             return False
         source_snapshot = _SourceContextSnapshot()
         snapshot, reason = await self._read_source(incoming, snapshot=source_snapshot)
-        if PublicContextRequest(
+        if StaffContextRequest(
             question=question, recent_messages=snapshot
         ).needs_moderation_review:
             await store.update(
@@ -872,18 +874,26 @@ class MatrixContextRuntime:
             )
             return False
         evidence = resolved.evidence
-        request = PublicContextRequest(
+        request = StaffContextRequest(
             question=question,
             recent_messages=snapshot,
             evidence=evidence,
-            audience="staff_only",
+            high_risk_action=money_at_risk,
+        )
+        staff_service = StaffContextService(
+            rag.llm, data_dir=getattr(self.runtime.settings, "DATA_DIR", None)
         )
         evidence_json = [entry.model_dump() for entry in evidence]
         versions: dict[str, Any] = {
             "retrieval_query_version": _digest(retrieval_query),
             "evidence_version": _digest(evidence_json),
             "evidence_snapshot": evidence_json,
-            "generation_version": _digest(STAFF_CONTEXT_PROMPT),
+            "generation_version": _digest(
+                {
+                    "prompt": STAFF_CONTEXT_PROMPT,
+                    "examples_sha256": staff_service.examples_sha256,
+                }
+            ),
             "evidence_diagnostics": resolved.diagnostics,
             "staff_grounding_brief": resolved.internal_grounding,
             "model_name": str(getattr(self.runtime.settings, "OPENAI_MODEL", "")),
@@ -936,7 +946,8 @@ class MatrixContextRuntime:
             )
             if reason:
                 raise PublicationSuppressed(reason)
-            return PublicContextService(budgeted_llm or rag.llm).preview(request)
+            staff_service.llm = budgeted_llm or rag.llm
+            return staff_service.preview(request)
 
         preview = await asyncio.to_thread(generate_preview)
         if budgeted_llm is not None and budgeted_llm.reason:
@@ -979,7 +990,14 @@ class MatrixContextRuntime:
             ),
             model_usage=counters or None,
             model_decision=preview.decision.model_dump(),
-            validation_diagnostic=getattr(preview, "validation_diagnostic", None),
+            staff_reply=preview.decision.reply,
+            staff_note=preview.decision.staff_note,
+            rejected_draft=preview.rejected_draft,
+            knowledge_gap=preview.knowledge_gap,
+            money_at_risk=preview.money_at_risk,
+            staff_examples_source=preview.examples_source,
+            staff_examples_sha256=preview.examples_sha256,
+            validation_diagnostic=preview.validation_diagnostic,
         )
         if not preview.rendered_note:
             # Model silence is not evidence the customer's issue was resolved.
@@ -991,9 +1009,14 @@ class MatrixContextRuntime:
             )
             return False
         note = preview.rendered_note + "\n\n" + STAFF_CONTEXT_VERDICT_HINT
-        if PIIDetector().contains_pii(note):
+        if PIIDetector().contains_pii(
+            preview.decision.reply + "\n" + preview.decision.staff_note
+        ):
             await store.update(
-                case_id, status="needs_human", reason="context_pii_detected", **versions
+                case_id,
+                status="needs_human",
+                reason="context_pii_detected",
+                **{**versions, "rejected_draft": preview.rendered_note},
             )
             return False
         used = set(preview.decision.source_ids)

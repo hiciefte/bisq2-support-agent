@@ -5,6 +5,11 @@ export interface StaffContextMetadata {
     staff_thread_url: string | null;
     evidence_version: string;
     generation_version: string;
+    staff_reply?: string;
+    staff_note?: string;
+    rejected_draft?: string;
+    knowledge_gap?: string;
+    money_at_risk?: boolean;
     late_update_requires_review?: boolean;
     generation_question?: string;
     candidate_conversation_ids?: number[];
@@ -140,6 +145,11 @@ export function staffContextMetadata(metadata?: Record<string, unknown> | null):
         staff_thread_url: matrixLink(metadata.staff_thread_url),
         evidence_version: text("evidence_version"),
         generation_version: text("generation_version"),
+        staff_reply: text("staff_reply"),
+        staff_note: text("staff_note"),
+        rejected_draft: text("rejected_draft"),
+        knowledge_gap: text("knowledge_gap"),
+        money_at_risk: metadata.money_at_risk === true,
         late_update_requires_review: metadata.incident_late_update_status === "needs_review_no_additional_generation",
         generation_question: text("incident_generation_question"),
         candidate_conversation_ids: caseIds(metadata.candidate_conversation_ids),
