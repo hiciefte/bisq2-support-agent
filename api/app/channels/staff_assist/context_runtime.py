@@ -27,6 +27,7 @@ from app.channels.policy import (
 )
 from app.channels.security import PIIDetector
 from app.channels.staff import resolve_channel_staff_resolver
+from app.channels.staff_assist.context_feedback import STAFF_CONTEXT_VERDICT_HINT
 from app.channels.staff_assist.context_incidents import (
     ContextIncidentStore,
     answer_fragment,
@@ -44,6 +45,7 @@ from app.channels.staff_assist.context_incidents import (
 )
 from app.channels.staff_assist.context_retrieval import build_retrieval_query
 from app.channels.staff_assist.context_trial import (
+    BudgetedContextLLM,
     ContextTrial,
     ContextTrialStore,
     utc_now,
@@ -312,7 +314,7 @@ class MatrixContextRuntime:
 
     async def _trial_reason(self, case_id: int | None = None) -> str | None:
         if self._trial is None:
-            return None
+            return "context_trial_budget_required"
         if self._closed:
             return "context_trial_stopped"
         try:
@@ -732,6 +734,16 @@ class MatrixContextRuntime:
                 case_id, status="deferred", reason="staff_context_destination_invalid"
             )
             return False
+        reason = await self._trial_reason()
+        if reason:
+            await store.update(
+                case_id,
+                status="deferred",
+                reason=reason,
+                model_called=False,
+                model_call_status="not_started",
+            )
+            return False
         if getattr(
             getattr(incoming, "classification", None), "topic_risk", None
         ) == "high" or incoming.channel_metadata.get("incident_high_risk"):
@@ -779,14 +791,19 @@ class MatrixContextRuntime:
                 case_id, status="needs_human", reason="generation_unavailable"
             )
             return False
-        if self._trial is not None:
+        spend_bounded = self._trial is not None and self._trial.spend_bounded
+        if self._trial is not None and not spend_bounded:
+            # Preserve the admission semantics of already-bound legacy trials.
             reason = await self._trial_reason() or await self._trial_store().reserve(
                 case_id
             )
             if reason:
                 await store.update(case_id, status="deferred", reason=reason)
                 return False
-        reason = await self._trial_reason(case_id)
+        # Spend-mode trials reserve at invoke, after deterministic refusals and
+        # retrieval. A gate call alone never authorizes a Staff note delivery.
+        pre_generation_case_id = None if spend_bounded else case_id
+        reason = await self._trial_reason(pre_generation_case_id)
         if reason:
             await store.update(case_id, status="deferred", reason=reason)
             return False
@@ -818,7 +835,7 @@ class MatrixContextRuntime:
         async def allow_live_read() -> bool:
             return (
                 not self._closed
-                and not await self._trial_reason(case_id)
+                and not await self._trial_reason(pre_generation_case_id)
                 and await self._case_is_open(case_id)
                 and is_staff_context_enabled(policy_service, "matrix")
             )
@@ -881,7 +898,7 @@ class MatrixContextRuntime:
             model_call_status="reserved",
             **versions,
         )
-        reason = await self._trial_reason(case_id)
+        reason = await self._trial_reason(pre_generation_case_id)
         if reason:
             await store.update(
                 case_id,
@@ -891,6 +908,22 @@ class MatrixContextRuntime:
                 model_call_status="not_started",
             )
             return False
+
+        budgeted_llm = (
+            BudgetedContextLLM(
+                self._trial_store(),
+                rag.llm,
+                case_id,
+                before_call=lambda: (
+                    "review_or_policy_changed"
+                    if self._closed
+                    or not is_staff_context_enabled(policy_service, "matrix")
+                    else None
+                ),
+            )
+            if spend_bounded
+            else None
+        )
 
         def generate_preview():
             # A queued executor thread may start after the async check.
@@ -903,9 +936,21 @@ class MatrixContextRuntime:
             )
             if reason:
                 raise PublicationSuppressed(reason)
-            return PublicContextService(rag.llm).preview(request)
+            return PublicContextService(budgeted_llm or rag.llm).preview(request)
 
         preview = await asyncio.to_thread(generate_preview)
+        if budgeted_llm is not None and budgeted_llm.reason:
+            await store.update(
+                case_id,
+                status="deferred",
+                reason=budgeted_llm.reason,
+                **{
+                    **versions,
+                    "model_called": False,
+                    "model_call_status": "not_started",
+                },
+            )
+            return False
         usage = preview.usage
         if hasattr(usage, "model_dump"):
             usage = usage.model_dump()
@@ -945,7 +990,7 @@ class MatrixContextRuntime:
                 **versions,
             )
             return False
-        note = preview.rendered_note
+        note = preview.rendered_note + "\n\n" + STAFF_CONTEXT_VERDICT_HINT
         if PIIDetector().contains_pii(note):
             await store.update(
                 case_id, status="needs_human", reason="context_pii_detected", **versions

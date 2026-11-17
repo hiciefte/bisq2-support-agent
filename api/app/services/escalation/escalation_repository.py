@@ -106,6 +106,7 @@ def _row_to_escalation(row: aiosqlite.Row) -> Escalation:
     d = dict(row)
     d["channel_metadata"] = _parse_json(d.get("channel_metadata"))
     d["sources"] = _parse_json(d.get("sources"))
+    d["staff_context_verdicts"] = _parse_json(d.get("staff_context_verdicts")) or []
     d["created_at"] = _parse_datetime(d["created_at"])
     d["claimed_at"] = _parse_datetime(d.get("claimed_at"))
     d["responded_at"] = _parse_datetime(d.get("responded_at"))
@@ -171,6 +172,19 @@ class EscalationRepository:
             for idx_sql in CREATE_INDICES_SQL:
                 await db.execute(idx_sql)
             await db.execute(CREATE_RATING_TOKEN_TABLE_SQL)
+            from app.channels.staff_assist.context_feedback import (
+                CREATE_ANSWER_EVENTS_SQL,
+                CREATE_VERDICT_EVENTS_SQL,
+            )
+
+            await db.execute(CREATE_VERDICT_EVENTS_SQL)
+            await db.execute(CREATE_ANSWER_EVENTS_SQL)
+            await _ensure_escalations_column(
+                db,
+                column_name="staff_context_verdicts",
+                alter_sql="ALTER TABLE escalations ADD COLUMN staff_context_verdicts TEXT NOT NULL DEFAULT '[]'",
+                success_log="Added Staff-context verdict projection",
+            )
             # Self-migration: add staff_answer_rating for existing databases
             await _ensure_escalations_column(
                 db,

@@ -20,6 +20,7 @@ from app.channels.plugins.matrix.room_filter import (
 from app.channels.policy import is_generation_enabled, is_staff_context_enabled
 from app.channels.response_dispatcher import ChannelResponseDispatcher
 from app.channels.staff import resolve_channel_staff_resolver
+from app.channels.staff_assist.context_feedback import is_context_feedback_room
 from app.channels.trust_monitor.executor import run_in_trust_monitor_executor
 
 
@@ -129,11 +130,17 @@ class MatrixMessageHandler:
         context_source = is_staff_context_enabled(
             self.autoresponse_policy_service, self.channel_id
         ) and room_id in resolve_allowed_context_source_rooms(settings)
-        if not context_source and not is_responder_room_allowed(settings, room_id):
+        context_feedback = is_context_feedback_room(settings, room_id)
+        if (
+            not context_source
+            and not context_feedback
+            and not is_responder_room_allowed(settings, room_id)
+        ):
             return
         allowed_staff_rooms = self.staff_command_room_ids
         if not room_id or (
             not context_source
+            and not context_feedback
             and room_id not in self.allowed_room_ids
             and room_id not in allowed_staff_rooms
         ):
@@ -162,6 +169,24 @@ class MatrixMessageHandler:
         ).strip()
         if self._is_self_sender(sender_id):
             return
+        if context_feedback:
+            runtime = getattr(channel, "runtime", None)
+            resolve_optional = getattr(runtime, "resolve_optional", None)
+            handler = (
+                resolve_optional("matrix_reaction_handler")
+                if callable(resolve_optional)
+                else None
+            )
+            capture = getattr(handler, "handle_context_thread_answer", None)
+            if callable(capture) and await capture(
+                room_id=room_id,
+                event=effective_event,
+                sender=sender_id,
+                answer=context_text(effective_event),
+            ):
+                return
+            if not is_responder_room_allowed(settings, room_id):
+                return
         await self._record_trust_event(
             room_id=room_id, event=effective_event, sender_id=sender_id, room=room
         )

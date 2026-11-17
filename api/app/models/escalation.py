@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -89,6 +89,16 @@ class EscalationCreate(BaseModel):
         return normalized or None
 
 
+class StaffContextVerdict(BaseModel):
+    """One reviewer's latest non-redacted verdict; never delivery authorization."""
+
+    event_id: str
+    target_event_id: str
+    reviewer: str
+    verdict: Literal["would_send_as_is", "would_send_after_edit", "wrong", "not_needed"]
+    at: datetime
+
+
 class Escalation(BaseModel):
     """Full escalation record (database row)."""
 
@@ -112,6 +122,7 @@ class Escalation(BaseModel):
     staff_id: Optional[str] = None
     edit_distance: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     staff_answer_rating: Optional[int] = None
+    staff_context_verdicts: List[StaffContextVerdict] = Field(default_factory=list)
     delivery_status: EscalationDeliveryStatus = EscalationDeliveryStatus.NOT_REQUIRED
     delivery_error: Optional[str] = None
     delivery_attempts: int = 0

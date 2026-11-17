@@ -22,6 +22,12 @@ from app.channels.reactions import (
     ReactionRating,
 )
 from app.channels.staff import resolve_channel_staff_resolver
+from app.channels.staff_assist.context_feedback import (
+    STAFF_CONTEXT_VERDICTS,
+    ContextFeedbackStore,
+    event_timestamp_ms,
+    is_context_feedback_room,
+)
 from app.models.escalation import EscalationDeliveryStatus
 
 NioReactionEventType: Any = object
@@ -106,6 +112,8 @@ class MatrixReactionHandler(ReactionHandlerBase):
         """
         try:
             room_id = str(getattr(room, "room_id", "") or "").strip()
+            if await self._handle_context_verdict(room_id=room_id, event=event):
+                return
             if not is_responder_room_allowed(
                 getattr(self.runtime, "settings", None), room_id
             ):
@@ -179,6 +187,98 @@ class MatrixReactionHandler(ReactionHandlerBase):
                 "Error processing Matrix reaction event: %s",
                 getattr(event, "event_id", "unknown"),
             )
+
+    def _context_feedback_store(self) -> ContextFeedbackStore | None:
+        service = self.runtime.resolve_optional("escalation_service")
+        path = getattr(getattr(service, "repository", None), "db_path", None)
+        return ContextFeedbackStore(path) if isinstance(path, str) and path else None
+
+    async def _handle_context_verdict(self, *, room_id: str, event: Any) -> bool:
+        if not is_context_feedback_room(
+            getattr(self.runtime, "settings", None), room_id
+        ):
+            return False
+        source = getattr(event, "source", {})
+        content = source.get("content", {}) if isinstance(source, dict) else {}
+        relation = content.get("m.relates_to", {})
+        if not isinstance(relation, dict) or relation.get("rel_type") != "m.annotation":
+            return False
+        target = relation.get("event_id")
+        if not isinstance(target, str) or not target:
+            return False
+        store = self._context_feedback_store()
+        if store is None or not await store.has_note(room_id, target):
+            return False
+        # All reactions on these notes are internal, including unknown emojis
+        # and untrusted senders. Never fall through to feedback/learning/send.
+        sender = str(getattr(event, "sender", "") or "")
+        if not self._is_staff_sender(sender):
+            return True
+        key = self._normalize_staff_action_key(str(relation.get("key", "")))
+        verdict = STAFF_CONTEXT_VERDICTS.get(key)
+        timestamp = event_timestamp_ms(event)
+        event_id = getattr(event, "event_id", None)
+        if verdict and timestamp is not None and isinstance(event_id, str):
+            await store.record_verdict(
+                room_id=room_id,
+                target_event_id=target,
+                event_id=event_id,
+                reviewer=sender,
+                verdict=verdict,
+                timestamp_ms=timestamp,
+            )
+        return True
+
+    async def handle_context_thread_answer(
+        self, *, room_id: str, event: Any, sender: str, answer: str
+    ) -> bool:
+        if not is_context_feedback_room(
+            getattr(self.runtime, "settings", None), room_id
+        ):
+            return False
+        if not self._is_staff_sender(sender):
+            return False
+        source = getattr(event, "source", {})
+        content = source.get("content", {}) if isinstance(source, dict) else {}
+        relation = content.get("m.relates_to", {})
+        if not isinstance(relation, dict) or relation.get("rel_type") not in {
+            "m.thread",
+            "m.replace",
+        }:
+            return False
+        replaces = (
+            relation.get("event_id", "")
+            if relation.get("rel_type") == "m.replace"
+            else ""
+        )
+        root = relation.get("event_id", "") if not replaces else ""
+        timestamp = event_timestamp_ms(event)
+        event_id = getattr(event, "event_id", None)
+        if (
+            not isinstance(root, str)
+            or not isinstance(event_id, str)
+            or timestamp is None
+        ):
+            return False
+        # Commands are not proposed reply text. They retain their existing path.
+        if answer.strip().startswith("/"):
+            return False
+        store = self._context_feedback_store()
+        if store is None:
+            return False
+        reply_to = relation.get("m.in_reply_to", {})
+        return await store.record_answer(
+            room_id=room_id,
+            root_event_id=root,
+            event_id=event_id,
+            reviewer=sender,
+            answer=answer,
+            timestamp_ms=timestamp,
+            reply_to_event_id=(
+                reply_to.get("event_id", "") if isinstance(reply_to, dict) else ""
+            ),
+            replaces_event_id=replaces,
+        )
 
     @staticmethod
     def _normalize_staff_action_key(key: str) -> str:
@@ -594,8 +694,21 @@ class MatrixReactionHandler(ReactionHandlerBase):
         """
         redacts = getattr(event, "redacts", None)
         if not redacts:
+            source = getattr(event, "source", {})
+            redacts = (
+                source.get("content", {}).get("redacts")
+                if isinstance(source, dict)
+                else None
+            )
+        if not isinstance(redacts, str) or not redacts:
             return
         room_id = str(getattr(room, "room_id", "") or "").strip()
+        if is_context_feedback_room(getattr(self.runtime, "settings", None), room_id):
+            store = self._context_feedback_store()
+            if store is not None and self._is_staff_sender(
+                str(getattr(event, "sender", "") or "")
+            ):
+                await store.redact_verdict(room_id, redacts)
         if not is_responder_room_allowed(
             getattr(self.runtime, "settings", None), room_id
         ):

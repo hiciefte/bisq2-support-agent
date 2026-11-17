@@ -112,6 +112,14 @@ async def runtime_case(tmp_path):
             MATRIX_CONTEXT_SOURCE_ROOMS=[SOURCE_ROOM],
             MATRIX_STAFF_ROOM=STAFF_ROOM,
             OPENAI_MODEL="openai:test-model",
+            MATRIX_CONTEXT_TRIAL_ID="legacy-fixture",
+            MATRIX_CONTEXT_TRIAL_START_AT=(
+                datetime.now(timezone.utc) - timedelta(days=1)
+            ).isoformat(),
+            MATRIX_CONTEXT_TRIAL_END_AT=(
+                datetime.now(timezone.utc) + timedelta(days=1)
+            ).isoformat(),
+            MATRIX_CONTEXT_TRIAL_MAX_CASES=20,
         ),
     )
     incoming = IncomingMessage(
@@ -131,6 +139,16 @@ async def runtime_case(tmp_path):
         send_message=AsyncMock(),
     )
     engine = MatrixContextRuntime(runtime)
+    # Retained legacy trial receipt: these tests exercise the pre-existing path.
+    # New trials must use explicit spend bounds (covered separately).
+    with closing(sqlite3.connect(repository.db_path)) as db, db:
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS matrix_context_trials (trial_id TEXT PRIMARY KEY, descriptor TEXT NOT NULL)"
+        )
+        db.execute(
+            "INSERT INTO matrix_context_trials VALUES (?, ?)",
+            (engine._trial.trial_id, engine._trial.descriptor()),
+        )
     bundle = NS(
         repository=repository,
         service=service,
@@ -573,7 +591,7 @@ async def test_invalid_staff_destination_defers_before_retrieval_or_provider(
     case = await run(bundle)
     assert case.channel_metadata["context_status"] == "deferred"
     assert (
-        case.channel_metadata["context_reason"] == "staff_context_destination_invalid"
+        case.channel_metadata["context_reason"] == "context_trial_configuration_changed"
     )
     bundle.client.room_context.assert_not_awaited()
     bundle.retrieve.assert_not_called()
@@ -724,6 +742,13 @@ async def test_source_identity_is_scoped_by_room_and_event(runtime_case):
     bundle = runtime_case
     other_room = "!other-support:example.org"
     bundle.runtime.settings.MATRIX_CONTEXT_SOURCE_ROOMS.append(other_room)
+    bundle.runtime.settings.MATRIX_CONTEXT_TRIAL_ID = "legacy-two-room-fixture"
+    bundle.engine = MatrixContextRuntime(bundle.runtime)
+    with closing(sqlite3.connect(bundle.repository.db_path)) as db, db:
+        db.execute(
+            "INSERT INTO matrix_context_trials VALUES (?, ?)",
+            (bundle.engine._trial.trial_id, bundle.engine._trial.descriptor()),
+        )
     bundle.sender.side_effect = lambda *a, **kw: SendResult(
         True, "$" + kw["transaction_id"]
     )
@@ -1189,6 +1214,11 @@ async def test_staff_clarification_reuses_trial_reservation_thread_and_frozen_in
     ).isoformat()
     bundle.runtime.settings.MATRIX_CONTEXT_TRIAL_MAX_CASES = 2
     bundle.engine = MatrixContextRuntime(bundle.runtime)
+    with closing(sqlite3.connect(bundle.repository.db_path)) as db, db:
+        db.execute(
+            "INSERT INTO matrix_context_trials VALUES (?, ?)",
+            (bundle.engine._trial.trial_id, bundle.engine._trial.descriptor()),
+        )
     bundle.llm.invoke.return_value = clarification_response()
     case = await run(bundle)
     assert case.channel_metadata["model_decision"]["action"] == "clarification"
