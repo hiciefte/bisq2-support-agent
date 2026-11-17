@@ -172,6 +172,30 @@ async def test_live_gate_blocks_nonrequest_without_note_slot(runtime_case):
     no_public_delivery(bundle)
 
 
+@pytest.mark.parametrize("category", ["not_a_request", "helping_another"])
+async def test_live_later_question_after_nonrequest_reaches_eligibility(
+    runtime_case, category
+):
+    bundle = runtime_case
+    case = await setup(
+        bundle,
+        [gate(["$source"], category=category), gate(["$question"]), draft()],
+    )
+    original_id = case.id
+    assert not case.channel_metadata.get("conversation_resolved")
+    bundle.sender.assert_not_awaited()
+    case = await incoming(
+        bundle,
+        event(bundle, "$question", "How do I open mediation after the trade period?"),
+    )
+    assert case.id == original_id
+    assert case.channel_metadata["conversation_generation_count"] == 1
+    assert not case.channel_metadata.get("conversation_admission_history")
+    assert bundle.llm.invoke.call_count == 3
+    assert case.channel_metadata["context_status"] == "delivered"
+    no_public_delivery(bundle)
+
+
 async def test_live_neighbor_staff_does_not_suppress_request(runtime_case):
     bundle = runtime_case
     case = await setup(bundle, [gate(["$source"]), draft()])

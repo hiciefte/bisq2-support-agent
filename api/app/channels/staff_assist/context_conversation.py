@@ -657,6 +657,15 @@ class StaffConversationCoordinator:
                     and not obvious_ack
                     and metadata.get("conversation_running_revision") is not None
                 )
+                if (
+                    (metadata.get("conversation_gate") or {}).get("category")
+                    in {"not_a_request", "helping_another"}
+                    and turn.sender_id != row["user_id"]
+                    and metadata.get("conversation_running_revision") is None
+                ):
+                    # Keep helper context and native Staff ownership, but only
+                    # new requester facts can reopen a filtered non-request.
+                    changed = False
                 if native_staff_ids:
                     changes["conversation_staff_replied"] = True
                     changes["conversation_staff_reply_event_ids"] = list(
@@ -1240,9 +1249,10 @@ class StaffConversationCoordinator:
             metadata.update(
                 conversation_last_gate_revision=snapshot.revision,
                 conversation_gate=decision.model_dump(),
-                conversation_resolved=decision.category
-                in {"not_a_request", "helping_another"}
-                or getattr(decision, "request_resolved", False),
+                # Filtering commentary is not resolution of a support request.
+                # The handled revision already prevents repeat work; a later
+                # requester question must still reach ordinary eligibility.
+                conversation_resolved=getattr(decision, "request_resolved", False),
             )
             await db.execute(
                 "UPDATE escalations SET channel_metadata=? WHERE id=?",

@@ -25,6 +25,91 @@ async def coordinator(tmp_path):
     return await base.__wrapped__(tmp_path)
 
 
+@pytest.mark.parametrize("category", ["not_a_request", "helping_another"])
+async def test_filtered_nonrequest_can_later_become_a_request(coordinator, category):
+    first = await coordinator.ingest(turn("$comment", "Same here", 1000), now_ms=1000)
+    snapshot = await coordinator.snapshot(first.case_id, now_ms=11000)
+    assert await coordinator.claim(snapshot)
+    await coordinator.record_gate(
+        snapshot, decision(["$comment"], category=category, material=False)
+    )
+    await coordinator.finish(snapshot)
+    case = await coordinator.service.repository.get_by_id(first.case_id)
+    assert not case.channel_metadata.get("conversation_resolved")
+    assert case.channel_metadata["conversation_gate"]["category"] == category
+    assert await coordinator.due(now_ms=100000) == []
+
+    await coordinator.ingest(
+        turn(
+            "$helper",
+            "I have seen that behavior too.",
+            100001,
+            sender="@helper:example.org",
+            reply_to_event_id="$comment",
+        ),
+        now_ms=100001,
+    )
+    await coordinator.ingest(
+        turn("$thanks", "Thanks!", 100002, reply_to_event_id="$comment"),
+        now_ms=100002,
+    )
+    assert await coordinator.due(now_ms=150000) == []
+    assert not await coordinator.claim(
+        await coordinator.snapshot(first.case_id, now_ms=150000)
+    )
+
+    restarted = StaffConversationCoordinator(
+        coordinator.service, coordinator.trial_id, first_response_delay_seconds=10
+    )
+    later = await restarted.ingest(
+        turn("$question", "How does synchronization choose the correct state?", 200000),
+        now_ms=200000,
+    )
+    assert later.case_id == first.case_id and not later.created
+    assert await restarted.due(now_ms=209999) == []
+    due = await restarted.due(now_ms=210000)
+    assert len(due) == 1 and due[0].kind == "note"
+    assert {item.event_id for item in due[0].turns} == {
+        "$comment",
+        "$helper",
+        "$thanks",
+        "$question",
+    }
+    assert await restarted.claim(due[0])
+    assert await restarted.record_gate(due[0], decision(["$question"]))
+    await restarted.finish(due[0])
+    case = await restarted.service.repository.get_by_id(first.case_id)
+    assert not case.channel_metadata.get("conversation_admission_pending")
+    assert case.channel_metadata.get("conversation_generation_count", 0) == 0
+    assert (
+        case.channel_metadata["conversation_gate"]["category"]
+        == "unanswered_support_request"
+    )
+
+
+async def test_explicit_requester_resolution_still_requires_new_request_admission(
+    coordinator,
+):
+    first = await coordinator.ingest(
+        turn("$resolved", "It works again; the problem is resolved.", 1000), now_ms=1000
+    )
+    snapshot = await coordinator.snapshot(first.case_id, now_ms=11000)
+    assert await coordinator.claim(snapshot)
+    resolution = decision(
+        ["$resolved"], category="not_a_request", material=False, resolved=True
+    ).model_copy(update={"resolution_event_id": "$resolved"})
+    assert await coordinator.record_gate(snapshot, resolution)
+    await coordinator.finish(snapshot)
+    case = await coordinator.service.repository.get_by_id(first.case_id)
+    assert case.channel_metadata["conversation_resolved"]
+    later = await coordinator.ingest(
+        turn("$question", "How do transaction fees work?", 200000), now_ms=200000
+    )
+    assert later.case_id == first.case_id and not later.created
+    due = await coordinator.due(now_ms=210000)
+    assert len(due) == 1 and due[0].kind == "admission"
+
+
 def admission(relation="new_request", ids=None):
     return RequestAdmissionDecision(
         relation=relation,
