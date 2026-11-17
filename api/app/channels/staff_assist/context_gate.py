@@ -21,7 +21,9 @@ feedback alone does not establish a request for help. Thanks, acknowledgements a
 one user helping another do not need a draft. Staff activity matters only when addressing this requester;
 unrelated Staff chatter is not an answer. Select requester facts and relevant attributed
 exchange, including Staff questions or assistance to this request even if it remains
-unresolved. Prior Staff discussion of a different request is context only. A trusted
+unresolved. Consider relevant peer assistance when deciding what help remains useful;
+peer claims stay attributed and do not establish verified facts or Staff ownership.
+Prior Staff discussion of a different request is context only. A trusted
 Staff reply to this request means no new draft, independently of resolution. Compare
 with previous_generated_request when supplied: material_change means new facts that
 change the useful reply, not thanks, repetition or unrelated chatter. Do not invent
