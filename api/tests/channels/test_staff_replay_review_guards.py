@@ -139,16 +139,14 @@ def test_execution_copy_is_verified_and_claim_survives_copied_manifest(
         lambda **k: pytest.fail("provider constructed before exact DB verification"),
     )
     monkeypatch.setenv("OPENAI_API_KEY", "synthetic-never-used")
-    original = shutil.copyfile
+    original = recovery.write_database_image
 
-    def corrupted_copy(source, target, *a, **k):
-        value = original(source, target, *a, **k)
-        if Path(target).name == "replay.db":
-            with Path(target).open("ab") as stream:
-                stream.write(b"different copied ledger")
-        return value
+    def corrupted_copy(target, image):
+        original(target, image)
+        with Path(target).open("ab") as stream:
+            stream.write(b"different copied ledger")
 
-    monkeypatch.setattr(shutil, "copyfile", corrupted_copy)
+    monkeypatch.setattr(recovery, "write_database_image", corrupted_copy)
     execute_args = NS(
         owner_approved=True,
         approve_manifest_sha256=result["manifest_sha256"],
@@ -158,7 +156,7 @@ def test_execution_copy_is_verified_and_claim_survives_copied_manifest(
         recovery.execute(execute_args)
     moved = tmp_path / "copied-approval"
     moved.mkdir()
-    original(execute_args.manifest, moved / "manifest.json")
+    shutil.copyfile(execute_args.manifest, moved / "manifest.json")
     execute_args.manifest = moved / "manifest.json"
     with pytest.raises(FileExistsError):
         recovery.execute(execute_args)
@@ -354,16 +352,14 @@ def test_copied_parent_directories_share_original_execution_claim(
     monkeypatch.setattr(
         openai, "OpenAI", lambda **kw: pytest.fail("provider was constructed")
     )
-    original_copy = shutil.copyfile
+    original_copy = recovery.write_database_image
 
-    def corrupt_ledger(src, dst, *a, **k):
-        result = original_copy(src, dst, *a, **k)
-        if Path(dst).name == "replay.db":
-            with Path(dst).open("ab") as stream:
-                stream.write(b"changed")
-        return result
+    def corrupt_ledger(dst, image):
+        original_copy(dst, image)
+        with Path(dst).open("ab") as stream:
+            stream.write(b"changed")
 
-    monkeypatch.setattr(shutil, "copyfile", corrupt_ledger)
+    monkeypatch.setattr(recovery, "write_database_image", corrupt_ledger)
     with pytest.raises(ValueError, match="Copied continuation ledger changed"):
         recovery.execute(
             NS(
@@ -439,3 +435,197 @@ async def test_many_changed_admissions_drain_iteratively_without_stack_growth(
     assert result["stopped_reason"] is None
     assert result["gate_calls_recorded"] == total
     assert state == {"count": total, "finished": total}
+
+
+def test_prepared_ledger_replacement_is_not_used_after_pin_validation(
+    tmp_path, monkeypatch
+):
+    """Validation consumes the approved image, not a reopened mutable pathname."""
+    import sqlite3
+    from contextlib import closing
+
+    args, _, _ = asyncio.run(make_parent(tmp_path))
+    result = recovery.prepare(args)
+    database = args.output / "prepared-state.db"
+    expected = database.read_bytes()
+    original = recovery.pinned_bytes
+
+    def replace_after_verified_read(pin):
+        data = original(pin)
+        if Path(pin["path"]) == database:
+            with closing(sqlite3.connect(database)) as db, db:
+                db.execute("UPDATE matrix_context_trial_spend SET actual_nanodollars=0")
+        return data
+
+    monkeypatch.setattr(recovery, "pinned_bytes", replace_after_verified_read)
+    _, parent = recovery.approved_manifest(
+        args.output / "manifest.json", result["manifest_sha256"]
+    )
+    assert parent["prepared_buffers"]["prepared-state.db"] == expected
+    assert recovery.receipts_from_bytes(expected) == parent["receipts"]
+    assert recovery.receipts(database) != parent["receipts"]
+    with pytest.raises(ValueError, match="Continuation input changed"):
+        recovery.approved_manifest(
+            args.output / "manifest.json", result["manifest_sha256"]
+        )
+
+
+def test_prepare_pins_same_database_image_as_receipt_validation(tmp_path, monkeypatch):
+    """A pathname mutation after capture cannot bind a different spend balance."""
+    import sqlite3
+    from contextlib import closing
+
+    args, _, _ = asyncio.run(make_parent(tmp_path))
+    original = recovery.receipts_from_bytes
+    approved_images = []
+
+    def mutate_after_validation(image):
+        rows = original(image)
+        approved_images.append(image)
+        with closing(sqlite3.connect(args.output / "prepared-state.db")) as db, db:
+            db.execute("UPDATE matrix_context_trial_spend SET actual_nanodollars=0")
+        return rows
+
+    monkeypatch.setattr(recovery, "receipts_from_bytes", mutate_after_validation)
+    result = recovery.prepare(args)
+    manifest = json.loads((args.output / "manifest.json").read_bytes())
+    assert manifest["prepared_pins"]["prepared-state.db"][
+        "sha256"
+    ] == replay.digest_bytes(approved_images[0])
+    with pytest.raises(ValueError, match="Continuation input changed"):
+        recovery.approved_manifest(
+            args.output / "manifest.json", result["manifest_sha256"]
+        )
+
+
+def test_unstarted_cleanup_failure_without_intent_is_still_audited(
+    tmp_path, monkeypatch
+):
+    """A cap refusal never reaches the provider even if cancellation fails."""
+    from tests.channels.test_context_spend import rows, spend_trial
+
+    trial = spend_trial(
+        MATRIX_CONTEXT_TRIAL_BUDGET_USD="1", MATRIX_CONTEXT_TRIAL_DAILY_BUDGET_USD="1"
+    )
+    store = ContextTrialStore(str(tmp_path / "replay.db"), trial)
+    llm = wrapper(store).llm
+    calls = replay.ReplayCalls(
+        {"max_model_calls": 0, "maximum_elapsed_seconds": 60, "model": trial.model},
+        llm,
+        store,
+        tmp_path,
+    )
+
+    def failed_cleanup(*args, **kwargs):
+        raise OSError("synthetic cancellation failure")
+
+    monkeypatch.setattr(store, "cancel_unstarted_call", failed_cleanup)
+    adapter = calls.adapter(
+        NS(case_id=1, version="cap-refused"), kind="gate", virtual_time_ms=1000
+    )
+    with pytest.raises(RuntimeError, match="replay_model_call_cap_reached"):
+        adapter.invoke("Synthetic question", system_content="Synthetic system")
+    llm.invoke.assert_not_called()
+    assert calls.calls == 0
+    assert not (tmp_path / "call-intents.jsonl").exists()
+    assert rows(store)[0]["status"] == "uncertain"
+    assert replay.read_jsonl(tmp_path / "calls-not-started.jsonl") == [
+        {
+            "case_id": 1,
+            "kind": "gate",
+            "call_id": "cap-refused",
+            "status": "provider_not_started_ledger_uncertain",
+            "reason": "replay_model_call_cap_reached",
+            "cleanup_error_class": "OSError",
+        }
+    ]
+
+
+def test_exclusive_claim_syncs_parent_directory_and_closes_it(tmp_path, monkeypatch):
+    """The durable execution claim includes its new directory entry."""
+    import os
+    import stat
+
+    synced, directory_fds = [], []
+    original_fsync = os.fsync
+
+    def observe(fd):
+        is_directory = stat.S_ISDIR(os.fstat(fd).st_mode)
+        synced.append(is_directory)
+        if is_directory:
+            directory_fds.append(fd)
+        return original_fsync(fd)
+
+    monkeypatch.setattr(replay.os, "fsync", observe)
+    replay.write_private(tmp_path / "claim.json", {"attempted": True})
+    assert synced == [False, True]
+    with pytest.raises(OSError):
+        os.fstat(directory_fds[0])
+
+
+def test_failed_claim_directory_sync_is_reported_and_does_not_reopen_claim(
+    tmp_path, monkeypatch
+):
+    """A directory fsync failure keeps an ambiguous claim and closes its fd."""
+    import os
+    import stat
+
+    original_fsync = os.fsync
+    directories = []
+
+    def fail_directory(fd):
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            directories.append(fd)
+            raise OSError("synthetic directory sync failure")
+        return original_fsync(fd)
+
+    monkeypatch.setattr(replay.os, "fsync", fail_directory)
+    path = tmp_path / "claim.json"
+    with pytest.raises(OSError, match="directory sync"):
+        replay.write_private(path, {"attempted": True})
+    with pytest.raises(OSError):
+        os.fstat(directories[0])
+    with pytest.raises(FileExistsError):
+        replay.write_private(path, {"attempted": True})
+
+
+def test_execution_instantiates_only_the_captured_approved_ledger(
+    tmp_path, monkeypatch
+):
+    """Mutating prepared files after approval cannot lower execution accounting."""
+    import sqlite3
+    from contextlib import closing
+
+    import openai
+
+    args, _, _ = asyncio.run(make_parent(tmp_path))
+    result = recovery.prepare(args)
+    expected = (args.output / "prepared-state.db").read_bytes()
+    original = recovery.approved_manifest
+
+    def replace_after_approval(*values):
+        approved = original(*values)
+        with closing(sqlite3.connect(args.output / "prepared-state.db")) as db, db:
+            db.execute("UPDATE matrix_context_trial_spend SET actual_nanodollars=0")
+        (args.output / "continuation-state.json").write_text("{}")
+        (args.output / "reconciled-gate.json").write_text("{}")
+        return approved
+
+    class StopBeforeProvider(Exception):
+        pass
+
+    def verify_before_client(**kwargs):
+        assert (args.output / "execution" / "replay.db").read_bytes() == expected
+        raise StopBeforeProvider
+
+    monkeypatch.setattr(recovery, "approved_manifest", replace_after_approval)
+    monkeypatch.setattr(openai, "OpenAI", verify_before_client)
+    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-never-used")
+    with pytest.raises(StopBeforeProvider):
+        recovery.execute(
+            NS(
+                owner_approved=True,
+                approve_manifest_sha256=result["manifest_sha256"],
+                manifest=args.output / "manifest.json",
+            )
+        )

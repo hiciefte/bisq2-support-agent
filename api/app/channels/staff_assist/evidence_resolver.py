@@ -282,7 +282,10 @@ class StaffEvidenceResolver:
         # Resolve published FAQ links after grounding so scoped documentation
         # cannot change the inferred product used for code/release selection.
         linked = self._linked_guide(
-            question, published_faqs, product=product, user_version=user_version
+            question,
+            [faq for faq in published_faqs if faq[0].id not in conflicted_ids],
+            product=product,
+            user_version=user_version,
         )
         if linked is not None:
             # The bounded reviewed guide must survive the evidence cap. Prefer
@@ -297,7 +300,7 @@ class StaffEvidenceResolver:
         # them consume the eight usable evidence slots or re-enter by source ID.
         conflicted_ids.update(_conflicted_source_ids(candidates, product))
         eligible = []
-        excluded_ids = set()
+        excluded_snapshots = set()
         for source in candidates:
             annotated = annotate_source(source, product=product)
             applicability = annotated.provenance["staff_applicability"]
@@ -309,8 +312,13 @@ class StaffEvidenceResolver:
                 applicability["product_scope"] = "conflict"
             if applicability["eligible_for_reply"]:
                 eligible.append(annotated)
-            elif source.id not in excluded_ids:
-                excluded_ids.add(source.id)
+            else:
+                # Keep distinct conflicting bodies and scope labels for Admin;
+                # collapse only an identical repeated snapshot, never by ID alone.
+                snapshot = json.dumps(annotated.model_dump(), sort_keys=True)
+                if snapshot in excluded_snapshots:
+                    continue
+                excluded_snapshots.add(snapshot)
                 excluded = annotated.model_copy(
                     update={"id": f"excluded-{len(bundle.excluded_evidence) + 1}"}
                 )

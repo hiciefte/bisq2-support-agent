@@ -39,6 +39,17 @@ case "$action" in
         test "$#" -eq 0
         run_docker_compose "$DOCKER_DIR" "$COMPOSE_FILE" config --format json
         ;;
+    candidate-config)
+        test "$#" -eq 1
+        candidate_compose=$1
+        test -f "$candidate_compose" && test ! -L "$candidate_compose"
+        case "$candidate_compose" in /*/docker/docker-compose.yml) ;; *) exit 2;; esac
+        # CWD, env file, relative mounts, build contexts, and any preserved
+        # override all resolve exactly as they will after source publication.
+        run_docker_compose "$DOCKER_DIR" "$candidate_compose" \
+            --project-directory "$DOCKER_DIR" --env-file "$DOCKER_DIR/.env" \
+            config --format json
+        ;;
     build-id)
         test "$#" -eq 1
         get_build_id "$1"

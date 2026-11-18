@@ -179,6 +179,20 @@ class EscalationRepository:
 
             await db.execute(CREATE_VERDICT_EVENTS_SQL)
             await db.execute(CREATE_ANSWER_EVENTS_SQL)
+            if not await _column_exists(
+                db,
+                table_name="matrix_context_answer_events",
+                column_name="reply_to_event_id",
+            ):
+                try:
+                    await db.execute(
+                        "ALTER TABLE matrix_context_answer_events ADD COLUMN reply_to_event_id TEXT"
+                    )
+                except sqlite3.OperationalError as exc:
+                    # Concurrent initialization may have completed this additive
+                    # migration; all unrelated SQLite failures remain fatal.
+                    if "duplicate column name" not in str(exc).lower():
+                        raise
             await _ensure_escalations_column(
                 db,
                 column_name="staff_context_verdicts",

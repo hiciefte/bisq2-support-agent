@@ -532,11 +532,13 @@ class MatrixContextRuntime:
         self, snapshot: RequestSnapshot
     ) -> str | None:
         """Check the fresh anchor; old captured turns need not fit on this page."""
+        anchor = snapshot.anchor
+        if anchor is None:
+            return "conversation_no_text_anchor"
         client = self.runtime.resolve_optional("matrix_client")
         resolver = resolve_channel_staff_resolver(self.runtime, "matrix")
         if client is None or resolver is None:
             return "source_unavailable"
-        anchor = snapshot.anchor
         try:
             response = await asyncio.wait_for(
                 client.room_context(snapshot.room_id, anchor.event_id, limit=40),
@@ -570,6 +572,24 @@ class MatrixContextRuntime:
             *(getattr(response, "events_after", []) or []),
         ]
         retained = {turn.event_id: turn for turn in snapshot.turns}
+        case = await coordinator.service.repository.get_by_id(snapshot.case_id)
+        original_ids = {
+            turn.replaces_event_id for turn in snapshot.turns if turn.replaces_event_id
+        }
+        # The projected edit alone cannot establish that its original survives.
+        # Compare originals only when visible on this same bounded page.
+        originals = (
+            {
+                item["event_id"]: ConversationTurn.from_dict(item)
+                for item in (case.channel_metadata or {}).get(
+                    "conversation_exchange", []
+                )
+                if item["event_id"] in original_ids
+            }
+            if case
+            else {}
+        )
+        retained.update(originals)
         # Supplement only this existing bounded anchor read. No pagination or
         # expanded room capture, and no new cases from historical neighbors.
         for item in timeline:
@@ -588,8 +608,14 @@ class MatrixContextRuntime:
                     return "source_changed_or_redacted"
                 continue
             previous = retained.get(turn.event_id)
+            source = getattr(item, "source", None) or {}
+            unsigned = source.get("unsigned", {}) if isinstance(source, dict) else {}
+            observed_redaction = isinstance(unsigned, dict) and bool(
+                unsigned.get("redacted_because")
+            )
             if previous is not None and (
-                previous.sender_id != turn.sender_id
+                observed_redaction
+                or previous.sender_id != turn.sender_id
                 or previous.timestamp_ms != turn.timestamp_ms
                 or previous.text != turn.text
                 or previous.non_text != turn.non_text
@@ -678,7 +704,7 @@ class MatrixContextRuntime:
                     await coordinator.record_admission(
                         snapshot, failure={"reason": reason, "model_called": False}
                     )
-                    return False
+                    return reason == "conversation_no_text_anchor"
                 classification_dispatched = True
                 decision = await asyncio.to_thread(service.classify, snapshot)
                 reason = await self._trial_reason() or (
@@ -728,7 +754,9 @@ class MatrixContextRuntime:
                 await coordinator.finish(snapshot, uncertain=uncertain)
             if result and result.created:
                 await self._start_conversation_worker(result.case_id, channel)
-                return False
+                # Promotion settles the boundary, not the parent's unanswered
+                # request. Its existing worker must recheck ordinary eligibility.
+                return True
             if result and not result.created:
                 current = await coordinator.service.repository.get_by_id(case_id)
                 if not (current.channel_metadata or {}).get(
@@ -815,6 +843,16 @@ class MatrixContextRuntime:
                     if reason == "conversation_changed":
                         continue
                     return
+                readiness = coordinator.request_call_guard(
+                    snapshot, now_ms=int(utc_now().timestamp() * 1000)
+                )
+                if readiness in {
+                    "conversation_changed",
+                    "conversation_quiet_period_restarted",
+                }:
+                    await coordinator.finish(snapshot)
+                    claimed = None
+                    continue
                 policy = self.runtime.resolve_optional(
                     "channel_autoresponse_policy_service"
                 )
@@ -828,19 +866,30 @@ class MatrixContextRuntime:
                         "review_or_policy_changed"
                         if self._closed
                         or not is_staff_context_enabled(policy, "matrix")
-                        else coordinator.request_call_guard(snapshot)
+                        else coordinator.request_call_guard(
+                            snapshot, now_ms=int(utc_now().timestamp() * 1000)
+                        )
                     ),
                     before_provider=lambda: (
                         "review_or_policy_changed"
                         if self._closed
                         or not is_staff_context_enabled(policy, "matrix")
-                        else coordinator.request_call_guard(snapshot)
+                        else coordinator.request_call_guard(
+                            snapshot, now_ms=int(utc_now().timestamp() * 1000)
+                        )
                     ),
                 )
                 gate = RequestGateService(gate_llm)
                 try:
                     decision = await asyncio.to_thread(gate.classify, snapshot)
                 except Exception as exc:
+                    if not gate_llm.started and gate_llm.reason in {
+                        "conversation_changed",
+                        "conversation_quiet_period_restarted",
+                    }:
+                        await coordinator.finish(snapshot)
+                        claimed = None
+                        continue
                     await store.update(
                         case_id,
                         status="needs_human",
@@ -899,6 +948,9 @@ class MatrixContextRuntime:
                     continue
                 request = selected_staff_request(snapshot, decision, [])
                 anchor = snapshot.anchor
+                if anchor is None:
+                    # The same immutable snapshot was verified before the gate.
+                    raise ValueError("conversation_no_text_anchor")
                 incoming = IncomingMessage(
                     message_id=anchor.event_id,
                     channel=ChannelType.MATRIX,
@@ -1026,6 +1078,7 @@ class MatrixContextRuntime:
                 ),
                 staff_note_history=history,
             )
+            await self._reconcile_note_answers(case_id)
             if incoming.channel_metadata.get("conversation_snapshot"):
                 await self._conversation_coordinator().record_delivery(
                     incoming.channel_metadata["conversation_snapshot"]
@@ -1976,6 +2029,7 @@ class MatrixContextRuntime:
                 staff_note_event_id=note_id,
                 staff_note_history=history,
             )
+            await self._reconcile_note_answers(case_id)
             if incoming.channel_metadata.get("conversation_snapshot"):
                 await self._conversation_coordinator().record_delivery(
                     incoming.channel_metadata["conversation_snapshot"]
@@ -1993,6 +2047,24 @@ class MatrixContextRuntime:
                 reason="staff_delivery_requires_reconciliation",
             )
             return False
+
+    async def _reconcile_note_answers(self, case_id: int) -> None:
+        """Join early explicit Staff replies after the note receipt is durable."""
+        from app.channels.staff_assist.context_feedback import ContextFeedbackStore
+
+        service = self.runtime.resolve_optional("escalation_service")
+        try:
+            await ContextFeedbackStore(service.repository.db_path).reconcile_answers(
+                case_id
+            )
+        except Exception as exc:
+            # Transport acceptance is already proved. Projection failure must
+            # not turn it into delivery uncertainty or trigger another send.
+            logger.warning(
+                "Staff answer reconciliation pending case=%s error=%s",
+                case_id,
+                type(exc).__name__,
+            )
 
     async def _case_is_open(self, case_id: int) -> bool:
         if case_id in self._request_snapshots:

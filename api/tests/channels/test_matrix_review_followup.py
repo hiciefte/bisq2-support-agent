@@ -136,6 +136,7 @@ async def test_unknown_target_lookup_failure_never_falls_through_to_approval_or_
         },
     )
     await handler._on_reaction_event(NS(room_id=ROOM), event)
+    store.has_note.assert_awaited_once_with(ROOM, "$unknown-note")
     handler._handle_staff_room_escalation_action.assert_not_awaited()
     processor.process.assert_not_awaited()
     await client.close()

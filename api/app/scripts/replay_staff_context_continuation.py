@@ -12,7 +12,6 @@ import argparse
 import asyncio
 import json
 import os
-import shutil
 import sqlite3
 import time
 from contextlib import closing
@@ -112,6 +111,24 @@ def _receipt_rows(db: sqlite3.Connection) -> list[dict[str, Any]]:
             "SELECT * FROM matrix_context_trial_spend ORDER BY started_at,escalation_id,kind,call_id"
         )
     ]
+
+
+def receipts_from_bytes(image: bytes) -> list[dict[str, Any]]:
+    """Read receipts from the exact database image whose digest was verified."""
+    with closing(sqlite3.connect(":memory:")) as db:
+        db.deserialize(image)
+        db.execute("PRAGMA query_only=ON")
+        return _receipt_rows(db)
+
+
+def write_database_image(path: Path, image: bytes) -> None:
+    """Create a private ledger from the already validated, immutable image."""
+    with os.fdopen(
+        os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb"
+    ) as stream:
+        stream.write(image)
+        stream.flush()
+        os.fsync(stream.fileno())
 
 
 def receipts(database: Path) -> list[dict[str, Any]]:
@@ -387,7 +404,8 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
     ) as stream:
         stream.write(parent["buffers"]["replay.db"])
     linkage = asyncio.run(reconcile_saved_gate(database, parent))
-    if receipts(database) != parent["receipts"]:
+    database_image = database.read_bytes()
+    if receipts_from_bytes(database_image) != parent["receipts"]:
         raise ValueError("Offline reconciliation altered spend receipts")
     state = {
         "processed_event_count": parent["cursor"],
@@ -422,12 +440,14 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
         "original_execution_identity": original_execution_identity(parent),
         "continuation_claim": str(claim),
         "prepared_pins": {
-            name: file_pin(args.output / name)
-            for name in (
-                "prepared-state.db",
-                "continuation-state.json",
-                "reconciled-gate.json",
-            )
+            "prepared-state.db": {
+                "path": str(database.resolve()),
+                "sha256": digest_bytes(database_image),
+            },
+            **{
+                name: file_pin(args.output / name)
+                for name in ("continuation-state.json", "reconciled-gate.json")
+            },
         },
         "code_sha256": continuation_code_hashes(),
         "trial_descriptor": json.loads(parent["trial"].descriptor()),
@@ -490,7 +510,12 @@ def approved_manifest(
     if continuation_code_hashes() != manifest["code_sha256"]:
         raise ValueError("Continuation source changed")
     verify_pins(manifest["parent_pins"])
-    verify_pins(manifest["prepared_pins"])
+    prepared_buffers: dict[str, bytes] = {}
+    for name, pin in manifest["prepared_pins"].items():
+        value = pinned_bytes(pin)
+        if value is None:
+            raise ValueError("Required prepared continuation record is absent")
+        prepared_buffers[name] = value
     parent = validate_parent(
         Path(manifest["parent_plan"]),
         Path(manifest["parent_execution"]),
@@ -521,20 +546,16 @@ def approved_manifest(
     )
     if any(manifest[key] != value for key, value in derived.items()):
         raise ValueError("Derived continuation scope does not match parent")
-    if (
-        receipts(Path(manifest["prepared_pins"]["prepared-state.db"]["path"]))
-        != parent["receipts"]
-    ):
+    if receipts_from_bytes(prepared_buffers["prepared-state.db"]) != parent["receipts"]:
         raise ValueError("Prepared continuation changed parent spend ledger")
-    state = json.loads(
-        pinned_bytes(manifest["prepared_pins"]["continuation-state.json"])
-    )
+    state = json.loads(prepared_buffers["continuation-state.json"])
     if (
         state["processed_event_count"] != parent["cursor"]
         or state["last_time"]
         != parent["result"]["chronological_coverage"]["last_processed_virtual_time_ms"]
     ):
         raise ValueError("Prepared state changed chronological boundary")
+    parent["prepared_buffers"] = prepared_buffers
     return manifest, parent
 
 
@@ -572,10 +593,9 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
             "no_retry_or_second_suffix": True,
         },
     )
-    shutil.copyfile(
-        manifest["prepared_pins"]["prepared-state.db"]["path"], output / "replay.db"
+    write_database_image(
+        output / "replay.db", parent["prepared_buffers"]["prepared-state.db"]
     )
-    os.chmod(output / "replay.db", 0o600)
     if (
         digest_bytes((output / "replay.db").read_bytes())
         != manifest["prepared_pins"]["prepared-state.db"]["sha256"]
@@ -587,13 +607,9 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
             os.open(output / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb"
         ) as stream:
             stream.write(data or b"")
-    linkage = json.loads(
-        pinned_bytes(manifest["prepared_pins"]["reconciled-gate.json"])
-    )
+    linkage = json.loads(parent["prepared_buffers"]["reconciled-gate.json"])
     append_private(output / "gates.jsonl", linkage)
-    state = json.loads(
-        pinned_bytes(manifest["prepared_pins"]["continuation-state.json"])
-    )
+    state = json.loads(parent["prepared_buffers"]["continuation-state.json"])
     from app.services.rag.openai_responses import OpenAIResponsesLLMWrapper
     from openai import OpenAI
 

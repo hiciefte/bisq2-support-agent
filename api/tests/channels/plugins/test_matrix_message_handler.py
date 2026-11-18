@@ -155,6 +155,38 @@ async def test_stop_removes_callback_and_stops_sync_loop() -> None:
 
 
 @pytest.mark.asyncio
+async def test_attached_handler_registers_and_removes_attachment_callback() -> None:
+    """Real nio callbacks survive shutdown only when owned by another handler."""
+    from nio import AsyncClient
+
+    client = AsyncClient("https://offline.invalid", "@bot:example.org")
+    unrelated = AsyncMock()
+    client.add_event_callback(unrelated, object)
+    connection_manager = SimpleNamespace(
+        sync_forever=AsyncMock(), stop_sync=MagicMock()
+    )
+    channel = SimpleNamespace(
+        runtime=SimpleNamespace(
+            settings=SimpleNamespace(MATRIX_CONTEXT_TRIAL_BUDGET_USD="60")
+        )
+    )
+    handler = MatrixMessageHandler(
+        client=client, connection_manager=connection_manager, channel=channel
+    )
+    try:
+        await handler.start()
+        callbacks = [entry.func for entry in client.event_callbacks]
+        assert handler._on_message in callbacks
+        assert handler._on_context_attachment in callbacks
+        assert handler._attachment_callback_registered
+        await handler.stop()
+        assert [entry.func for entry in client.event_callbacks] == [unrelated]
+        assert not handler._attachment_callback_registered
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
 async def test_stop_cleans_up_failed_bootstrap_and_preserves_error() -> None:
     from app.channels.plugins.matrix.client.connection_manager import (
         MatrixRoomStateError,

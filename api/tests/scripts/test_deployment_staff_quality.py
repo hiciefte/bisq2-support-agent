@@ -231,8 +231,9 @@ def test_v7_approval_and_receipt_join_exact_source_pins(
             protocol._validate_payload("publish_source", bad, plan)
 
 
+@pytest.mark.parametrize("candidate_config_bad", [False, True])
 def test_source_publication_preserves_runtime_values_and_rechecks_host_pins(
-    quality_repo, quality_plan, protocol, module, tmp_path
+    quality_repo, quality_plan, protocol, module, tmp_path, candidate_config_bad
 ):
     root, previous, candidate = quality_repo
     host = module.DeploymentHost.__new__(module.DeploymentHost)
@@ -256,10 +257,18 @@ def test_source_publication_preserves_runtime_values_and_rechecks_host_pins(
     host._git = lambda path, *args: git(path, *args).decode().strip()
 
     def config(*args):
-        assert args == ("config",)
+        assert args in {
+            ("config",),
+            ("candidate-config", root / "docker/docker-compose.yml"),
+        }
         settings = {"MATRIX_SYNC_ENABLED": "false", "PRESERVED_SETTING": "fixture"}
-        if git(host.install, "rev-parse", "HEAD").decode().strip() == candidate:
+        if (
+            args[0] == "candidate-config"
+            or git(host.install, "rev-parse", "HEAD").decode().strip() == candidate
+        ):
             settings.update({key: "" for key in protocol.STAFF_SPEND_ENV})
+            if candidate_config_bad:
+                settings["PRESERVED_SETTING"] = "changed"
         return json.dumps({"services": {"api": {"environment": settings}}}).encode()
 
     host._shell = config
@@ -269,6 +278,12 @@ def test_source_publication_preserves_runtime_values_and_rechecks_host_pins(
     }
     host._inspect = lambda: {}
     host._preserved = lambda _containers: None
+    if candidate_config_bad:
+        with pytest.raises(module.JournalError, match="host_configuration_changed"):
+            host._publish()
+        assert git(host.install, "rev-parse", "HEAD").decode().strip() == previous
+        assert env.read_bytes() == before
+        return
     result = host._publish()
     assert result["staff_quality_config_preserved"] is True
     assert env.read_bytes() == before
@@ -857,3 +872,135 @@ def test_schema_comparison_preserves_sql_line_comment_boundary(host, module):
     assert not host._protected_data_preserved(
         module.DeploymentHost._preserved_data(host, host.fixture_state)
     )
+
+
+@pytest.mark.parametrize("quote", ["brackets", "backticks"])
+def test_schema_preservation_distinguishes_spaces_in_quoted_identifiers(
+    host, module, quote
+):
+    """Moving a unique index to a similarly named column changes its guarantee."""
+    host.plan["schema"] = "deployment-plan-v7"
+    data = host.install / "api/data"
+    data.mkdir(parents=True, exist_ok=True)
+    database = data / "escalations.db"
+    left, right = ("[", "]") if quote == "brackets" else ("`", "`")
+    with closing(sqlite3.connect(database)) as db, db:
+        db.execute(
+            "CREATE TABLE escalations(id INTEGER, channel TEXT, channel_metadata TEXT, "
+            + left
+            + "external ref"
+            + right
+            + " TEXT, "
+            + left
+            + "external  ref"
+            + right
+            + " TEXT)"
+        )
+        db.execute(
+            "CREATE UNIQUE INDEX unique_ref ON escalations("
+            + left
+            + "external ref"
+            + right
+            + ")"
+        )
+    host.baseline["protected_data"] = module.DeploymentHost._preserved_data(
+        host, host.fixture_state
+    )
+    with closing(sqlite3.connect(database)) as db, db:
+        db.execute("DROP INDEX unique_ref")
+        db.execute(
+            "CREATE UNIQUE INDEX unique_ref ON escalations("
+            + left
+            + "external  ref"
+            + right
+            + ")"
+        )
+    assert not host._protected_data_preserved(
+        module.DeploymentHost._preserved_data(host, host.fixture_state)
+    )
+
+
+def test_unicode_ledger_lookalike_is_preserved_as_unrelated_table(host, module):
+    """SQLite NOCASE must not equate a Unicode long s with an ASCII s."""
+    host.plan["schema"] = "deployment-plan-v7"
+    data = host.install / "api/data"
+    data.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(data / "escalations.db")) as db, db:
+        db.execute(
+            "CREATE TABLE escalations(id INTEGER, channel TEXT, channel_metadata TEXT)"
+        )
+        db.execute("CREATE TABLE matrix_context_trial_ſpend(unrelated TEXT)")
+    observed = module.DeploymentHost._preserved_data(host, host.fixture_state)
+    assert observed["staff_quality_presence"]["matrix_context_trial_spend"] is False
+    assert observed["schema_sha256"]
+
+
+def test_case_variant_escalations_accepts_only_reviewed_verdict_append(host, module):
+    """Catalog lookup and normalization use the same resolved table name."""
+    host.plan["schema"] = "deployment-plan-v7"
+    data = host.install / "api/data"
+    data.mkdir(parents=True, exist_ok=True)
+    database = data / "escalations.db"
+    with closing(sqlite3.connect(database)) as db, db:
+        db.execute(
+            "CREATE TABLE Escalations(id INTEGER, channel TEXT, channel_metadata TEXT)"
+        )
+    host.baseline["protected_data"] = module.DeploymentHost._preserved_data(
+        host, host.fixture_state
+    )
+    with closing(sqlite3.connect(database)) as db, db:
+        db.execute(
+            "ALTER TABLE Escalations ADD COLUMN staff_context_verdicts TEXT NOT NULL DEFAULT '[]'"
+        )
+    assert host._protected_data_preserved(
+        module.DeploymentHost._preserved_data(host, host.fixture_state)
+    )
+
+
+def test_rehearsal_rejects_constraint_moved_inside_line_comment(tmp_path, module):
+    """The rehearsal rejects loss of a constraint through newline movement."""
+    from test_deployment_rehearsal import database_snapshot, verify_quality_migration
+
+    path = tmp_path / "schema.db"
+    with closing(sqlite3.connect(path)) as db, db:
+        db.execute(
+            "CREATE TABLE escalations(id INTEGER, channel TEXT -- note\n CHECK(channel != 'bad'), channel_metadata TEXT)"
+        )
+    before = database_snapshot(path)
+    with closing(sqlite3.connect(path)) as db, db:
+        db.execute("DROP TABLE escalations")
+        db.execute(
+            "CREATE TABLE escalations(id INTEGER, channel TEXT -- note CHECK(channel != 'bad')\n, channel_metadata TEXT)"
+        )
+        db.execute(
+            "ALTER TABLE escalations ADD COLUMN staff_context_verdicts TEXT NOT NULL DEFAULT '[]'"
+        )
+        for ddl in module.STAFF_QUALITY_LEDGER_DDL.values():
+            db.execute(ddl)
+    with pytest.raises(AssertionError):
+        verify_quality_migration(
+            before, database_snapshot(path), module.STAFF_QUALITY_LEDGER_DDL
+        )
+
+
+def test_empty_answer_ledger_can_gain_only_nullable_explicit_reply_target(host, module):
+    """Permit the reviewed forward migration, never its removal or new data."""
+    host.plan["schema"] = "deployment-plan-v7"
+    data = host.install / "api/data"
+    data.mkdir(parents=True, exist_ok=True)
+    path = data / "escalations.db"
+    with closing(sqlite3.connect(path)) as db, db:
+        db.execute(
+            "CREATE TABLE escalations(id INTEGER, channel TEXT, channel_metadata TEXT)"
+        )
+        db.execute(module.STAFF_QUALITY_LEGACY_ANSWER_DDL)
+    before = module.DeploymentHost._preserved_data(host, host.fixture_state)
+    with closing(sqlite3.connect(path)) as db, db:
+        db.execute(
+            "ALTER TABLE matrix_context_answer_events ADD COLUMN reply_to_event_id TEXT"
+        )
+    after = module.DeploymentHost._preserved_data(host, host.fixture_state)
+    host.baseline["protected_data"] = before
+    assert host._protected_data_preserved(after)
+    host.baseline["protected_data"] = after
+    assert not host._protected_data_preserved(before)

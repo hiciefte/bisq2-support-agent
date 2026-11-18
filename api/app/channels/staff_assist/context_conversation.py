@@ -306,16 +306,18 @@ class RequestSnapshot:
         return _digest(value)
 
     @property
-    def anchor(self) -> ConversationTurn:
+    def anchor(self) -> ConversationTurn | None:
         own = [
             turn
             for turn in self.turns
             if turn.sender_id == self.requester_id
             and not turn.is_staff
+            and not turn.is_bot
             and not turn.non_text
+            and bool(turn.text.strip())
             and not acknowledgement_only(turn.text)
         ]
-        return own[-1]
+        return own[-1] if own else None
 
     def prompt_payload(self) -> dict[str, Any]:
         speakers = {**self.speaker_aliases, self.requester_id: "requester"}
@@ -371,6 +373,10 @@ def selected_staff_request(
         and (turn.event_id in parent_ids or turn.replaces_event_id in parent_ids)
     )
     turns = [turn for turn in snapshot.turns if turn.event_id in selected]
+    # An effective edit represents its observed, author-valid original as well.
+    present_ids = selected | {
+        turn.replaces_event_id for turn in turns if turn.replaces_event_id
+    }
     own = [
         turn.text
         for turn in turns
@@ -410,7 +416,7 @@ def selected_staff_request(
                     target
                     for turn in turns
                     for target in (turn.reply_to_event_id, turn.thread_root_event_id)
-                    if target and target not in selected
+                    if target and target not in present_ids
                 }
             )[:256],
             omitted_event_ids=list(snapshot.omitted_event_ids)[:256],
@@ -738,6 +744,8 @@ class StaffConversationCoordinator:
                     if metadata.get("conversation_generation_count", 0):
                         changes["conversation_staff_replied_after_draft"] = True
                 if changed:
+                    if pending and is_chosen and not admission:
+                        changes["conversation_admission_request_pending"] = True
                     changes["conversation_revision"] = (
                         metadata.get("conversation_revision", 0) + 1
                     )
@@ -762,6 +770,30 @@ class StaffConversationCoordinator:
                 tuple(affected),
             )
 
+    @staticmethod
+    def _excluded_event_ids(metadata: dict[str, Any], *, now_ms: int) -> set[str]:
+        """Exclude observed redactions and edit aliases from prompt projections."""
+        exchange = [
+            item
+            for item in metadata.get("conversation_exchange", [])
+            if item["timestamp_ms"] <= now_ms
+        ]
+        excluded = set(metadata.get("conversation_invalidated_event_ids", []))
+        excluded.update(
+            item["redacts_event_id"]
+            for item in exchange
+            if item.get("redacts_event_id")
+        )
+        while True:
+            aliases = {
+                item["event_id"]
+                for item in exchange
+                if item.get("replaces_event_id") in excluded
+            }
+            if aliases <= excluded:
+                return excluded
+            excluded.update(aliases)
+
     async def snapshot(self, case_id: int, *, now_ms: int) -> RequestSnapshot:
         case = await self.service.repository.get_by_id(case_id)
         if case is None:
@@ -769,12 +801,7 @@ class StaffConversationCoordinator:
         metadata = case.channel_metadata or {}
         if metadata.get("conversation_admission_pending"):
             return self._admission_snapshot(case, metadata, now_ms=now_ms)
-        invalidated = set(metadata.get("conversation_invalidated_event_ids", []))
-        invalidated.update(
-            item["event_id"]
-            for item in metadata.get("conversation_exchange", [])
-            if item.get("replaces_event_id") in invalidated
-        )
+        invalidated = self._excluded_event_ids(metadata, now_ms=now_ms)
         raw = [
             ConversationTurn.from_dict(item)
             for item in metadata.get("conversation_exchange", [])
@@ -931,6 +958,22 @@ class StaffConversationCoordinator:
             observed = [*pending, *metadata.get("conversation_admission_observed", [])]
             if any(item["event_id"] == turn.event_id for item in observed):
                 return
+            if not pending:
+                running = metadata.get("conversation_running_revision")
+                draft_pending = (
+                    running is not None
+                    and (metadata.get("conversation_gate") or {}).get("category")
+                    == "unanswered_support_request"
+                    and (
+                        not metadata.get("conversation_draft_presented")
+                        or metadata.get("conversation_generated_revision", -1) < running
+                    )
+                )
+                metadata["conversation_admission_request_pending"] = (
+                    metadata.get("conversation_last_gate_revision", -1)
+                    < metadata.get("conversation_revision", 0)
+                    or draft_pending
+                )
             metadata["conversation_admission_pending"] = [*pending, asdict(turn)]
             metadata["conversation_revision"] = (
                 metadata.get("conversation_revision", 0) + 1
@@ -968,7 +1011,9 @@ class StaffConversationCoordinator:
             return "request_admission_changed"
         return None
 
-    def request_call_guard(self, snapshot: RequestSnapshot) -> str | None:
+    def request_call_guard(
+        self, snapshot: RequestSnapshot, *, now_ms: int | None = None
+    ) -> str | None:
         """Validate the durable claim immediately before a queued provider call."""
         with closing(sqlite3.connect(self.db_path)) as db:
             row = db.execute(
@@ -988,19 +1033,25 @@ class StaffConversationCoordinator:
             or metadata.get("conversation_admission_pending")
         ):
             return "conversation_changed"
+        if (
+            now_ms is not None
+            and metadata.get("conversation_last_requester_at_ms", 0)
+            > snapshot.last_requester_at_ms
+            and metadata["conversation_last_requester_at_ms"] + self.delay_ms > now_ms
+        ):
+            return "conversation_quiet_period_restarted"
         return None
 
     def _admission_snapshot(
         self, case: Any, metadata: dict[str, Any], *, now_ms: int
     ) -> RequestSnapshot:
+        excluded = self._excluded_event_ids(metadata, now_ms=now_ms)
         pending = [
             ConversationTurn.from_dict(item)
             for item in metadata.get("conversation_admission_pending", [])
             if item["timestamp_ms"] <= now_ms
-            and item["event_id"]
-            not in metadata.get("conversation_invalidated_event_ids", [])
-            and item.get("replaces_event_id")
-            not in metadata.get("conversation_invalidated_event_ids", [])
+            and item["event_id"] not in excluded
+            and item.get("replaces_event_id") not in excluded
         ]
         effective = effective_turns(pending)
         own = [
@@ -1047,10 +1098,8 @@ class StaffConversationCoordinator:
                         or item.get("redacts_event_id") in parent_ids
                     )
                 )
-                and item["event_id"]
-                not in metadata.get("conversation_invalidated_event_ids", [])
-                and item.get("replaces_event_id")
-                not in metadata.get("conversation_invalidated_event_ids", [])
+                and item["event_id"] not in excluded
+                and item.get("replaces_event_id") not in excluded
             ]
         )
         selected = [
@@ -1062,10 +1111,8 @@ class StaffConversationCoordinator:
             ConversationTurn.from_dict(item)
             for item in metadata.get("incident_messages", [])
             if item["timestamp_ms"] <= now_ms
-            and item["event_id"]
-            not in metadata.get("conversation_invalidated_event_ids", [])
-            and item.get("replaces_event_id")
-            not in metadata.get("conversation_invalidated_event_ids", [])
+            and item["event_id"] not in excluded
+            and item.get("replaces_event_id") not in excluded
         ]
         prior_payload = {
             "case_id": case.id,
@@ -1224,6 +1271,41 @@ class StaffConversationCoordinator:
                     anchor = min(
                         own, key=lambda turn: (turn.timestamp_ms, turn.event_id)
                     )
+                    promoted_exchange = [
+                        asdict(turn)
+                        for turn in snapshot.turns
+                        if turn.sender_id != snapshot.requester_id
+                        or turn.event_id in selected_ids
+                        or (
+                            turn.non_text
+                            and (
+                                turn.event_id in parent_ids
+                                or turn.replaces_event_id in parent_ids
+                            )
+                        )
+                    ]
+                    # Effective attachment edits need their captured originals
+                    # when the child's snapshot projects the exchange again.
+                    edited_parents = {
+                        turn.replaces_event_id: turn
+                        for turn in snapshot.turns
+                        if turn.non_text
+                        and turn.sender_id == snapshot.requester_id
+                        and turn.replaces_event_id in parent_ids
+                    }
+                    promoted_exchange.extend(
+                        item
+                        for item in metadata.get("conversation_exchange", [])
+                        if item["event_id"] in edited_parents
+                        and item["sender_id"] == snapshot.requester_id
+                        and item.get("non_text")
+                    )
+                    promoted_exchange.extend(
+                        item for item in members if item["event_id"] not in known
+                    )
+                    promoted_exchange = list(
+                        {item["event_id"]: item for item in promoted_exchange}.values()
+                    )
                     new_metadata: dict[str, Any] = {
                         "response_kind": "public_context",
                         "delivery_audience": "staff_room",
@@ -1240,20 +1322,7 @@ class StaffConversationCoordinator:
                         "conversation_last_requester_at_ms": max(
                             turn.timestamp_ms for turn in own
                         ),
-                        "conversation_exchange": [
-                            asdict(turn)
-                            for turn in snapshot.turns
-                            if turn.sender_id != snapshot.requester_id
-                            or turn.event_id in selected_ids
-                            or (
-                                turn.non_text
-                                and (
-                                    turn.event_id in parent_ids
-                                    or turn.replaces_event_id in parent_ids
-                                )
-                            )
-                        ]
-                        + [item for item in members if item["event_id"] not in known],
+                        "conversation_exchange": promoted_exchange,
                         "incident_messages": members,
                         "conversation_speaker_aliases": dict(snapshot.speaker_aliases),
                         "conversation_admitted_from_case_id": snapshot.case_id,
@@ -1298,6 +1367,14 @@ class StaffConversationCoordinator:
                     )
                     new_case_id = created.id
                     receipt["new_case_id"] = new_case_id
+                    if not metadata.get(
+                        "conversation_admission_request_pending", True
+                    ) and not metadata.get("conversation_replacement_allowed"):
+                        # Boundary revisions invalidate in-flight work but are
+                        # not new facts for an already handled parent request.
+                        metadata["conversation_last_gate_revision"] = metadata.get(
+                            "conversation_revision", 0
+                        )
                     receipt["unassigned_candidate_event_ids"] = [
                         item["event_id"]
                         for item in pending

@@ -645,7 +645,10 @@ def verify_quality_migration(before, after, expected_ddl):
     assert set(after) == set(before) | set(expected_ddl)
 
     def tokens(sql):
-        return re.findall(r"'(?:''|[^'])*'|[A-Za-z_][A-Za-z_0-9]*|[0-9]+|[^\s]", sql)
+        return re.findall(
+            r"--[^\n]*(?:\n|$)|/\*[\s\S]*?\*/|'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"|`(?:``|[^`])*`|\[[^\]]*\]|[A-Za-z_][A-Za-z_0-9]*|[0-9]+|[^\s]",
+            sql,
+        )
 
     for name, old in before.items():
         current = after[name]
@@ -663,11 +666,17 @@ def verify_quality_migration(before, after, expected_ddl):
         )
         assert all(row[-1] == "[]" for row in current["rows"])
         assert [row[:-1] for row in current["rows"]] == old["rows"]
-        expected = (
-            old["sql"].rsplit(")", 1)[0]
-            + ", staff_context_verdicts TEXT NOT NULL DEFAULT '[]')"
-        )
-        assert tokens(current["sql"]) == tokens(expected)
+        # Let SQLite apply the one permitted migration to the exact old DDL.
+        # In particular, never erase a line-comment boundary or quoted space.
+        with closing(sqlite3.connect(":memory:")) as expected_db:
+            expected_db.execute(old["sql"])
+            expected_db.execute(
+                "ALTER TABLE escalations ADD COLUMN staff_context_verdicts TEXT NOT NULL DEFAULT '[]'"
+            )
+            expected = expected_db.execute(
+                "SELECT sql FROM sqlite_master WHERE name='escalations'"
+            ).fetchone()[0]
+        assert current["sql"] == expected
     for name, ddl in expected_ddl.items():
         assert after[name]["rows"] == []
         assert tokens(after[name]["sql"]) == tokens(ddl)

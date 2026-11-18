@@ -455,7 +455,34 @@ async def test_snapshot_kind_race_uses_admission_classifier_not_request_gate(
     bundle = runtime_case
     responses = [gate(["$source"]), draft()]
     old = await setup(bundle, responses)
-    responses.extend([boundary(), gate(["$new"]), draft()])
+
+    def respond(prompt, system_content):
+        payload = json.loads(prompt)
+        if "Decide whether a later requester" in system_content:
+            response = boundary()
+        elif "Classify a support-room conversation" in system_content:
+            ids = [
+                item["event_id"]
+                for item in payload["messages"]
+                if item["role"] == "requester"
+            ]
+            # The original follow-up also resumes after the separate admission.
+            response = gate(
+                ids,
+                category=(
+                    "already_answered"
+                    if "$source" in ids
+                    else "unanswered_support_request"
+                ),
+            )
+        else:
+            response = draft()
+        return NS(
+            content=json.dumps(response),
+            usage={"input_tokens": 100, "output_tokens": 30},
+        )
+
+    bundle.llm.invoke.side_effect = respond
     bundle.sender.side_effect = [
         SendResult(True, "$new-root"),
         SendResult(True, "$new-note"),

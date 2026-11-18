@@ -129,6 +129,22 @@ class RequestGateService:
                     or resolution.event_id not in ids
                 ):
                     raise ValueError("invalid_resolution_evidence")
+                if any(
+                    turn.sender_id == snapshot.requester_id
+                    and not turn.is_staff
+                    and not turn.is_bot
+                    and not turn.non_text
+                    and bool(turn.text.strip())
+                    and (turn.timestamp_ms, turn.event_id)
+                    > (resolution.timestamp_ms, resolution.event_id)
+                    and not obvious_acknowledgement(turn.text)
+                    and not explicit_resolution(turn.text)
+                    for turn in snapshot.turns
+                ):
+                    # Durable resolution must remain the latest substantive
+                    # requester state, not an earlier confirmation superseded
+                    # by a recurrence or a further unresolved diagnostic fact.
+                    raise ValueError("superseded_resolution_evidence")
             if snapshot.kind == "update" and not snapshot.has_new_requester_facts:
                 decision = decision.model_copy(update={"material_change": False})
             # Selected Staff assistance takes ownership of this request even

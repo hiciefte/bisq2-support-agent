@@ -47,6 +47,8 @@ def preview(reply, question="My client does not start.", staff_note="Needs a det
         "What is your account password?",
         "Can the wallet be reset?",
         "Could my wallet be restored?",
+        "How can my wallet safely be restored?",
+        "How could my wallet be safely restored?",
         "Could you send your passphrase?",
     ],
 )
@@ -60,6 +62,7 @@ def test_sensitive_or_passive_operation_is_not_diagnostic(reply):
     "reply",
     [
         "Did you restore from a backup?",
+        "Was your wallet restored before the error?",
         "What exact error text appears?",
         "Is a wallet password configured?",
     ],
@@ -77,6 +80,17 @@ def test_failed_asset_receipt_retains_risk_without_unrelated_clause_coupling():
     ).money_at_risk
 
 
+@pytest.mark.parametrize(
+    "report", ["My BTC hasn’t been received yet.", "My BTC hasn't arrived."]
+)
+def test_passive_missing_asset_receipt_gets_staff_risk_label(report):
+    """Missing receipts get the display label; an asset name alone does not."""
+    assert preview("What does the screen show?", report).money_at_risk
+    assert not preview(
+        "What does the screen show?", "My BTC amount is shown."
+    ).money_at_risk
+
+
 def test_verification_instruction_is_not_completed_staff_action_claim():
     assert preview(
         "What error appears?", staff_note="Check whether Staff contacted the mediator."
@@ -84,6 +98,17 @@ def test_verification_instruction_is_not_completed_staff_action_claim():
     assert not preview(
         "What error appears?", staff_note="Staff contacted the mediator."
     ).rendered_note
+
+
+def test_exempt_verification_does_not_hide_later_completed_action():
+    """An exempt verification phrase does not excuse a separate action claim."""
+    result = preview(
+        "What error appears?",
+        staff_note="Check whether the mediator acted, because we already refunded you.",
+    )
+    assert result.validation_diagnostic == "unsafe_reply"
+    assert result.rejected_draft
+    assert not result.rendered_note
 
 
 @pytest.mark.parametrize(
@@ -137,6 +162,16 @@ async def test_conflicting_duplicate_is_excluded_before_grounding_and_selection(
     )
     assert not result.evidence
     assert result.excluded_evidence
+    assert {source.provenance["protocol"] for source in result.excluded_evidence} == {
+        "multisig_v1",
+        "all",
+        "bisq_easy",
+    }
+    assert len(result.excluded_evidence) == 3
+    assert all(
+        not source.provenance["staff_applicability"]["eligible_for_reply"]
+        for source in result.excluded_evidence
+    )
     assert grounding.build.call_args.kwargs["knowledge_sources"] == []
 
 
@@ -170,6 +205,13 @@ async def test_consistent_duplicate_remains_usable():
         ("My current Bisq 2 version 2.3.4 is stuck.", "2.3.4"),
         ("Bisq 2 version 2.3.4 fails to start.", "2.3.4"),
         ("I upgraded to version 2.3.4.", "2.3.4"),
+        ("I use Bisq 2. I updated to 2.3.4.", "2.3.4"),
+        ("I use Bisq 2. I updated to version 2.3.4.", "2.3.4"),
+        ("I upgraded to v2.3.4.", "2.3.4"),
+        ("I updated to 02.3.4.", None),
+        ("I updated to 2.3.4.1.", None),
+        ("I updated to 2.3.4+build.", None),
+        ("I updated to 2.3.4 or 2.4.0.", None),
         ("I plan to upgrade to version 2.3.4.", None),
         ("I want to switch to Bisq 2 version 2.3.4.", None),
         ("I don't use version 2.3.4.", None),

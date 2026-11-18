@@ -186,18 +186,27 @@ def replacement_host_config(config: dict) -> dict:
 # Keep constraints as well as columns; an empty malformed table is not readiness.
 STAFF_QUALITY_LEDGER_DDL = {
     "matrix_context_verdict_events": "CREATE TABLE matrix_context_verdict_events (\n    event_id TEXT PRIMARY KEY,\n    room_id TEXT NOT NULL,\n    escalation_id INTEGER REFERENCES escalations(id) ON DELETE CASCADE,\n    reviewer TEXT,\n    target_event_id TEXT,\n    verdict TEXT,\n    timestamp_ms INTEGER,\n    revoked INTEGER NOT NULL DEFAULT 0 CHECK(revoked IN (0, 1))\n)",
-    "matrix_context_answer_events": "CREATE TABLE matrix_context_answer_events (\n    event_id TEXT PRIMARY KEY,\n    room_id TEXT NOT NULL,\n    escalation_id INTEGER REFERENCES escalations(id) ON DELETE CASCADE,\n    original_event_id TEXT,\n    reviewer TEXT,\n    answer TEXT,\n    draft TEXT,\n    timestamp_ms INTEGER,\n    revoked INTEGER NOT NULL DEFAULT 0 CHECK(revoked IN (0, 1))\n)",
+    "matrix_context_answer_events": "CREATE TABLE matrix_context_answer_events (\n    event_id TEXT PRIMARY KEY,\n    room_id TEXT NOT NULL,\n    escalation_id INTEGER REFERENCES escalations(id) ON DELETE CASCADE,\n    original_event_id TEXT,\n    reviewer TEXT,\n    answer TEXT,\n    draft TEXT,\n    timestamp_ms INTEGER,\n    revoked INTEGER NOT NULL DEFAULT 0 CHECK(revoked IN (0, 1)),\n    reply_to_event_id TEXT\n)",
     "matrix_context_trial_spend": "CREATE TABLE matrix_context_trial_spend (trial_id TEXT NOT NULL, escalation_id INTEGER NOT NULL, kind TEXT NOT NULL, call_id TEXT NOT NULL, started_at TEXT NOT NULL, utc_day TEXT NOT NULL, input_tokens_bound INTEGER NOT NULL, max_output_tokens INTEGER NOT NULL, reserved_nanodollars INTEGER NOT NULL, actual_nanodollars INTEGER, input_tokens INTEGER, output_tokens INTEGER, status TEXT NOT NULL, PRIMARY KEY (trial_id, escalation_id, kind, call_id))",
 }
 
 
+# A rollout from the previous Staff release may already have the empty answer
+# ledger. Startup adds only this nullable target; historical rows stay unknown.
+STAFF_QUALITY_LEGACY_ANSWER_DDL = STAFF_QUALITY_LEDGER_DDL[
+    "matrix_context_answer_events"
+].replace(",\n    reply_to_event_id TEXT", "")
+
+
+# SQL tokenization is used only to validate the explicitly allowed additions.
+# Catalog text for every preserved object is hashed exactly, including whitespace.
+_SCHEMA_TOKEN = re.compile(
+    r"--[^\n]*(?:\n|$)|/\*[\s\S]*?\*/|'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"|`(?:``|[^`])*`|\[[^\]]*\]|[A-Za-z_][A-Za-z_0-9]*|[0-9]+|[^\s]"
+)
+
+
 def _schema_tokens(sql):
-    # Preserve comment bodies and line endings as single tokens: removing the
-    # newline of -- comments can turn an active constraint into commented text.
-    return re.findall(
-        r"--[^\n]*(?:\n|$)|/\*[\s\S]*?\*/|'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"|[A-Za-z_][A-Za-z_0-9]*|[0-9]+|[^\s]",
-        sql,
-    )
+    return _SCHEMA_TOKEN.findall(sql)
 
 
 def _column_declaration(sql, name):
@@ -231,7 +240,8 @@ def _column_declaration(sql, name):
 
 def _without_reviewed_verdict_column(sql):
     """Normalize only the previously validated additive column declaration."""
-    tokens = _schema_tokens(sql)
+    matches = list(_SCHEMA_TOKEN.finditer(sql))
+    tokens = [match.group() for match in matches]
     depth = 0
     for start, token in enumerate(tokens):
         if depth == 1 and token == "staff_context_verdicts":
@@ -239,10 +249,12 @@ def _without_reviewed_verdict_column(sql):
             while end < len(tokens) and tokens[end] not in {",", ")"}:
                 end += 1
             require(
-                start > 0 and tokens[start - 1] == ",",
+                start > 0 and tokens[start - 1] == "," and end < len(tokens),
                 "host_staff_quality_verdict_migration",
             )
-            return tokens[: start - 1] + tokens[end:]
+            # ALTER TABLE inserts this declaration after the preceding column.
+            # Remove only that span; preserve all other SQL bytes and comments.
+            return sql[: matches[start - 1].start()] + sql[matches[end].start() :]
         depth += (token == "(") - (token == ")")
     raise JournalError("host_staff_quality_verdict_migration")
 
@@ -1849,9 +1861,16 @@ class DeploymentHost:
                     )
                     seen.add(name)
 
-    def _configuration(self):
+    def _configuration(self, *, candidate=False):
         self._staff_quality_environment_file()
-        config = self._staff_quality_config(json.loads(self._shell("config")))
+        raw = (
+            self._shell(
+                "candidate-config", self.candidate / "docker/docker-compose.yml"
+            )
+            if candidate
+            else self._shell("config")
+        )
+        config = self._staff_quality_config(json.loads(raw))
         env = self.install / "docker/.env"
         require(env.is_file() and not env.is_symlink(), "host_environment_file")
         require(
@@ -1892,8 +1911,14 @@ class DeploymentHost:
         with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as db:
             db.execute("PRAGMA query_only=ON")
             db.execute("BEGIN")
+            # Match SQLite's ASCII-only NOCASE, not Unicode casefold (long s
+            # and other distinct identifiers must not masquerade as our tables).
             names = {
-                row[0].casefold()
+                row[0].translate(
+                    str.maketrans(
+                        "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"
+                    )
+                ): row[0]
                 for row in db.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
                 )
@@ -1915,26 +1940,32 @@ class DeploymentHost:
             quality = self.plan["schema"] == "deployment-plan-v7"
             schema_presence = {}
             if quality:
+                schema_presence["staff_answer_reply_target"] = False
                 # The reviewed API creates these previously absent ledgers while
                 # sync/generation remain off. Only empty creation is immaterial;
                 # a row is actual new work and must stop this source rollout.
                 for table, expected_ddl in STAFF_QUALITY_LEDGER_DDL.items():
                     objects = db.execute(
-                        "SELECT type FROM sqlite_master WHERE name=? COLLATE NOCASE",
+                        "SELECT type,name,sql FROM sqlite_master WHERE name=? COLLATE NOCASE",
                         (table,),
                     ).fetchall()
                     require(
-                        not objects or objects == [("table",)],
+                        not objects or (len(objects) == 1 and objects[0][0] == "table"),
                         "host_staff_quality_ledger_schema",
                     )
-                    schema_presence[table] = table in names
-                    if table in names:
-                        actual_ddl = db.execute(
-                            "SELECT sql FROM sqlite_master WHERE type='table' AND name=? COLLATE NOCASE",
-                            (table,),
-                        ).fetchone()[0]
+                    schema_presence[table] = bool(objects)
+                    if objects:
+                        actual_ddl = objects[0][2]
+                        allowed = [_schema_tokens(expected_ddl)]
+                        if table == "matrix_context_answer_events":
+                            allowed.append(
+                                _schema_tokens(STAFF_QUALITY_LEGACY_ANSWER_DDL)
+                            )
+                            schema_presence["staff_answer_reply_target"] = (
+                                _schema_tokens(actual_ddl) == allowed[0]
+                            )
                         require(
-                            _schema_tokens(actual_ddl) == _schema_tokens(expected_ddl),
+                            _schema_tokens(actual_ddl) in allowed,
                             "host_staff_quality_ledger_schema",
                         )
                         require(
@@ -1983,7 +2014,8 @@ class DeploymentHost:
                     "host_staff_quality_verdict_migration",
                 )
                 table_sql = db.execute(
-                    "SELECT sql FROM sqlite_master WHERE type='table' AND name='escalations'"
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+                    (names["escalations"],),
                 ).fetchone()[0]
                 require(
                     _column_declaration(table_sql, "staff_context_verdicts")
@@ -2043,14 +2075,14 @@ class DeploymentHost:
                     # indexes/triggers on them remain part of the comparison.
                     if kind == "table" and name in STAFF_QUALITY_LEDGER_DDL:
                         continue
-                    tokens = _schema_tokens(sql or "")
+                    preserved_sql = sql
                     if (
                         kind == "table"
-                        and name == "escalations"
+                        and name == names["escalations"]
                         and schema_presence["staff_context_verdicts"]
                     ):
-                        tokens = _without_reviewed_verdict_column(sql)
-                    normalized_schema.append((kind, name, table_name, tokens))
+                        preserved_sql = _without_reviewed_verdict_column(sql)
+                    normalized_schema.append((kind, name, table_name, preserved_sql))
         result = {"files": files, "tables": tables}
         if quality:
             result["staff_quality_presence"] = schema_presence
@@ -2984,6 +3016,11 @@ class DeploymentHost:
         self._source()
         heap = bool(self.plan.get("preserved_heap_sha256"))
         monitoring = self.plan["schema"] in MONITORING_SCHEMAS
+        if self.plan["schema"] == "deployment-plan-v7":
+            # Resolve the candidate with the installed project directory and env
+            # before the once-only publication. A predictable config refusal must
+            # leave the installed source at the old head, not require a replay.
+            self._configuration(candidate=True)
         if heap:
             # The effect journal already owns this once-only publication. Adopt
             # only the reviewed candidate-identical blob, without rewriting the

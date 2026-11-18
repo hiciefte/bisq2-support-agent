@@ -514,14 +514,22 @@ class DocumentRetriever:
                     # Threshold of 4 ensures we have sufficient bisq_easy context before adding general docs
                     if not detect_from_query or len(all_docs) < 4:
                         logger.info("Stage 2: Searching for 'all' protocol content...")
-                        all_protocol_docs = self.retriever.retrieve(
-                            query, k=4, filter_dict={"protocol": "all"}
-                        )
-                        all_protocol_lc = self._to_langchain_documents(
-                            all_protocol_docs
-                        )
-                        logger.info(f"Found {len(all_protocol_lc)} 'all' documents")
-                        all_docs.extend(all_protocol_lc)
+                        try:
+                            all_protocol_docs = self.retriever.retrieve(
+                                query, k=4, filter_dict={"protocol": "all"}
+                            )
+                            all_protocol_lc = self._to_langchain_documents(
+                                all_protocol_docs
+                            )
+                            logger.info(f"Found {len(all_protocol_lc)} 'all' documents")
+                            all_docs.extend(all_protocol_lc)
+                        except Exception:
+                            if detect_from_query or not all_docs:
+                                raise
+                            logger.warning(
+                                "Staff supplemental lookup failed; retaining primary hits",
+                                exc_info=True,
+                            )
 
                     # Stage 3: Only add multisig_v1 content if we still don't have enough
                     # Threshold of 3 ensures multisig_v1 content is truly a last resort
@@ -849,7 +857,15 @@ class DocumentRetriever:
 
                 # Stage 2: 'all' content
                 if not detect_from_query or len(all_docs_with_scores) < 4:
-                    _append_stage(k=4, filter_dict={"protocol": "all"})
+                    try:
+                        _append_stage(k=4, filter_dict={"protocol": "all"})
+                    except Exception:
+                        if detect_from_query or not all_docs_with_scores:
+                            raise
+                        logger.warning(
+                            "Staff supplemental lookup failed; retaining scored primary hits",
+                            exc_info=True,
+                        )
 
                 # Stage 3: multisig_v1 fallback
                 if len(all_docs_with_scores) < 3:

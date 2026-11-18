@@ -243,11 +243,17 @@ Nonempty, quoted, exported, duplicate or ambiguous assignments are refused befor
 an effect. Runtime API variables must also be absent or empty. The four new empty
 API entries in the resolved Compose configuration are the only configuration
 comparison exception; every other field remains exact. Container replacement may
-likewise differ only by the complete four-entry empty API bundle. Source
-publication proves `staff_quality_config_preserved=true`; it neither writes
+likewise differ only by the complete four-entry empty API bundle. Before the source fast-forward, the host resolves the candidate Compose file
+with the installed project directory, protected environment and preserved override.
+A configuration mismatch refuses publication while the installed source still
+points to the previous commit. The post-publication check remains a guard against
+concurrent drift: failure keeps the scheduler held and the failed receipt intact;
+read-only receipt/configuration reconciliation and separately reviewed recovery
+are required, never a retry of `publish_source` or an automatic scheduler resume.
+Source publication proves `staff_quality_config_preserved=true`; it neither writes
 protected settings nor creates a trial descriptor or enables generation.
 
-The only data-preservation normalization is the API's additive
+Data-preservation normalization permits only the API's additive
 `staff_context_verdicts TEXT NOT NULL DEFAULT '[]'` column appended to
 `escalations`, with every row still exactly `[]`. Existing column names and all
 previous Matrix escalation row values remain compared; this is not a digest of
@@ -258,6 +264,13 @@ by the migration exception. Version 7 also compares normalized table definitions
 and every non-internal index, trigger and view, preserving existing constraints.
 Older plans retain their original file hashes, selected history-row hashes and
 counts; they do not provide this schema comparison or full database byte equality.
+
+The existing empty answer-event ledger may also gain only the nullable
+`reply_to_event_id TEXT` column. Existing rows remain unknown; no historical
+reply-to association is inferred. Nonempty ledgers still refuse this source-only
+rollout. Preserved SQLite catalog SQL is compared byte for byte, including quoted
+identifier spaces and comment boundaries; only the validated verdict-column
+addition is removed from that comparison.
 
 The existing build and switch still use the preserved installed configuration.
 A later separately reviewed trial binding may configure the approved total/day

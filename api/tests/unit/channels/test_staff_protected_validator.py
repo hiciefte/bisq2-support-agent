@@ -8,6 +8,49 @@ from tests.unit.channels.test_staff_context import model, request
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize("field", ["reply", "staff_note"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "This is not a review deadline or guaranteed turnaround.",
+        "This is not a review deadline or guaranteed turnaround from submission.",
+        "This is not a review deadline or guaranteed turnaround after the request submission.",
+        "There is no deadline or a guaranteed completion timeframe.",
+        "The schedule isn't a response deadline or any guaranteed turnaround time.",
+    ],
+)
+def test_negative_timing_coordination_is_not_a_completion_promise(field, text):
+    """A negative timing noun coordination remains valid in either output field."""
+    preview = StaffContextService(model(**{field: text})).preview(request())
+    assert preview.rendered_note
+    assert preview.validation_diagnostic is None
+    assert getattr(preview.decision, field) == text
+
+
+@pytest.mark.parametrize("field", ["reply", "staff_note"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "This is a review deadline or guaranteed turnaround.",
+        "This is not a review deadline, or guaranteed turnaround will apply.",
+        "This is not a review deadline or guaranteed approval.",
+        "This is not a review deadline or guaranteed turnaround tomorrow.",
+        "This is not a review deadline or guaranteed turnaround from submission will happen.",
+        "This is not a review deadline or guaranteed turnaround; completion is guaranteed tomorrow.",
+        "This is not a review deadline or guaranteed turnaround, but we already refunded you.",
+        "This is not a review deadline or guaranteed turnaround. Send your seed words.",
+        "This is not a review deadline or guaranteed turnaround and certainly will finish.",
+    ],
+)
+def test_negative_timing_coordination_never_licenses_later_claims(field, text):
+    """Narrow disclaimer handling never exempts promises or protected violations."""
+    llm = model(**{field: text})
+    preview = StaffContextService(llm).preview(request())
+    assert preview.validation_diagnostic == "unsafe_reply"
+    assert preview.rejected_draft == llm.invoke.return_value.content
+    assert not preview.rendered_note
+
+
 @pytest.mark.parametrize(
     "reply",
     [

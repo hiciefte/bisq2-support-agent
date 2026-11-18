@@ -68,11 +68,21 @@ def staff_requester_product(question: str) -> str | None:
         # Positive requester attribution, or a direct product-scoped question.
         # A third-party report is not a declaration of the requester's app.
         if not re.search(
-            r"(?:^\s*(?:in\s+|using\s+|on\s+)?$|\b(?:I|I'm|I’m|my|we|our)\b)",
+            r"(?:^\s*(?:in\s+|using\s+|on\s+)?$|"
+            r"\b(?:my|our)\s+(?:(?:current|installed)\s+)?$|"
+            r"\b(?:I|we)(?:['’]m|['’]re| am| are| have)?\s+"
+            r"(?:(?:currently|still|now|already|just)\s+)?"
+            r"(?:use|using|run|running|installed|updated|upgraded)\s+(?:to\s+)?$|"
+            r"\b(?:I|we)(?: have)?\s+(?:tried|attempted|created|accepted|opened|"
+            r"placed|made|sent|received)\b[^;.!?]*\b(?:in|on|using)\s+$|"
+            r"^\s*(?:how|what|where|when|why|which)\b[^;.!?]*\b(?:in|on|using)\s+$)",
             prefix,
             re.I,
         ) or re.search(
-            r"\b(?:friend|helper|peer|someone|another|they|he|she)\b", prefix, re.I
+            r"\b(?:friend|helper|peer|someone|another|they|he|she)\b|"
+            r"\b(?:my|our)\s+\w+['’]s\b",
+            prefix,
+            re.I,
         ):
             continue
         product = explicit_product(mention.group())
@@ -86,6 +96,10 @@ def staff_requester_version(question: str) -> str | None:
     text = re.sub(r'"[^"\n]*"|“[^”\n]*”|`[^`\n]*`|(?m:^\s*>.*$)', "", question)
     versions = set()
     for clause in re.split(r"[!?;\n]|\.(?:\s|$)|\b(?:but|however)\b", text, flags=re.I):
+        if re.search(
+            r"\b(?:or|through)\s+(?:version\s+)?v?\d+\.\d+\.\d+", clause, re.I
+        ):
+            continue
         if re.search(
             r"\b(?:friend|helper|peer|someone|another|they|he|she|said|"
             r"not|never|no longer|don['’]t|doesn['’]t|isn['’]t|wasn['’]t|"
@@ -111,15 +125,41 @@ def staff_requester_version(question: str) -> str | None:
             )
         ):
             continue
-        version = explicit_user_version(clause)
+        # Reuse exact semantic-version validation after normalizing the accepted
+        # current-release declaration, without enabling general version inference.
+        version = explicit_user_version(
+            re.sub(
+                r"\b(?:updated|upgraded)\s+to\s+(?!version\b)",
+                "version ",
+                clause,
+                flags=re.I,
+            )
+        )
         if version:
             versions.add(version)
     return versions.pop() if len(versions) == 1 else None
 
 
 def _source_title_product(title: str) -> str | None:
-    named = _named_products(title)
+    excluded = _excluded_products(title)
+    named = [product for product in _named_products(title) if product not in excluded]
     return named[0] if len(named) == 1 else None
+
+
+def _excluded_products(text: str) -> list[str]:
+    """Retain explicit negative scope independently from neutral comparisons."""
+    return sorted(
+        {
+            product
+            for match in re.finditer(
+                r"\b(?:not (?:for|applicable to)|does not apply to)\s+"
+                r"(bisq[ _-]?(?:1|2|easy))\b",
+                text,
+                re.I,
+            )
+            for product in _named_products(match.group(1))
+        }
+    )
 
 
 def _named_products(text: str) -> list[str]:
@@ -139,6 +179,7 @@ def source_applicability(
     declared = _PRODUCTS.get(str(protocol or "").lower())
     text = source.title + "\n" + source.content
     named = _named_products(text)
+    excluded = _excluded_products(text)
     # A product mention in prose may be an exclusion or comparison. Only a
     # product-specific title or a leading explicit scope label supplies scope.
     title_scope = _source_title_product(source.title)
@@ -155,12 +196,17 @@ def source_applicability(
     ):
         reasons.append("source_product_metadata_conflict")
     scope = declared or single_named
+    if scope and scope in excluded:
+        reasons.append("source_explicit_scope_conflict")
     if product in {"bisq1", "bisq2"} and scope and product != scope:
         reasons.append("explicit_product_mismatch")
+    if product in excluded:
+        reasons.append("explicit_product_exclusion")
     return {
         "declared_protocol": protocol,
         "declared_product": declared,
         "explicitly_named_products": named,
+        "explicitly_excluded_products": excluded,
         "explicit_text_scope": single_named,
         "requester_explicit_product": product,
         "eligible_for_reply": not reasons,

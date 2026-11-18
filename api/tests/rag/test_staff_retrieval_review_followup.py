@@ -68,9 +68,7 @@ def test_ranked_prefix_stays_first_when_formatting_backfill():
     assert not any(d.metadata.get("_reranked") for d in docs[2:])
     formatted = retriever.format_documents(docs)
     assert (
-        formatted.index("Evidence multisig_v1 2")
-        < formatted.index("Evidence bisq_easy 3")
-        < formatted.index("Evidence all 0")
+        sorted(docs, key=lambda doc: formatted.index(doc.page_content))[:2] == docs[:2]
     )
 
 
@@ -79,8 +77,50 @@ def test_default_easy_preserves_threshold_behavior():
         retrieve_with_scores=Mock(side_effect=scoped_documents),
         retrieve_semantic_with_scores=Mock(return_value=[]),
     )
-    DocumentRetriever(backend).retrieve_with_scores("I use Bisq 2.", "Bisq 2")
+    docs, _ = DocumentRetriever(backend).retrieve_with_scores("I use Bisq 2.", "Bisq 2")
+    backend.retrieve_with_scores.assert_called_once_with(
+        "I use Bisq 2.", k=6, filter_dict={"protocol": "bisq_easy"}
+    )
+    assert [doc.page_content for doc in docs] == [
+        f"Evidence bisq_easy {index}" for index in range(4)
+    ]
     assert all(
         call.kwargs["filter_dict"]["protocol"] != "all"
         for call in backend.retrieve_with_scores.call_args_list
     )
+
+
+@pytest.mark.parametrize("scored", [False, True])
+def test_staff_supplemental_failure_keeps_completed_primary_hits(scored):
+    """A failed supplemental lookup preserves valid scoped hits and their scores."""
+    backend = Mock()
+
+    def records(query, k, filter_dict=None):
+        if filter_dict == {"protocol": "all"}:
+            raise RuntimeError("supplemental store unavailable")
+        assert filter_dict == {"protocol": "bisq_easy"}
+        return scoped_documents(query, k, filter_dict)
+
+    backend.retrieve.side_effect = records
+    backend.retrieve_with_scores.side_effect = records
+    backend.retrieve_semantic_with_scores.return_value = []
+    retriever = DocumentRetriever(backend)
+    if scored:
+        docs, scores = retriever.retrieve_with_scores(
+            "I use Bisq 2.", "Bisq 2", detect_from_query=False
+        )
+        assert scores == pytest.approx([0.9, 0.8, 0.7, 0.6])
+        backend.retrieve.assert_not_called()
+        calls = backend.retrieve_with_scores.call_args_list
+    else:
+        docs = retriever.retrieve_with_version_priority(
+            "I use Bisq 2.", "Bisq 2", detect_from_query=False
+        )
+        calls = backend.retrieve.call_args_list
+    assert [doc.page_content for doc in docs] == [
+        f"Evidence bisq_easy {index}" for index in range(4)
+    ]
+    assert [call.kwargs["filter_dict"]["protocol"] for call in calls] == [
+        "bisq_easy",
+        "all",
+    ]

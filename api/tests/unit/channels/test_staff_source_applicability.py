@@ -39,6 +39,18 @@ pytestmark = pytest.mark.unit
         ("Bisq 1 rather than Bisq 2?", None),
         ("I use Bisq 1. It does not start.", "bisq1"),
         ("My Bisq 2 does not connect.", "bisq2"),
+        ("My colleague's Bisq 2 is stuck.", None),
+        ("I think my colleague's Bisq 2 is stuck.", None),
+        ("My cousin uses Bisq 2.", None),
+        ("We discussed their Bisq 2 error.", None),
+        ("How do I find connection details in Bisq 2?", "bisq2"),
+        ("I am currently using Bisq 2.", "bisq2"),
+        ("Our installed Bisq 1 cannot connect.", "bisq1"),
+        ("I tried to accept a new offer in Bisq 1.", "bisq1"),
+        ("We created an account on Bisq Easy.", "bisq2"),
+        ("My colleague accepted an offer in Bisq 2.", None),
+        ("I tried opening my colleague’s offer on Bisq 2.", None),
+        ("We tried viewing our customer's account in Bisq Easy.", None),
         ("Bisq 1 is not starting.", "bisq1"),
         ("I don't use Bisq 1; I use Bisq Easy.", "bisq2"),
     ],
@@ -133,6 +145,24 @@ def test_incidental_or_excluded_product_mention_does_not_define_source_scope():
     )
     assert result["eligible_for_reply"]
     assert result["explicit_text_scope"] is None
+
+
+@pytest.mark.parametrize("label", ["not for Bisq 2", "not applicable to Bisq Easy"])
+def test_title_exclusion_survives_multiple_product_mentions(label):
+    """Explicit exclusions survive mixed titles while comparisons stay eligible."""
+    evidence = source(
+        title=f"Bisq 1 wallet recovery ({label})",
+        content="Documented recovery procedure.",
+        provenance={},
+    )
+    info = source_applicability(evidence, product="bisq2")
+    assert info["explicitly_excluded_products"] == ["bisq2"]
+    assert info["explicit_text_scope"] == "bisq1"
+    assert "explicit_product_exclusion" in info["blocked_reasons"]
+    assert not info["eligible_for_reply"]
+    assert source_applicability(evidence, product="bisq1")["eligible_for_reply"]
+    comparison = evidence.model_copy(update={"title": "Bisq 1 and Bisq 2 comparison"})
+    assert source_applicability(comparison, product="bisq2")["eligible_for_reply"]
 
 
 def test_explicit_conflict_cannot_reenter_generation_or_reply_by_id():

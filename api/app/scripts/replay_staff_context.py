@@ -100,6 +100,11 @@ def write_private(path: Path, value: Any) -> None:
         stream.write(json_bytes(value))
         stream.flush()
         os.fsync(stream.fileno())
+    directory = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 
 
 def append_private(path: Path, value: Any) -> None:
@@ -860,8 +865,9 @@ class ReplayCalls:
 
         def on_not_started(reason: str) -> None:
             nonlocal intent_written
-            if intent_written:
-                self.calls -= 1
+            if intent_written or adapter.unstarted_cleanup_error:
+                if intent_written:
+                    self.calls -= 1
                 append_private(
                     self.output / "calls-not-started.jsonl",
                     {

@@ -300,9 +300,7 @@ async def test_live_budget_refusal_spends_no_note_slot(runtime_case):
             "FROM matrix_context_trial_spend WHERE escalation_id=? AND kind='note'",
             (case.id,),
         ).fetchall()
-        assert all(
-            status == "not_started" and charge == 0 for status, charge in note_rows
-        )
+        assert note_rows == []
         assert (
             db.execute(
                 "SELECT COUNT(*) FROM matrix_context_trial_cases WHERE escalation_id=?",

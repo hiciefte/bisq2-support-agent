@@ -159,6 +159,32 @@ def load_staff_examples(
         return fallback, "synthetic_fallback_invalid_file"
 
 
+def _negated_timing_coordination(clause: str, match: re.Match[str]) -> bool:
+    """Recognize a bounded negative noun coordination, not later promises."""
+    if match.group().casefold() != "guaranteed":
+        return False
+    timing_noun = (
+        r"(?:(?:review|response|processing|completion)\s+)?"
+        r"(?:deadline|turnaround(?:\s+time)?|timeframe)"
+    )
+    return bool(
+        re.search(
+            r"\b(?:no|not|isn['’]t|aren['’]t|wasn['’]t|weren['’]t)"
+            rf"(?:\s+(?:a|an|any))?\s+{timing_noun}\s+or"
+            r"(?:\s+(?:a|an|any))?\s+$",
+            clause[: match.start()],
+            re.I,
+        )
+        and re.match(
+            rf"\s+{timing_noun}"
+            r"(?:\s+(?:from|after)\s+(?:the\s+)?(?:request\s+)?submission)?"
+            r"\s*(?:[.,;:!?]|$)",
+            clause[match.end() :],
+            re.I,
+        )
+    )
+
+
 def _unsafe_reply(text: str) -> bool:
     """Check protected invariants; this is not a factual-quality grader."""
     secrets = r"(?:seed (?:words?|phrase)|recovery (?:words?|phrase|seed)|private keys?|mnemonic|(?:wallet |account )?passwords?|passphrases?|authentication codes?|2fa codes?)"
@@ -188,22 +214,22 @@ def _unsafe_reply(text: str) -> bool:
                 r"(?:\s+(?:a|an|any))?\s+$",
                 clause[: match.start()],
                 re.I,
-            ):
+            ) and not _negated_timing_coordination(clause, match):
                 return True
     for clause in re.split(r"(?<=[.!?;])\s+|\n", text):
-        match = re.search(
+        for match in re.finditer(
             r"\b(?:staff|(?:the |your )?mediator|we|I) "
             r"(?:(?:has|have|already) (?:already )?)?"
             r"(?:acted|released|approved|processed|refunded|paid|contacted|resolved)\b",
             clause,
             re.I,
-        )
-        if match and not re.search(
-            r"\b(?:check|verify|confirm|determine)\s+(?:whether|if)\s+$",
-            clause[: match.start()],
-            re.I,
         ):
-            return True
+            if not re.search(
+                r"\b(?:check|verify|confirm|determine)\s+(?:whether|if)\s+$",
+                clause[: match.start()],
+                re.I,
+            ):
+                return True
     return False
 
 
@@ -247,7 +273,7 @@ def _monetary_clause(text: str) -> bool:
             and (
                 movement
                 or re.search(
-                    r"\b(?:never|not|didn['’]t|hasn['’]t|haven['’]t)\s+(?:yet\s+)?"
+                    r"\b(?:never|not|didn['’]t|hasn['’]t|haven['’]t)\s+(?:yet\s+)?(?:been\s+)?"
                     r"(?:arriv\w*|receiv\w*)\b|\bmissing\b",
                     text,
                     re.I,
@@ -270,7 +296,7 @@ def _diagnostic_question(text: str) -> bool:
     return not re.search(
         rf"^(?:please\s+)?{action}\b|"
         rf"\b(?:can|could|would|will|should)\s+(?:the |my |your |a )?"
-        rf"(?:wallet|funds|coins|btc|bsq|files|account)\s+be\s+"
+        rf"(?:wallet|funds|coins|btc|bsq|files|account)\s+(?:\w+ly\s+)?be\s+(?:\w+ly\s+)?"
         rf"(?:reset|restored|deleted|removed|replaced|sent|paid|transferred|swept)\b|"
         rf"\b(?:have you tried|why don['’]t you|what happens if you)\b|"
         rf"\b(?:(?:how\s+)?(?:can|could|would|will|should)|how do) "

@@ -573,3 +573,93 @@ async def test_explicit_note_identity_wins_over_local_ack_clock(
     saved = proposal(await feedback.repository.get_by_id(feedback.case.id))
     assert saved["edit_distance"] == expected
     assert saved["draft_version_known"] is (expected is not None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target", ["$future-note", "$root", ""])
+async def test_late_publication_receipt_resolves_only_explicit_note_target(
+    feedback, target
+):
+    """A send receipt can arrive after a reply and its edit without losing identity."""
+    import json
+
+    import aiosqlite
+
+    args = dict(
+        room_id="!staff:example.org",
+        root_event_id="$root",
+        reviewer="bob",
+        reply_to_event_id=target,
+    )
+    await feedback.store.record_answer(
+        **args, event_id="$early", answer="Different first proposal", timestamp_ms=500
+    )
+    await feedback.store.record_answer(
+        **args,
+        event_id="$early-edit",
+        replaces_event_id="$early",
+        answer="Published later",
+        timestamp_ms=501,
+    )
+    assert (
+        proposal(await feedback.repository.get_by_id(feedback.case.id))[
+            "draft_version_known"
+        ]
+        is False
+    )
+    async with aiosqlite.connect(feedback.repository.db_path) as db:
+        saved = await (
+            await db.execute(
+                "SELECT original_event_id, reply_to_event_id FROM matrix_context_answer_events WHERE event_id='$early-edit'"
+            )
+        ).fetchone()
+        assert saved == ("$early", target or None)
+        case = await feedback.repository.get_by_id(feedback.case.id)
+        metadata = case.channel_metadata
+        metadata["staff_note_history"].append(
+            {"event_id": "$future-note", "reply": "Published later"}
+        )
+        await db.execute(
+            "UPDATE escalations SET channel_metadata=? WHERE id=?",
+            (json.dumps(metadata), case.id),
+        )
+        await db.commit()
+    # A fresh process/store resolves the durable event, not in-memory state.
+    await ContextFeedbackStore(feedback.repository.db_path).reconcile_answers(
+        feedback.case.id
+    )
+    saved = proposal(await feedback.repository.get_by_id(feedback.case.id))
+    assert saved["draft_version_known"] is (target == "$future-note")
+    assert saved["edit_distance"] == (0 if target == "$future-note" else None)
+    assert saved["original_event_id"] == "$early"
+    await feedback.store.redact_verdict("!staff:example.org", "$early")
+    await feedback.store.reconcile_answers(feedback.case.id)
+    assert proposal(await feedback.repository.get_by_id(feedback.case.id)) is None
+    feedback.client.room_send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_answer_target_migration_preserves_legacy_unknown_comparisons(tmp_path):
+    """An additive migration never invents a reply target for a historical row."""
+    import aiosqlite
+    from app.channels.staff_assist.context_feedback import CREATE_ANSWER_EVENTS_SQL
+
+    path = tmp_path / "legacy.db"
+    async with aiosqlite.connect(path) as db:
+        await db.execute(
+            CREATE_ANSWER_EVENTS_SQL.replace(",\n    reply_to_event_id TEXT", "")
+        )
+        await db.execute(
+            "INSERT INTO matrix_context_answer_events(event_id, room_id, answer) VALUES('$legacy', '!staff:example.org', 'Preserved')"
+        )
+        await db.commit()
+    repository = EscalationRepository(str(path))
+    await repository.initialize()
+    await EscalationRepository(str(path)).initialize()
+    async with aiosqlite.connect(path) as db:
+        row = await (
+            await db.execute(
+                "SELECT event_id, answer, draft, reply_to_event_id FROM matrix_context_answer_events"
+            )
+        ).fetchone()
+    assert row == ("$legacy", "Preserved", None, None)

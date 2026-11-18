@@ -215,10 +215,27 @@ def docker():
     elif args[0] == "compose":
         options = args[1:]
         overlays = []
-        while options and options[0] in ("--project-name", "-f"):
+        compose_source = ROOT / "install/docker/docker-compose.yml"
+        while options and options[0] in (
+            "--project-name",
+            "--project-directory",
+            "--env-file",
+            "-f",
+        ):
             key, value, *options = options
             if key == "-f" and value.endswith(".compose.json"):
                 overlays.append(json.loads(Path(value).read_text()))
+            elif key == "-f" and value.endswith("/docker/docker-compose.yml"):
+                candidate_source = Path(value).resolve()
+                assert candidate_source in {
+                    (ROOT / "candidate/docker/docker-compose.yml").resolve(),
+                    (ROOT / "install/docker/docker-compose.yml").resolve(),
+                }
+                compose_source = candidate_source
+            elif key == "--project-directory":
+                assert Path(value).resolve() == (ROOT / "install/docker").resolve()
+            elif key == "--env-file":
+                assert Path(value).resolve() == (ROOT / "install/docker/.env").resolve()
         action, *rest = options
         if action == "config":
             services = {
@@ -229,7 +246,7 @@ def docker():
                 # Resolve only the exact new empty pass-throughs in this fixture;
                 # all real configuration parsing remains a Docker boundary model.
                 environment = {}
-                source = (ROOT / "install/docker/docker-compose.yml").read_text()
+                source = compose_source.read_text()
                 for name in (
                     "MATRIX_CONTEXT_TRIAL_BUDGET_USD",
                     "MATRIX_CONTEXT_TRIAL_DAILY_BUDGET_USD",

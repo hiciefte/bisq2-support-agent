@@ -42,7 +42,8 @@ CREATE TABLE IF NOT EXISTS matrix_context_answer_events (
     answer TEXT,
     draft TEXT,
     timestamp_ms INTEGER,
-    revoked INTEGER NOT NULL DEFAULT 0 CHECK(revoked IN (0, 1))
+    revoked INTEGER NOT NULL DEFAULT 0 CHECK(revoked IN (0, 1)),
+    reply_to_event_id TEXT
 )
 """
 
@@ -245,8 +246,36 @@ class ContextFeedbackStore:
                 await self._project_answers(db, answer_row["escalation_id"])
             await db.commit()
 
+    async def reconcile_answers(self, case_id: int) -> None:
+        """Resolve explicitly targeted replies after their publication receipt commits."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            await db.execute("BEGIN IMMEDIATE")
+            await self._project_answers(db, case_id)
+            await db.commit()
+
     @staticmethod
     async def _project_answers(db: aiosqlite.Connection, case_id: int) -> None:
+        cursor = await db.execute(
+            "SELECT channel_metadata FROM escalations WHERE id=?", (case_id,)
+        )
+        case = await cursor.fetchone()
+        if case is None:
+            return
+        metadata = json.loads(case["channel_metadata"] or "{}")
+        cursor = await db.execute(
+            "SELECT event_id, reply_to_event_id FROM matrix_context_answer_events "
+            "WHERE escalation_id=? AND draft IS NULL AND reply_to_event_id IS NOT NULL "
+            "AND revoked=0",
+            (case_id,),
+        )
+        for pending in await cursor.fetchall():
+            draft = _published_draft(metadata, pending["reply_to_event_id"])
+            if draft is not None:
+                await db.execute(
+                    "UPDATE matrix_context_answer_events SET draft=? WHERE event_id=?",
+                    (draft, pending["event_id"]),
+                )
         cursor = await db.execute(
             "SELECT e.* FROM matrix_context_answer_events e "
             "JOIN matrix_context_answer_events original ON original.event_id=e.original_event_id "
@@ -255,13 +284,6 @@ class ContextFeedbackStore:
             (case_id,),
         )
         answer = await cursor.fetchone()
-        cursor = await db.execute(
-            "SELECT channel_metadata FROM escalations WHERE id=?", (case_id,)
-        )
-        case = await cursor.fetchone()
-        if case is None:
-            return
-        metadata = json.loads(case["channel_metadata"] or "{}")
         if answer:
             metadata["staff_context_proposed_answer"] = {
                 "event_id": answer["event_id"],
@@ -322,6 +344,7 @@ class ContextFeedbackStore:
                 if original is None:
                     return False
                 case_id, draft = original["escalation_id"], original["draft"]
+                reply_to_event_id = original["reply_to_event_id"]
                 original_event_id = replaces_event_id
             else:
                 case = await self._case(db, room_id, root_event_id, thread=True)
@@ -332,8 +355,8 @@ class ContextFeedbackStore:
                 case_id, original_event_id = case["id"], event_id
             await db.execute(
                 "INSERT OR IGNORE INTO matrix_context_answer_events "
-                "(event_id, room_id, escalation_id, original_event_id, reviewer, answer, draft, timestamp_ms) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "(event_id, room_id, escalation_id, original_event_id, reviewer, answer, draft, timestamp_ms, reply_to_event_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     event_id,
                     room_id,
@@ -343,6 +366,7 @@ class ContextFeedbackStore:
                     answer,
                     draft,
                     timestamp_ms,
+                    reply_to_event_id or None,
                 ),
             )
             await self._project_answers(db, case_id)

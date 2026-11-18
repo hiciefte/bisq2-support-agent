@@ -139,6 +139,39 @@ async def test_explicit_metadata_conflict_is_retained_for_review_without_relabel
     assert "source_product_metadata_conflict" in result.diagnostics[0]
 
 
+@pytest.mark.parametrize("conflicting", [False, True])
+async def test_conflicting_faq_snapshots_cannot_authorize_linked_guide(conflicting):
+    """Quarantine the full FAQ identity before deriving a guide from any copy."""
+    fix = CANONICAL_FIXES["payment-started-confirmation-loop"]
+    row = NS(
+        id="42",
+        verified=True,
+        question="Which notification guide applies?",
+        answer=f"See [the guide]({fix.url}).",
+        protocol="multisig_v1",
+    )
+    second = NS(**{**vars(row), "protocol": "bisq_easy"})
+    faq_service = NS(
+        get_faq_by_id=Mock(side_effect=[row, second] if conflicting else [row])
+    )
+    resolver = StaffEvidenceResolver(
+        faq_service=faq_service, public_faq_service=publication(row)
+    )
+    result = await resolver.resolve(
+        question=PAYMENT_QUESTION,
+        documents=[document("faq", id="42")] * (2 if conflicting else 1),
+    )
+    if conflicting:
+        assert not result.evidence
+        assert {
+            source.provenance["protocol"] for source in result.excluded_evidence
+        } == {"multisig_v1", "bisq_easy"}
+    else:
+        guide = next(source for source in result.evidence if source.kind == "wiki")
+        assert guide.url == fix.url
+        assert guide.provenance["linked_from_faq_id"] == "42"
+
+
 @pytest.mark.asyncio
 async def test_helper_product_and_version_are_not_requester_scope():
     grounding = NS(build=Mock(return_value=None))
