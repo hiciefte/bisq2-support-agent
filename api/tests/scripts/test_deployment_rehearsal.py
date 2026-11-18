@@ -242,6 +242,22 @@ def prepare(source, root, scenario):
     # This substitution exists only in the disposable committed fixture tree.
     with (candidate / "scripts/lib/deployment_recovery.py").open("a") as output:
         output.write("\n" + (FIXTURES / "recovery_adapter.txt").read_text())
+    if quality:
+        # The real transport intentionally masks host error text. Observe the
+        # actual guard's exception in this disposable fixture only; do not replace
+        # its logic or make production diagnostics more permissive.
+        with (candidate / "scripts/lib/deployment_host.py").open("a") as output:
+            output.write(
+                "\n_rehearsal_original_spend_guard = DeploymentHost._staff_quality_environment_file\n"
+                "def _rehearsal_observe_spend_guard(self):\n"
+                "    try:\n"
+                "        return _rehearsal_original_spend_guard(self)\n"
+                "    except JournalError as error:\n"
+                "        if str(error) == 'host_staff_quality_environment':\n"
+                "            (self.install / 'failed_updates/spend-guard-observed.txt').write_text(str(error))\n"
+                "        raise\n"
+                "DeploymentHost._staff_quality_environment_file = _rehearsal_observe_spend_guard\n"
+            )
     if monitoring:
         for name in MONITORING_FILES:
             path = candidate / name
@@ -608,7 +624,7 @@ def database_snapshot(path):
     with closing(sqlite3.connect(path)) as db, db:
         result = {}
         for name, sql, kind in db.execute(
-            "SELECT name,sql,type FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
+            "SELECT name,sql,type FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'"
         ).fetchall():
             assert re.fullmatch(r"[a-z_]+", name)
             if kind != "table":
@@ -830,6 +846,10 @@ def run_case(source, root, scenario):
         report["failed_publication_not_replayed"] = True
         report["read_only_reconciliation"] = True
     elif scenario in {"preflight_refusal", "staff_quality_config_refusal"}:
+        if scenario == "staff_quality_config_refusal":
+            assert (
+                install / "failed_updates/spend-guard-observed.txt"
+            ).read_text() == "host_staff_quality_environment"
         assert (
             applied.returncode == 2
             and not state["builds"]

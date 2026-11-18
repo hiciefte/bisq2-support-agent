@@ -192,8 +192,11 @@ STAFF_QUALITY_LEDGER_DDL = {
 
 
 def _schema_tokens(sql):
+    # Preserve comment bodies and line endings as single tokens: removing the
+    # newline of -- comments can turn an active constraint into commented text.
     return re.findall(
-        r"'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"|[A-Za-z_][A-Za-z_0-9]*|[0-9]+|[^\s]", sql
+        r"--[^\n]*(?:\n|$)|/\*[\s\S]*?\*/|'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"|[A-Za-z_][A-Za-z_0-9]*|[0-9]+|[^\s]",
+        sql,
     )
 
 
@@ -224,6 +227,24 @@ def _column_declaration(sql, name):
         if any(token.strip("'\"`[]").casefold() == name.casefold() for token in clause):
             return None
     return matches[0]
+
+
+def _without_reviewed_verdict_column(sql):
+    """Normalize only the previously validated additive column declaration."""
+    tokens = _schema_tokens(sql)
+    depth = 0
+    for start, token in enumerate(tokens):
+        if depth == 1 and token == "staff_context_verdicts":
+            end = start
+            while end < len(tokens) and tokens[end] not in {",", ")"}:
+                end += 1
+            require(
+                start > 0 and tokens[start - 1] == ",",
+                "host_staff_quality_verdict_migration",
+            )
+            return tokens[: start - 1] + tokens[end:]
+        depth += (token == "(") - (token == ")")
+    raise JournalError("host_staff_quality_verdict_migration")
 
 
 class CommandRunner:
@@ -1813,7 +1834,7 @@ class DeploymentHost:
         # newly configured trial after source publication. Never print values.
         path = self.install / "docker/.env"
         require(path.is_file() and not path.is_symlink(), "host_environment_file")
-        text = path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8-sig")
         seen = set()
         for line in text.splitlines():
             for name in STAFF_SPEND_ENV:
@@ -1872,7 +1893,7 @@ class DeploymentHost:
             db.execute("PRAGMA query_only=ON")
             db.execute("BEGIN")
             names = {
-                row[0]
+                row[0].casefold()
                 for row in db.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
                 )
@@ -1899,7 +1920,8 @@ class DeploymentHost:
                 # a row is actual new work and must stop this source rollout.
                 for table, expected_ddl in STAFF_QUALITY_LEDGER_DDL.items():
                     objects = db.execute(
-                        "SELECT type FROM sqlite_master WHERE name=?", (table,)
+                        "SELECT type FROM sqlite_master WHERE name=? COLLATE NOCASE",
+                        (table,),
                     ).fetchall()
                     require(
                         not objects or objects == [("table",)],
@@ -1908,7 +1930,7 @@ class DeploymentHost:
                     schema_presence[table] = table in names
                     if table in names:
                         actual_ddl = db.execute(
-                            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+                            "SELECT sql FROM sqlite_master WHERE type='table' AND name=? COLLATE NOCASE",
                             (table,),
                         ).fetchone()[0]
                         require(
@@ -1933,6 +1955,14 @@ class DeploymentHost:
             rows = cursor.fetchmany(10001)
             require(len(rows) <= 10000, "host_history_bound")
             if quality:
+                require(
+                    all(
+                        name == "staff_context_verdicts"
+                        for name in columns
+                        if name.casefold() == "staff_context_verdicts"
+                    ),
+                    "host_staff_quality_verdict_migration",
+                )
                 schema_presence["staff_context_verdicts"] = (
                     "staff_context_verdicts" in columns
                 )
@@ -2002,9 +2032,29 @@ class DeploymentHost:
             }
             if quality:
                 tables["matrix_cases"]["columns"] = columns
+                schema = db.execute(
+                    "SELECT type,name,tbl_name,sql FROM sqlite_master "
+                    "WHERE name NOT GLOB 'sqlite_*' ORDER BY type,name"
+                ).fetchmany(10001)
+                require(len(schema) <= 10000, "host_history_schema_bound")
+                normalized_schema = []
+                for kind, name, table_name, sql in schema:
+                    # Ledger DDL and emptiness were validated above. Explicit
+                    # indexes/triggers on them remain part of the comparison.
+                    if kind == "table" and name in STAFF_QUALITY_LEDGER_DDL:
+                        continue
+                    tokens = _schema_tokens(sql or "")
+                    if (
+                        kind == "table"
+                        and name == "escalations"
+                        and schema_presence["staff_context_verdicts"]
+                    ):
+                        tokens = _without_reviewed_verdict_column(sql)
+                    normalized_schema.append((kind, name, table_name, tokens))
         result = {"files": files, "tables": tables}
         if quality:
             result["staff_quality_presence"] = schema_presence
+            result["schema_sha256"] = digest(encode(normalized_schema))
         return result
 
     def _protected_data_preserved(self, current):

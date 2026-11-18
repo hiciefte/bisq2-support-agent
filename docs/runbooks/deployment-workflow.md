@@ -254,8 +254,10 @@ previous Matrix escalation row values remain compared; this is not a digest of
 all non-Matrix escalation rows. Reviewed empty additions are allowed, but removal
 of a table or column present at the baseline is refused. Newly created verdict,
 proposed-answer and spend ledgers must be empty, so actual new work is not hidden
-by the migration exception. Older plan
-versions retain the original strict schema comparison.
+by the migration exception. Version 7 also compares normalized table definitions
+and every non-internal index, trigger and view, preserving existing constraints.
+Older plans retain their original file hashes, selected history-row hashes and
+counts; they do not provide this schema comparison or full database byte equality.
 
 The existing build and switch still use the preserved installed configuration.
 A later separately reviewed trial binding may configure the approved total/day

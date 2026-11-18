@@ -315,6 +315,7 @@ def test_config_comparison_only_normalizes_exact_empty_api_bundle(
 @pytest.mark.parametrize(
     "line",
     [
+        "\ufeffMATRIX_CONTEXT_TRIAL_BUDGET_USD=60",
         "MATRIX_CONTEXT_TRIAL_BUDGET_USD=60",
         "MATRIX_CONTEXT_TRIAL_BUDGET_USD:60",
         "MATRIX_CONTEXT_TRIAL_BUDGET_USD: 60",
@@ -719,3 +720,140 @@ def test_rehearsal_schema_comparison_rejects_unreviewed_objects(
         verify_quality_migration(
             before, database_snapshot(database), module.STAFF_QUALITY_LEDGER_DDL
         )
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "matrix_context_verdict_events",
+        "matrix_context_answer_events",
+        "matrix_context_trial_spend",
+    ],
+)
+@pytest.mark.parametrize("kind", ["TABLE", "VIEW"])
+def test_case_variant_malformed_ledger_is_not_absent(host, module, name, kind):
+    host.plan["schema"] = "deployment-plan-v7"
+    data = host.install / "api/data"
+    data.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(data / "escalations.db")) as db, db:
+        db.execute(
+            "CREATE TABLE escalations(id INTEGER, channel TEXT, channel_metadata TEXT)"
+        )
+        db.execute(
+            "CREATE "
+            + kind
+            + " "
+            + name.upper()
+            + (" (unrelated TEXT)" if kind == "TABLE" else " AS SELECT 1 AS event_id")
+        )
+    with pytest.raises(module.JournalError, match="host_staff_quality_ledger_schema"):
+        module.DeploymentHost._preserved_data(host, host.fixture_state)
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        "CREATE UNIQUE INDEX unique_channel ON escalations(channel)",
+        "CREATE TRIGGER immutable_question BEFORE UPDATE ON escalations BEGIN SELECT RAISE(ABORT,'blocked'); END",
+        "CREATE VIEW hidden_cases AS SELECT * FROM escalations",
+        "CREATE TABLE sqlitexhidden(value TEXT)",
+        "ALTER TABLE retained ADD COLUMN unseen TEXT",
+        "DROP TABLE retained",
+    ],
+)
+def test_host_schema_comparison_rejects_unreviewed_changes(host, module, extra):
+    host.plan["schema"] = "deployment-plan-v7"
+    data = host.install / "api/data"
+    data.mkdir(parents=True, exist_ok=True)
+    database = data / "escalations.db"
+    with closing(sqlite3.connect(database)) as db, db:
+        db.executescript(
+            "CREATE TABLE escalations(id INTEGER, channel TEXT, channel_metadata TEXT); INSERT INTO escalations VALUES(1,'matrix',NULL); CREATE TABLE retained(value TEXT)"
+        )
+    host.baseline["protected_data"] = module.DeploymentHost._preserved_data(
+        host, host.fixture_state
+    )
+    with closing(sqlite3.connect(database)) as db, db:
+        db.execute(
+            "ALTER TABLE escalations ADD COLUMN staff_context_verdicts TEXT NOT NULL DEFAULT '[]'"
+        )
+        for ddl in module.STAFF_QUALITY_LEDGER_DDL.values():
+            db.execute(ddl)
+        db.execute(extra)
+    current = module.DeploymentHost._preserved_data(host, host.fixture_state)
+    assert current["tables"] == host.baseline["protected_data"]["tables"]
+    assert not host._protected_data_preserved(current)
+
+
+def test_host_preserves_table_constraints_through_allowed_append(host, module):
+    host.plan["schema"] = "deployment-plan-v7"
+    data = host.install / "api/data"
+    data.mkdir(parents=True, exist_ok=True)
+    database = data / "escalations.db"
+    with closing(sqlite3.connect(database)) as db, db:
+        db.execute(
+            "CREATE TABLE escalations(id INTEGER, channel TEXT, channel_metadata TEXT, CHECK(channel IN ('matrix','web')))"
+        )
+    host.baseline["protected_data"] = module.DeploymentHost._preserved_data(
+        host, host.fixture_state
+    )
+    with closing(sqlite3.connect(database)) as db, db:
+        db.execute(
+            "ALTER TABLE escalations ADD COLUMN staff_context_verdicts TEXT NOT NULL DEFAULT '[]'"
+        )
+    assert host._protected_data_preserved(
+        module.DeploymentHost._preserved_data(host, host.fixture_state)
+    )
+
+
+def test_rehearsal_snapshot_preserves_sqlite_prefix_lookalike(tmp_path):
+    from test_deployment_rehearsal import database_snapshot
+
+    database = tmp_path / "schema.db"
+    with closing(sqlite3.connect(database)) as db, db:
+        db.execute("CREATE TABLE sqlitexhidden(value TEXT)")
+    assert "sqlitexhidden" in database_snapshot(database)
+
+
+@pytest.mark.parametrize("declaration", ["INTEGER", "TEXT NOT NULL DEFAULT '[]'"])
+def test_noncanonical_verdict_column_name_refused_before_migration(
+    host, module, declaration
+):
+    host.plan["schema"] = "deployment-plan-v7"
+    data = host.install / "api/data"
+    data.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(data / "escalations.db")) as db, db:
+        db.execute(
+            "CREATE TABLE escalations(id INTEGER, channel TEXT, channel_metadata TEXT, STAFF_CONTEXT_VERDICTS "
+            + declaration
+            + ")"
+        )
+    with pytest.raises(
+        module.JournalError, match="host_staff_quality_verdict_migration"
+    ):
+        module.DeploymentHost._preserved_data(host, host.fixture_state)
+
+
+def test_schema_comparison_preserves_sql_line_comment_boundary(host, module):
+    host.plan["schema"] = "deployment-plan-v7"
+    data = host.install / "api/data"
+    data.mkdir(parents=True, exist_ok=True)
+    database = data / "escalations.db"
+    with closing(sqlite3.connect(database)) as db, db:
+        db.execute(
+            "CREATE TABLE escalations(id INTEGER, channel TEXT, channel_metadata TEXT)"
+        )
+        db.execute("CREATE TABLE retained(value TEXT -- note\n CHECK(value != 'bad'))")
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute("INSERT INTO retained VALUES('bad')")
+    host.baseline["protected_data"] = module.DeploymentHost._preserved_data(
+        host, host.fixture_state
+    )
+    with closing(sqlite3.connect(database)) as db, db:
+        db.execute("DROP TABLE retained")
+        db.execute("CREATE TABLE retained(value TEXT -- note CHECK(value != 'bad')\n)")
+        db.execute("INSERT INTO retained VALUES('bad')")
+        db.execute("DELETE FROM retained")
+    assert not host._protected_data_preserved(
+        module.DeploymentHost._preserved_data(host, host.fixture_state)
+    )
