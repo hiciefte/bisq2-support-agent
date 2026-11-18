@@ -18,7 +18,12 @@ from typing import Any, Literal
 from urllib.parse import quote
 
 import aiosqlite
-from app.channels.models import SendDiagnostic
+from app.channels.models import (
+    ChannelType,
+    IncomingMessage,
+    SendDiagnostic,
+    UserContext,
+)
 from app.channels.plugins.matrix.context_text import context_relationships, context_text
 from app.channels.policy import (
     get_first_response_delay_seconds,
@@ -27,6 +32,19 @@ from app.channels.policy import (
 )
 from app.channels.security import PIIDetector
 from app.channels.staff import resolve_channel_staff_resolver
+from app.channels.staff_assist.context_conversation import (
+    ConversationTurn,
+    RequestSnapshot,
+    StaffConversationCoordinator,
+    conversation_turn,
+    selected_staff_request,
+)
+from app.channels.staff_assist.context_feedback import STAFF_CONTEXT_VERDICT_HINT
+from app.channels.staff_assist.context_gate import (
+    RequestAdmissionService,
+    RequestGateError,
+    RequestGateService,
+)
 from app.channels.staff_assist.context_incidents import (
     ContextIncidentStore,
     answer_fragment,
@@ -44,18 +62,21 @@ from app.channels.staff_assist.context_incidents import (
 )
 from app.channels.staff_assist.context_retrieval import build_retrieval_query
 from app.channels.staff_assist.context_trial import (
+    BudgetedContextLLM,
     ContextTrial,
     ContextTrialStore,
     utc_now,
 )
 from app.channels.staff_assist.public_context import (
-    STAFF_CONTEXT_PROMPT,
-    PublicContextRequest,
-    PublicContextService,
     PublicEvidence,
     RoomMessage,
     _markdown_literal,
 )
+from app.channels.staff_assist.staff_context import (
+    StaffContextRequest,
+    StaffContextService,
+)
+from app.channels.staff_assist.staff_prompt import STAFF_CONTEXT_PROMPT
 from app.models.escalation import EscalationCreate
 
 logger = logging.getLogger(__name__)
@@ -281,6 +302,10 @@ class MatrixContextRuntime:
         self._closed = False
         self._trial = ContextTrial.from_settings(runtime.settings)
         self._expiry_task: asyncio.Task | None = None
+        self._conversations: StaffConversationCoordinator | None = None
+        self._request_snapshots: dict[int, RequestSnapshot] = {}
+        self._conversation_workers: dict[int, asyncio.Task[Any]] = {}
+        self._conversation_channel: Any = None
 
     def start(self) -> None:
         """Accept new events after shutdown without replaying reserved cases."""
@@ -312,7 +337,7 @@ class MatrixContextRuntime:
 
     async def _trial_reason(self, case_id: int | None = None) -> str | None:
         if self._trial is None:
-            return None
+            return "context_trial_budget_required"
         if self._closed:
             return "context_trial_stopped"
         try:
@@ -325,7 +350,7 @@ class MatrixContextRuntime:
 
     async def check_trial_delivery(self, transaction_id: str) -> str | None:
         """Called again inside the publisher lifecycle lock before transport."""
-        match = re.fullmatch(r"context-(\d+)-(?:root|note)", transaction_id)
+        match = re.fullmatch(r"context-(\d+)-(?:root|note|update)", transaction_id)
         if match is None:
             return "context_trial_case_not_reserved"
         case_id = int(match.group(1))
@@ -338,8 +363,8 @@ class MatrixContextRuntime:
 
     async def drain(self) -> None:
         """Wait for in-flight work (used by deterministic integration tests)."""
-        if self._tasks:
-            await asyncio.gather(*self._tasks)
+        while self._tasks:
+            await asyncio.gather(*list(self._tasks))
 
     async def close(self) -> None:
         """Stop workers; persisted interrupted cases remain available in Admin."""
@@ -354,10 +379,723 @@ class MatrixContextRuntime:
         await asyncio.gather(*tasks, return_exceptions=True)
 
     async def process(self, incoming: Any, channel: Any) -> bool:
+        if self._trial and self._trial.spend_bounded:
+            return await self._process_conversation(incoming, channel)
         # The coordinator's room/user accumulation is durable here in the Admin
         # case. Serializing only intake prevents two callbacks creating roots.
         async with self._intake_lock:
             return await self._process_incident(incoming, channel)
+
+    def _conversation_coordinator(self) -> StaffConversationCoordinator:
+        service = self.runtime.resolve_optional("escalation_service")
+        policy = self.runtime.resolve_optional("channel_autoresponse_policy_service")
+        if self._conversations is None:
+            self._conversations = StaffConversationCoordinator(
+                service,
+                self._trial.trial_id,
+                first_response_delay_seconds=get_first_response_delay_seconds(
+                    policy, "matrix"
+                ),
+            )
+        self._conversations.delay_ms = int(
+            get_first_response_delay_seconds(policy, "matrix") * 1000
+        )
+        return self._conversations
+
+    async def observe_source_event(
+        self, room_id: str, event: Any, channel: Any, *, is_staff: bool
+    ) -> None:
+        """Retain real subscription turns; never fetch history on a timer."""
+        if not self._trial or not self._trial.spend_bounded or self._closed:
+            return
+        from app.channels.plugins.matrix.room_filter import (
+            resolve_allowed_context_source_rooms,
+        )
+
+        policy = self.runtime.resolve_optional("channel_autoresponse_policy_service")
+        if not is_staff_context_enabled(
+            policy, "matrix"
+        ) or room_id not in resolve_allowed_context_source_rooms(self.runtime.settings):
+            return
+        try:
+            turn = conversation_turn(room_id, event, is_staff=is_staff)
+        except ValueError:
+            return
+        try:
+            await self._ingest_conversation(turn, channel)
+        except ValueError:
+            logger.warning(
+                "Rejected Matrix context observation event=%s", turn.event_id
+            )
+
+    async def _ingest_conversation(self, turn: ConversationTurn, channel: Any) -> None:
+        if await self._trial_reason():
+            return
+        if turn.timestamp_ms < int(self._trial.start_at.timestamp() * 1000):
+            return
+        if channel is not None:
+            self._conversation_channel = channel
+        channel = channel or self._conversation_channel
+        result = await self._capture_conversation_turn(turn)
+        if channel is None:
+            return
+        for case_id in result.affected_case_ids:
+            await self._start_conversation_worker(case_id, channel)
+        self._schedule_expiry()
+
+    async def _start_conversation_worker(self, case_id: int, channel: Any) -> None:
+        if case_id in self._active_cases or self._closed:
+            return
+        if len(self._tasks) >= 100:
+            coordinator = self._conversation_coordinator()
+            await ContextReviewStore(coordinator.db_path).update(
+                case_id, status="needs_human", reason="context_capacity_reached"
+            )
+            return
+        self._active_cases.add(case_id)
+        task = asyncio.create_task(self._run_conversation(case_id, channel))
+        self._conversation_workers[case_id] = task
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _capture_conversation_turn(
+        self, turn: ConversationTurn, *, allow_new: bool = True
+    ) -> Any:
+        """Order event persistence with the existing final delivery boundary."""
+        coordinator = self._conversation_coordinator()
+        service = coordinator.service
+        async with self._intake_lock:
+            locks = []
+            try:
+                # A neighbor can change attribution for any open room request.
+                # Stable lock order also serializes with Admin review actions.
+                for row in await coordinator._rows(turn.room_id):
+                    lock = await service._acquire_delivery_lock(row["id"])
+                    locks.append((row["id"], lock))
+                return await coordinator.ingest(
+                    turn, now_ms=int(utc_now().timestamp() * 1000), allow_new=allow_new
+                )
+            finally:
+                for case_id, lock in reversed(locks):
+                    await service._release_delivery_lock(case_id, lock)
+
+    async def _process_conversation(self, incoming: Any, channel: Any) -> bool:
+        from app.channels.plugins.matrix.room_filter import (
+            resolve_allowed_context_source_rooms,
+        )
+
+        policy = self.runtime.resolve_optional("channel_autoresponse_policy_service")
+        room_id = incoming.channel_metadata.get("room_id", "")
+        if not is_staff_context_enabled(
+            policy, "matrix"
+        ) or room_id not in resolve_allowed_context_source_rooms(self.runtime.settings):
+            return False
+        raw = incoming.channel_metadata.get("conversation_turn")
+        if isinstance(raw, dict):
+            try:
+                turn = ConversationTurn.from_dict(raw)
+            except (TypeError, ValueError):
+                return False
+            if (
+                turn.room_id != room_id
+                or turn.event_id != incoming.message_id
+                or turn.sender_id != incoming.user.user_id
+                or turn.is_staff
+                or turn.is_bot
+            ):
+                return False
+        else:
+            # Non-Matrix callers/tests must provide a server timestamp explicitly.
+            timestamp = incoming.channel_metadata.get("timestamp_ms")
+            if type(timestamp) is not int:
+                return False
+            turn = ConversationTurn(
+                room_id,
+                incoming.message_id,
+                incoming.user.user_id,
+                timestamp,
+                sanitize_question(incoming.question),
+                **{
+                    key: incoming.channel_metadata[key]
+                    for key in (
+                        "reply_to_event_id",
+                        "thread_root_event_id",
+                        "replaces_event_id",
+                    )
+                    if incoming.channel_metadata.get(key)
+                },
+            )
+        await self._ingest_conversation(turn, channel)
+        return False
+
+    async def _verify_conversation_anchor(
+        self, snapshot: RequestSnapshot
+    ) -> str | None:
+        """Check the fresh anchor; old captured turns need not fit on this page."""
+        anchor = snapshot.anchor
+        if anchor is None:
+            return "conversation_no_text_anchor"
+        client = self.runtime.resolve_optional("matrix_client")
+        resolver = resolve_channel_staff_resolver(self.runtime, "matrix")
+        if client is None or resolver is None:
+            return "source_unavailable"
+        try:
+            response = await asyncio.wait_for(
+                client.room_context(snapshot.room_id, anchor.event_id, limit=40),
+                timeout=self.CONTEXT_READ_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            return "source_context_timeout"
+        event = getattr(response, "event", None)
+        if event is None or getattr(event, "event_id", None) != anchor.event_id:
+            return "source_unavailable"
+        coordinator = self._conversation_coordinator()
+        try:
+            current_anchor = conversation_turn(snapshot.room_id, event, is_staff=False)
+        except ValueError:
+            await coordinator.invalidate_visible_event(snapshot, anchor.event_id)
+            return "source_changed_or_redacted"
+        if (
+            current_anchor.sender_id != anchor.sender_id
+            or current_anchor.text != anchor.text
+            or current_anchor.non_text != anchor.non_text
+        ):
+            await coordinator.invalidate_visible_event(snapshot, anchor.event_id)
+            return "source_changed_or_redacted"
+        observed = getattr(event, "server_timestamp", None)
+        if type(observed) is not int or observed != anchor.timestamp_ms:
+            await coordinator.invalidate_visible_event(snapshot, anchor.event_id)
+            return "source_changed_or_redacted"
+        timeline = [
+            *list(reversed(getattr(response, "events_before", []) or [])),
+            event,
+            *(getattr(response, "events_after", []) or []),
+        ]
+        retained = {turn.event_id: turn for turn in snapshot.turns}
+        case = await coordinator.service.repository.get_by_id(snapshot.case_id)
+        original_ids = {
+            turn.replaces_event_id for turn in snapshot.turns if turn.replaces_event_id
+        }
+        # The projected edit alone cannot establish that its original survives.
+        # Compare originals only when visible on this same bounded page.
+        originals = (
+            {
+                item["event_id"]: ConversationTurn.from_dict(item)
+                for item in (case.channel_metadata or {}).get(
+                    "conversation_exchange", []
+                )
+                if item["event_id"] in original_ids
+            }
+            if case
+            else {}
+        )
+        retained.update(originals)
+        # Supplement only this existing bounded anchor read. No pagination or
+        # expanded room capture, and no new cases from historical neighbors.
+        for item in timeline:
+            sender = str(getattr(item, "sender", ""))
+            try:
+                turn = conversation_turn(
+                    snapshot.room_id,
+                    item,
+                    is_staff=resolver.is_staff(sender),
+                    is_bot=sender == getattr(client, "user_id", None),
+                )
+            except ValueError:
+                invalid_id = getattr(item, "event_id", None)
+                if invalid_id in retained:
+                    await coordinator.invalidate_visible_event(snapshot, invalid_id)
+                    return "source_changed_or_redacted"
+                continue
+            previous = retained.get(turn.event_id)
+            source = getattr(item, "source", None) or {}
+            unsigned = source.get("unsigned", {}) if isinstance(source, dict) else {}
+            observed_redaction = isinstance(unsigned, dict) and bool(
+                unsigned.get("redacted_because")
+            )
+            if previous is not None and (
+                observed_redaction
+                or previous.sender_id != turn.sender_id
+                or previous.timestamp_ms != turn.timestamp_ms
+                or previous.text != turn.text
+                or previous.non_text != turn.non_text
+                or (
+                    not previous.replaces_event_id
+                    and (
+                        previous.reply_to_event_id != turn.reply_to_event_id
+                        or previous.thread_root_event_id != turn.thread_root_event_id
+                    )
+                )
+                or previous.replaces_event_id != turn.replaces_event_id
+            ):
+                await coordinator.invalidate_visible_event(snapshot, turn.event_id)
+                return "source_changed_or_redacted"
+            if (
+                self._trial.start_at.timestamp() * 1000
+                <= turn.timestamp_ms
+                <= utc_now().timestamp() * 1000
+            ):
+                await self._capture_conversation_turn(turn, allow_new=False)
+        return (
+            None if await coordinator.is_current(snapshot) else "conversation_changed"
+        )
+
+    async def _run_request_admission(self, case_id: int, channel: Any) -> bool:
+        coordinator = self._conversation_coordinator()
+        policy = self.runtime.resolve_optional("channel_autoresponse_policy_service")
+        while not self._closed:
+            snapshot = await coordinator.snapshot(
+                case_id, now_ms=int(utc_now().timestamp() * 1000)
+            )
+            if snapshot.kind != "admission":
+                return True
+            wait = (
+                snapshot.last_requester_at_ms
+                + coordinator.delay_ms
+                - int(utc_now().timestamp() * 1000)
+            ) / 1000
+            if wait > 0:
+                await asyncio.sleep(wait)
+                continue
+            if not await coordinator.claim(snapshot):
+                latest = await coordinator.service.repository.get_by_id(case_id)
+                metadata = latest.channel_metadata or {} if latest else {}
+                if (
+                    metadata.get("conversation_admission_pending")
+                    and metadata.get("conversation_admission_revision")
+                    != snapshot.revision
+                    and metadata.get("conversation_admission_running_revision") is None
+                    and not metadata.get("conversation_admission_uncertain")
+                    and not metadata.get("conversation_delivery_uncertain")
+                    and metadata.get("conversation_admission_last_gate_revision", -1)
+                    < metadata.get("conversation_admission_revision", 0)
+                ):
+                    continue
+                return False
+            uncertain = False
+            classification_dispatched = False
+            llm = BudgetedContextLLM(
+                self._trial_store(),
+                self.runtime.rag_service.llm,
+                case_id,
+                kind="gate",
+                call_id=snapshot.version,
+                before_call=lambda: (
+                    "review_or_policy_changed"
+                    if self._closed or not is_staff_context_enabled(policy, "matrix")
+                    else coordinator.admission_call_guard(snapshot)
+                ),
+                before_provider=lambda: (
+                    "review_or_policy_changed"
+                    if self._closed or not is_staff_context_enabled(policy, "matrix")
+                    else coordinator.admission_call_guard(snapshot)
+                ),
+            )
+            service = RequestAdmissionService(llm)
+            result = None
+            try:
+                reason = (
+                    await self._trial_reason()
+                    or await self._verify_conversation_anchor(snapshot)
+                )
+                if reason:
+                    if reason == "conversation_changed":
+                        continue
+                    await coordinator.record_admission(
+                        snapshot, failure={"reason": reason, "model_called": False}
+                    )
+                    return reason == "conversation_no_text_anchor"
+                classification_dispatched = True
+                decision = await asyncio.to_thread(service.classify, snapshot)
+                reason = await self._trial_reason() or (
+                    "review_or_policy_changed"
+                    if self._closed or not is_staff_context_enabled(policy, "matrix")
+                    else None
+                )
+                if reason:
+                    await coordinator.record_admission(
+                        snapshot,
+                        failure={
+                            "reason": reason,
+                            "model_called": llm.started,
+                            "completed_decision": decision.model_dump(),
+                            "usage": service.usage,
+                        },
+                    )
+                    return False
+                result = await coordinator.record_admission(
+                    snapshot, decision, usage=service.usage
+                )
+            except asyncio.CancelledError:
+                # A dispatched worker can cross the provider boundary after the
+                # coroutine is cancelled. Its outcome needs reconciliation.
+                uncertain = classification_dispatched or llm.started
+                raise
+            except Exception as exc:
+                uncertain = llm.started and not isinstance(exc, RequestGateError)
+                await coordinator.record_admission(
+                    snapshot,
+                    failure={
+                        "reason": (
+                            llm.reason or str(exc)
+                            if isinstance(exc, RequestGateError)
+                            else llm.reason or "request_admission_unavailable"
+                        ),
+                        "raw_output": getattr(exc, "raw", None),
+                        "usage": service.usage,
+                        "model_called": llm.started,
+                        "uncertain": uncertain,
+                    },
+                )
+                if not llm.started and llm.reason == "request_admission_changed":
+                    continue
+                return False
+            finally:
+                await coordinator.finish(snapshot, uncertain=uncertain)
+            if result and result.created:
+                await self._start_conversation_worker(result.case_id, channel)
+                # Promotion settles the boundary, not the parent's unanswered
+                # request. Its existing worker must recheck ordinary eligibility.
+                return True
+            if result and not result.created:
+                current = await coordinator.service.repository.get_by_id(case_id)
+                if not (current.channel_metadata or {}).get(
+                    "conversation_admission_pending"
+                ):
+                    return True
+
+        return False
+
+    async def _run_conversation(self, case_id: int, channel: Any) -> None:
+        coordinator = self._conversation_coordinator()
+        store = ContextReviewStore(coordinator.db_path)
+        claimed: RequestSnapshot | None = None
+        try:
+            while not self._closed:
+                case = await coordinator.service.repository.get_by_id(case_id)
+                metadata = case.channel_metadata or {}
+                if metadata.get("conversation_admission_pending"):
+                    resume_request = await self._run_request_admission(case_id, channel)
+                    if not resume_request:
+                        return
+                    current = await coordinator.service.repository.get_by_id(case_id)
+                    current_meta = current.channel_metadata or {}
+                    if current_meta.get("conversation_admission_pending"):
+                        return
+                    continue
+                if (
+                    case.status.value not in {"pending", "in_review"}
+                    or metadata.get("conversation_resolved")
+                    or metadata.get("conversation_delivery_uncertain")
+                    or metadata.get("conversation_staff_replied_after_draft")
+                    or metadata.get("conversation_generation_count", 0) >= 2
+                ):
+                    return
+                if metadata.get("conversation_revision", 0) <= metadata.get(
+                    "conversation_last_gate_revision", -1
+                ):
+                    return
+                wait = (
+                    metadata.get("conversation_last_requester_at_ms", 0)
+                    + coordinator.delay_ms
+                    - int(utc_now().timestamp() * 1000)
+                ) / 1000
+                if wait > 0:
+                    await asyncio.sleep(wait)
+                    continue
+                snapshot = await coordinator.snapshot(
+                    case_id, now_ms=int(utc_now().timestamp() * 1000)
+                )
+                if snapshot.kind == "admission":
+                    continue
+                if (
+                    snapshot.last_requester_at_ms + coordinator.delay_ms
+                    > snapshot.observed_at_ms
+                ):
+                    continue
+                if not await coordinator.claim(snapshot):
+                    latest = await coordinator.service.repository.get_by_id(case_id)
+                    latest_meta = latest.channel_metadata or {}
+                    if latest_meta.get("conversation_running_revision") is None and (
+                        latest_meta.get("conversation_revision") != snapshot.revision
+                        or latest_meta.get("conversation_last_requester_at_ms", 0)
+                        + coordinator.delay_ms
+                        > snapshot.observed_at_ms
+                        or latest_meta.get("conversation_admission_pending")
+                    ):
+                        continue
+                    return
+                claimed = snapshot
+                reason = (
+                    await self._trial_reason()
+                    or await self._verify_conversation_anchor(snapshot)
+                )
+                if reason:
+                    if reason != "conversation_changed":
+                        await store.update(
+                            case_id,
+                            status="deferred",
+                            reason=reason,
+                            conversation_last_gate_revision=snapshot.revision,
+                        )
+                    await coordinator.finish(snapshot)
+                    claimed = None
+                    if reason == "conversation_changed":
+                        continue
+                    return
+                readiness = coordinator.request_call_guard(
+                    snapshot, now_ms=int(utc_now().timestamp() * 1000)
+                )
+                if readiness in {
+                    "conversation_changed",
+                    "conversation_quiet_period_restarted",
+                }:
+                    await coordinator.finish(snapshot)
+                    claimed = None
+                    continue
+                policy = self.runtime.resolve_optional(
+                    "channel_autoresponse_policy_service"
+                )
+                gate_llm = BudgetedContextLLM(
+                    self._trial_store(),
+                    self.runtime.rag_service.llm,
+                    case_id,
+                    kind="gate",
+                    call_id=snapshot.version,
+                    before_call=lambda: (
+                        "review_or_policy_changed"
+                        if self._closed
+                        or not is_staff_context_enabled(policy, "matrix")
+                        else coordinator.request_call_guard(
+                            snapshot, now_ms=int(utc_now().timestamp() * 1000)
+                        )
+                    ),
+                    before_provider=lambda: (
+                        "review_or_policy_changed"
+                        if self._closed
+                        or not is_staff_context_enabled(policy, "matrix")
+                        else coordinator.request_call_guard(
+                            snapshot, now_ms=int(utc_now().timestamp() * 1000)
+                        )
+                    ),
+                )
+                gate = RequestGateService(gate_llm)
+                try:
+                    decision = await asyncio.to_thread(gate.classify, snapshot)
+                except Exception as exc:
+                    if not gate_llm.started and gate_llm.reason in {
+                        "conversation_changed",
+                        "conversation_quiet_period_restarted",
+                    }:
+                        await coordinator.finish(snapshot)
+                        claimed = None
+                        continue
+                    await store.update(
+                        case_id,
+                        status="needs_human",
+                        reason=gate_llm.reason
+                        or (
+                            str(exc)
+                            if isinstance(exc, RequestGateError)
+                            else "conversation_gate_unavailable"
+                        ),
+                        conversation_last_gate_revision=snapshot.revision,
+                        conversation_gate_error=getattr(exc, "raw", None),
+                        conversation_gate_usage=gate.usage,
+                        conversation_gate_call_status=(
+                            "outcome_unknown"
+                            if gate_llm.started
+                            and not isinstance(exc, RequestGateError)
+                            else "completed" if gate_llm.started else "not_started"
+                        ),
+                    )
+                    await coordinator.finish(snapshot)
+                    claimed = None
+                    if (
+                        not gate_llm.started
+                        and gate_llm.reason == "conversation_changed"
+                    ):
+                        continue
+                    return
+                if not await coordinator.record_gate(snapshot, decision):
+                    await coordinator.finish(snapshot)
+                    claimed = None
+                    continue
+                await store.update(
+                    case_id,
+                    conversation_gate_usage=gate.usage,
+                    conversation_gate_call_status="completed",
+                    conversation_coverage="subscription_history_plus_bounded_anchor_check",
+                    conversation_omitted_event_ids=list(snapshot.omitted_event_ids),
+                )
+                if not snapshot.should_draft(decision):
+                    await store.update(
+                        case_id,
+                        status="needs_human",
+                        reason=(
+                            "conversation_" + decision.category
+                            if decision.category != "unanswered_support_request"
+                            else "conversation_no_material_change"
+                        ),
+                        model_called=(
+                            False
+                            if not metadata.get("conversation_generation_count")
+                            else metadata.get("model_called")
+                        ),
+                    )
+                    await coordinator.finish(snapshot)
+                    claimed = None
+                    continue
+                request = selected_staff_request(snapshot, decision, [])
+                anchor = snapshot.anchor
+                if anchor is None:
+                    # The same immutable snapshot was verified before the gate.
+                    raise ValueError("conversation_no_text_anchor")
+                incoming = IncomingMessage(
+                    message_id=anchor.event_id,
+                    channel=ChannelType.MATRIX,
+                    question=anchor.text,
+                    user=UserContext(
+                        user_id=anchor.sender_id,
+                        session_id=None,
+                        channel_user_id=None,
+                        auth_token=None,
+                    ),
+                    channel_signature=None,
+                    channel_metadata={"room_id": snapshot.room_id},
+                ).model_copy(
+                    update={
+                        "channel_metadata": {
+                            "room_id": snapshot.room_id,
+                            "conversation_snapshot": snapshot,
+                            "conversation_decision": decision,
+                            "incident_high_risk": request.high_risk_action,
+                        }
+                    }
+                )
+                self._request_snapshots[case_id] = snapshot
+                await self._prepare_and_publish(
+                    incoming, channel, case_id, store, request.question, policy
+                )
+                await coordinator.record_withheld(snapshot)
+                current = await coordinator.service.repository.get_by_id(case_id)
+                uncertain = (current.channel_metadata or {}).get(
+                    "context_status"
+                ) == "delivery_uncertain"
+                await coordinator.finish(snapshot, uncertain=uncertain)
+                claimed = None
+                if self._request_snapshots.get(case_id) is snapshot:
+                    self._request_snapshots.pop(case_id, None)
+        except asyncio.CancelledError:
+            if claimed is not None:
+                await coordinator.finish(claimed, uncertain=True)
+                await store.update(
+                    case_id,
+                    status="delivery_uncertain",
+                    reason="processing_interrupted_review_required",
+                )
+            raise
+        except Exception:
+            logger.exception("Staff conversation failed for case=%s", case_id)
+            if claimed is not None:
+                await coordinator.finish(claimed, uncertain=True)
+            await store.update(
+                case_id, status="needs_human", reason="conversation_processing_failed"
+            )
+        finally:
+            if claimed is not None and self._request_snapshots.get(case_id) is claimed:
+                self._request_snapshots.pop(case_id, None)
+            if self._conversation_workers.get(case_id) is asyncio.current_task():
+                self._conversation_workers.pop(case_id, None)
+                self._active_cases.discard(case_id)
+
+    async def _publish_conversation_update(
+        self,
+        *,
+        case_id: int,
+        channel: Any,
+        note: str,
+        preview: Any,
+        store: ContextReviewStore,
+        staff_room: str,
+        incoming: Any,
+        source_snapshot: Any,
+    ) -> bool:
+        case = await self.runtime.resolve_optional(
+            "escalation_service"
+        ).repository.get_by_id(case_id)
+        metadata = case.channel_metadata or {}
+        if metadata.get("conversation_update_delivery_attempted"):
+            return False
+        root_id = metadata["staff_root_event_id"]
+        await store.update(
+            case_id,
+            status="delivery_pending",
+            reason="staff_update_reserved",
+            conversation_update_delivery_attempted=True,
+            staff_update_transaction_id=f"context-{case_id}-update",
+            staff_update_content=note,
+        )
+        try:
+            _, reason = await self._read_source(incoming, snapshot=source_snapshot)
+            if reason:
+                raise PublicationSuppressed(reason)
+            result = await self._send_if_open(
+                case_id,
+                channel,
+                note,
+                store=store,
+                phase="update",
+                thread_root_event_id=root_id,
+                transaction_id=f"context-{case_id}-update",
+                expected_room_id=staff_room,
+            )
+            event_id = getattr(result, "external_message_id", None)
+            if not result or not event_id:
+                raise RuntimeError("Staff update outcome unavailable")
+            latest = await self.runtime.resolve_optional(
+                "escalation_service"
+            ).repository.get_by_id(case_id)
+            history = list(
+                (latest.channel_metadata or {}).get("staff_note_history", [])
+            )
+            history.append(
+                {
+                    "event_id": event_id,
+                    "reply": preview.decision.reply,
+                    "version": 1,
+                    "acknowledged_at_ms": int(utc_now().timestamp() * 1000),
+                }
+            )
+            await store.update(
+                case_id,
+                status="delivered",
+                reason="staff_context_updated",
+                staff_note_event_id=event_id,
+                staff_note_content=note,
+                staff_note_delivery=(latest.channel_metadata or {}).get(
+                    "staff_update_delivery"
+                ),
+                staff_note_history=history,
+            )
+            await self._reconcile_note_answers(case_id)
+            if incoming.channel_metadata.get("conversation_snapshot"):
+                await self._conversation_coordinator().record_delivery(
+                    incoming.channel_metadata["conversation_snapshot"]
+                )
+            return True
+        except PublicationSuppressed as exc:
+            await store.update(
+                case_id, status="deferred", reason=str(exc) or "review_changed"
+            )
+            return False
+        except Exception:
+            await store.update(
+                case_id,
+                status="delivery_uncertain",
+                reason="staff_update_requires_reconciliation",
+            )
+            return False
 
     async def _process_incident(self, incoming: Any, channel: Any) -> bool:
         """Persist incident membership or bounded review intake before generation."""
@@ -732,12 +1470,22 @@ class MatrixContextRuntime:
                 case_id, status="deferred", reason="staff_context_destination_invalid"
             )
             return False
-        if getattr(
-            getattr(incoming, "classification", None), "topic_risk", None
-        ) == "high" or incoming.channel_metadata.get("incident_high_risk"):
-            await store.update(case_id, status="needs_human", reason="high_risk_action")
+        reason = await self._trial_reason()
+        if reason:
+            await store.update(
+                case_id,
+                status="deferred",
+                reason=reason,
+                model_called=False,
+                model_call_status="not_started",
+            )
             return False
-        if PublicContextRequest(question=question).needs_moderation_review:
+        money_at_risk = bool(
+            getattr(getattr(incoming, "classification", None), "topic_risk", None)
+            == "high"
+            or incoming.channel_metadata.get("incident_high_risk")
+        )
+        if StaffContextRequest(question=question).needs_moderation_review:
             await store.update(
                 case_id,
                 status="needs_human",
@@ -748,7 +1496,7 @@ class MatrixContextRuntime:
             return False
         source_snapshot = _SourceContextSnapshot()
         snapshot, reason = await self._read_source(incoming, snapshot=source_snapshot)
-        if PublicContextRequest(
+        if StaffContextRequest(
             question=question, recent_messages=snapshot
         ).needs_moderation_review:
             await store.update(
@@ -779,17 +1527,30 @@ class MatrixContextRuntime:
                 case_id, status="needs_human", reason="generation_unavailable"
             )
             return False
-        if self._trial is not None:
+        spend_bounded = self._trial is not None and self._trial.spend_bounded
+        if self._trial is not None and not spend_bounded:
+            # Preserve the admission semantics of already-bound legacy trials.
             reason = await self._trial_reason() or await self._trial_store().reserve(
                 case_id
             )
             if reason:
                 await store.update(case_id, status="deferred", reason=reason)
                 return False
-        reason = await self._trial_reason(case_id)
+        # Spend-mode trials reserve at invoke, after deterministic refusals and
+        # retrieval. A gate call alone never authorizes a Staff note delivery.
+        pre_generation_case_id = None if spend_bounded else case_id
+        reason = await self._trial_reason(pre_generation_case_id)
         if reason:
             await store.update(case_id, status="deferred", reason=reason)
             return False
+
+        from app.channels.staff_assist.evidence_applicability import (
+            staff_requester_product,
+        )
+
+        # Use requester facts for the product filter. Nearby helpers may discuss
+        # another application; their words can enrich the query, not choose scope.
+        retrieval_product = staff_requester_product(question)
 
         def retrieve_documents(query):
             if self._trial:
@@ -798,7 +1559,14 @@ class MatrixContextRuntime:
                 )
                 if reason:
                     raise PublicationSuppressed(reason)
-            return retriever.retrieve_with_scores(query)
+            return retriever.retrieve_with_scores(
+                query,
+                detected_version={"bisq1": "Bisq 1", "bisq2": "Bisq 2"}.get(
+                    retrieval_product
+                ),
+                detect_from_query=False,
+                require_reranker_success=True,
+            )
 
         retrieval_query = build_retrieval_query(
             question, source_snapshot.confirmed_retrieval_messages
@@ -818,7 +1586,7 @@ class MatrixContextRuntime:
         async def allow_live_read() -> bool:
             return (
                 not self._closed
-                and not await self._trial_reason(case_id)
+                and not await self._trial_reason(pre_generation_case_id)
                 and await self._case_is_open(case_id)
                 and is_staff_context_enabled(policy_service, "matrix")
             )
@@ -842,7 +1610,12 @@ class MatrixContextRuntime:
             llm_wiki_loader=getattr(rag, "llm_wiki_loader", None),
             llm_wiki_dir=getattr(self.runtime.settings, "LLM_WIKI_DIR_PATH", None),
         )
-        resolved = await resolver.resolve(question=retrieval_query, documents=documents)
+        resolved = await resolver.resolve(
+            question=retrieval_query,
+            documents=documents,
+            product=retrieval_product,
+            applicability_question=question,
+        )
         if not await self._case_is_open(case_id) or not is_staff_context_enabled(
             policy_service, "matrix"
         ):
@@ -855,18 +1628,39 @@ class MatrixContextRuntime:
             )
             return False
         evidence = resolved.evidence
-        request = PublicContextRequest(
-            question=question,
-            recent_messages=snapshot,
-            evidence=evidence,
-            audience="staff_only",
+        conversation_snapshot = incoming.channel_metadata.get("conversation_snapshot")
+        request = (
+            selected_staff_request(
+                conversation_snapshot,
+                incoming.channel_metadata["conversation_decision"],
+                evidence,
+            )
+            if conversation_snapshot is not None
+            else StaffContextRequest(
+                question=question,
+                recent_messages=snapshot,
+                evidence=evidence,
+                high_risk_action=money_at_risk,
+            )
+        )
+        staff_service = StaffContextService(
+            rag.llm, data_dir=getattr(self.runtime.settings, "DATA_DIR", None)
         )
         evidence_json = [entry.model_dump() for entry in evidence]
         versions: dict[str, Any] = {
             "retrieval_query_version": _digest(retrieval_query),
             "evidence_version": _digest(evidence_json),
             "evidence_snapshot": evidence_json,
-            "generation_version": _digest(STAFF_CONTEXT_PROMPT),
+            "excluded_evidence_snapshot": [
+                entry.model_dump() for entry in resolved.excluded_evidence
+            ],
+            "retrieval_requester_product": retrieval_product,
+            "generation_version": _digest(
+                {
+                    "prompt": STAFF_CONTEXT_PROMPT,
+                    "examples_sha256": staff_service.examples_sha256,
+                }
+            ),
             "evidence_diagnostics": resolved.diagnostics,
             "staff_grounding_brief": resolved.internal_grounding,
             "model_name": str(getattr(self.runtime.settings, "OPENAI_MODEL", "")),
@@ -881,7 +1675,7 @@ class MatrixContextRuntime:
             model_call_status="reserved",
             **versions,
         )
-        reason = await self._trial_reason(case_id)
+        reason = await self._trial_reason(pre_generation_case_id)
         if reason:
             await store.update(
                 case_id,
@@ -891,6 +1685,50 @@ class MatrixContextRuntime:
                 model_call_status="not_started",
             )
             return False
+
+        budgeted_llm = (
+            BudgetedContextLLM(
+                self._trial_store(),
+                rag.llm,
+                case_id,
+                kind=(
+                    incoming.channel_metadata["conversation_snapshot"].kind
+                    if incoming.channel_metadata.get("conversation_snapshot")
+                    else "note"
+                ),
+                call_id=(
+                    incoming.channel_metadata["conversation_snapshot"].version
+                    if incoming.channel_metadata.get("conversation_snapshot")
+                    else "initial"
+                ),
+                before_call=lambda: (
+                    "review_or_policy_changed"
+                    if self._closed
+                    or not is_staff_context_enabled(policy_service, "matrix")
+                    else (
+                        self._conversation_coordinator().request_call_guard(
+                            conversation_snapshot
+                        )
+                        if conversation_snapshot is not None
+                        else None
+                    )
+                ),
+                before_provider=lambda: (
+                    "review_or_policy_changed"
+                    if self._closed
+                    or not is_staff_context_enabled(policy_service, "matrix")
+                    else (
+                        self._conversation_coordinator().request_call_guard(
+                            conversation_snapshot
+                        )
+                        if conversation_snapshot is not None
+                        else None
+                    )
+                ),
+            )
+            if spend_bounded
+            else None
+        )
 
         def generate_preview():
             # A queued executor thread may start after the async check.
@@ -903,9 +1741,32 @@ class MatrixContextRuntime:
             )
             if reason:
                 raise PublicationSuppressed(reason)
-            return PublicContextService(rag.llm).preview(request)
+            staff_service.llm = budgeted_llm or rag.llm
+            return staff_service.preview(request)
 
         preview = await asyncio.to_thread(generate_preview)
+        if budgeted_llm is not None and budgeted_llm.reason:
+            await store.update(
+                case_id,
+                status="deferred",
+                reason=budgeted_llm.reason,
+                **{
+                    **versions,
+                    "model_called": False,
+                    "model_call_status": "not_started",
+                },
+            )
+            return False
+        conversation_snapshot = incoming.channel_metadata.get("conversation_snapshot")
+        if conversation_snapshot is not None:
+            await self._conversation_coordinator().record_draft(
+                conversation_snapshot,
+                preview,
+                selected_event_ids=incoming.channel_metadata[
+                    "conversation_decision"
+                ].selected_event_ids,
+                presented=False,
+            )
         usage = preview.usage
         if hasattr(usage, "model_dump"):
             usage = usage.model_dump()
@@ -934,7 +1795,17 @@ class MatrixContextRuntime:
             ),
             model_usage=counters or None,
             model_decision=preview.decision.model_dump(),
-            validation_diagnostic=getattr(preview, "validation_diagnostic", None),
+            staff_reply=preview.decision.reply,
+            staff_note=preview.decision.staff_note,
+            rejected_draft=preview.rejected_draft,
+            knowledge_gap=preview.knowledge_gap,
+            money_at_risk=preview.money_at_risk,
+            staff_examples_source=preview.examples_source,
+            staff_examples_sha256=preview.examples_sha256,
+            validation_diagnostic=preview.validation_diagnostic,
+            source_applicability=preview.source_applicability,
+            public_citation_readiness=preview.public_citation_readiness,
+            conversation_coverage=request.conversation_coverage.model_dump(),
         )
         if not preview.rendered_note:
             # Model silence is not evidence the customer's issue was resolved.
@@ -945,10 +1816,15 @@ class MatrixContextRuntime:
                 **versions,
             )
             return False
-        note = preview.rendered_note
-        if PIIDetector().contains_pii(note):
+        note = preview.rendered_note + "\n\n" + STAFF_CONTEXT_VERDICT_HINT
+        if PIIDetector().contains_pii(
+            preview.decision.reply + "\n" + preview.decision.staff_note
+        ) or PIIDetector().contains_pii(note):
             await store.update(
-                case_id, status="needs_human", reason="context_pii_detected", **versions
+                case_id,
+                status="needs_human",
+                reason="context_pii_detected",
+                **{**versions, "rejected_draft": preview.rendered_note},
             )
             return False
         used = set(preview.decision.source_ids)
@@ -1023,6 +1899,21 @@ class MatrixContextRuntime:
             if multiple_speakers
             else question
         )
+        if (
+            incoming.channel_metadata.get("conversation_snapshot")
+            and (current_case.channel_metadata or {}).get("staff_root_event_id")
+            and (current_case.channel_metadata or {}).get("staff_note_event_id")
+        ):
+            return await self._publish_conversation_update(
+                case_id=case_id,
+                channel=channel,
+                note=note,
+                preview=preview,
+                store=store,
+                staff_room=staff_room,
+                incoming=incoming,
+                source_snapshot=source_snapshot,
+            )
         root = (
             f"Support question · staff review #{case_id}\n\n"
             + _markdown_literal(root_question)
@@ -1030,39 +1921,54 @@ class MatrixContextRuntime:
             + matrix_link(room_id, source_event_id)
             + "\n\nAI context is in this thread. Review in Admin; approval stays internal."
         )
-        await store.update(
-            case_id,
-            status="delivery_pending",
-            reason="staff_root_reserved",
-            staff_room_id=staff_room,
-            staff_root_content=root,
-            staff_note_content=note,
-            staff_root_transaction_id=f"context-{case_id}-root",
-            staff_note_transaction_id=f"context-{case_id}-note",
-            staff_root_delivery=SendDiagnostic(
-                operation_started=False,
-                response_received=False,
-                reason_category="reserved",
-            ).model_dump(),
-            staff_note_delivery=SendDiagnostic(
-                operation_started=False,
-                response_received=False,
-                reason_category="reserved",
-            ).model_dump(),
+        root_id = (
+            (current_case.channel_metadata or {}).get("staff_root_event_id")
+            if incoming.channel_metadata.get("conversation_snapshot")
+            else None
         )
-        try:
-            result = await self._send_if_open(
+        if not root_id:
+            await store.update(
                 case_id,
-                channel,
-                root,
-                store=store,
-                phase="root",
-                transaction_id=f"context-{case_id}-root",
-                expected_room_id=staff_room,
+                status="delivery_pending",
+                reason="staff_root_reserved",
+                staff_room_id=staff_room,
+                staff_root_content=root,
+                staff_note_content=note,
+                staff_root_transaction_id=f"context-{case_id}-root",
+                staff_note_transaction_id=f"context-{case_id}-note",
+                staff_root_delivery=SendDiagnostic(
+                    operation_started=False,
+                    response_received=False,
+                    reason_category="reserved",
+                ).model_dump(),
+                staff_note_delivery=SendDiagnostic(
+                    operation_started=False,
+                    response_received=False,
+                    reason_category="reserved",
+                ).model_dump(),
             )
-            root_id = getattr(result, "external_message_id", None)
-            if not result or not root_id:
-                raise RuntimeError("Staff root outcome unavailable")
+        else:
+            await store.update(
+                case_id,
+                status="delivery_pending",
+                reason="staff_note_reserved",
+                staff_note_content=note,
+                staff_note_transaction_id=f"context-{case_id}-note",
+            )
+        try:
+            if not root_id:
+                result = await self._send_if_open(
+                    case_id,
+                    channel,
+                    root,
+                    store=store,
+                    phase="root",
+                    transaction_id=f"context-{case_id}-root",
+                    expected_room_id=staff_room,
+                )
+                root_id = getattr(result, "external_message_id", None)
+                if not result or not root_id:
+                    raise RuntimeError("Staff root outcome unavailable")
             await store.update(
                 case_id,
                 status="delivery_pending",
@@ -1102,12 +2008,32 @@ class MatrixContextRuntime:
             note_id = getattr(result, "external_message_id", None)
             if not result or not note_id:
                 raise RuntimeError("Staff context outcome unavailable")
+            latest = await self.runtime.resolve_optional(
+                "escalation_service"
+            ).repository.get_by_id(case_id)
+            history = list(
+                (latest.channel_metadata or {}).get("staff_note_history", [])
+            )
+            history.append(
+                {
+                    "event_id": note_id,
+                    "reply": preview.decision.reply,
+                    "version": 0,
+                    "acknowledged_at_ms": int(utc_now().timestamp() * 1000),
+                }
+            )
             await store.update(
                 case_id,
                 status="delivered",
                 reason="staff_context_delivered",
                 staff_note_event_id=note_id,
+                staff_note_history=history,
             )
+            await self._reconcile_note_answers(case_id)
+            if incoming.channel_metadata.get("conversation_snapshot"):
+                await self._conversation_coordinator().record_delivery(
+                    incoming.channel_metadata["conversation_snapshot"]
+                )
             return True
         except PublicationSuppressed as exc:
             await store.update(
@@ -1122,7 +2048,29 @@ class MatrixContextRuntime:
             )
             return False
 
+    async def _reconcile_note_answers(self, case_id: int) -> None:
+        """Join early explicit Staff replies after the note receipt is durable."""
+        from app.channels.staff_assist.context_feedback import ContextFeedbackStore
+
+        service = self.runtime.resolve_optional("escalation_service")
+        try:
+            await ContextFeedbackStore(service.repository.db_path).reconcile_answers(
+                case_id
+            )
+        except Exception as exc:
+            # Transport acceptance is already proved. Projection failure must
+            # not turn it into delivery uncertainty or trigger another send.
+            logger.warning(
+                "Staff answer reconciliation pending case=%s error=%s",
+                case_id,
+                type(exc).__name__,
+            )
+
     async def _case_is_open(self, case_id: int) -> bool:
+        if case_id in self._request_snapshots:
+            return await self._conversation_coordinator().is_current(
+                self._request_snapshots[case_id]
+            )
         service = self.runtime.resolve_optional("escalation_service")
         case = await service.repository.get_by_id(case_id)
         return (
@@ -1147,7 +2095,7 @@ class MatrixContextRuntime:
         prevents the send. Later updates wait for this decision/transport to
         finish and remain reviewable; an in-flight message cannot be recalled.
         """
-        if phase not in {"root", "note"}:
+        if phase not in {"root", "note", "update"}:
             raise ValueError("Unknown staff delivery phase")
         latest = SendDiagnostic(
             operation_started=False,
@@ -1265,6 +2213,24 @@ class MatrixContextRuntime:
         self, incoming: Any, *, snapshot: _SourceContextSnapshot | None = None
     ) -> tuple[list[RoomMessage], str | None]:
         """Read current server context; do not trust activity flags from text."""
+        conversation_snapshot = incoming.channel_metadata.get("conversation_snapshot")
+        if conversation_snapshot is not None:
+            reason = await self._verify_conversation_anchor(conversation_snapshot)
+            if reason:
+                return [], reason
+            request = selected_staff_request(
+                conversation_snapshot,
+                incoming.channel_metadata["conversation_decision"],
+                [],
+            )
+            if snapshot is not None:
+                snapshot.messages = tuple(request.recent_messages)
+                snapshot.confirmed_retrieval_messages = tuple(
+                    message
+                    for message in request.recent_messages
+                    if message.role == "user"
+                )
+            return request.recent_messages, None
         from app.channels.plugins.matrix.room_filter import (
             resolve_allowed_context_source_rooms,
         )

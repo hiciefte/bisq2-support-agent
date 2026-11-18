@@ -34,12 +34,49 @@ export function StaffContextDetails({ context }: { context: StaffContextMetadata
             <div className="flex flex-wrap items-center gap-2">
                 <h3 className="text-sm font-medium">Staff-only context</h3>
                 <Badge variant="outline">{staffContextStatusLabel(context.context_status)}</Badge>
+                {context.money_at_risk && <Badge variant="outline">Money at risk</Badge>}
             </div>
             <p className="max-w-prose text-sm text-muted-foreground">
                 This context is for the staff-room thread and this admin queue. Approval records an
                 internal review decision; it cannot publish a reply to the public room.
             </p>
             {context.context_reason && <p className="text-sm">{staffContextReasonLabel(context.context_reason)}</p>}
+            {context.staff_reply && (
+                <section aria-label="Proposed reply" className="space-y-1 text-sm">
+                    <h4 className="font-medium">Proposed reply</h4>
+                    <p className="whitespace-pre-wrap break-words">{context.staff_reply}</p>
+                </section>
+            )}
+            {context.staff_note && (
+                <section aria-label="Note for Staff" className="space-y-1 text-sm">
+                    <h4 className="font-medium">For Staff</h4>
+                    <p className="whitespace-pre-wrap break-words">{context.staff_note}</p>
+                </section>
+            )}
+            {context.staff_proposed_answer && (
+                <section aria-label="Staff-proposed answer" className="space-y-1 text-sm">
+                    <h4 className="font-medium">Staff-proposed answer</h4>
+                    <p className="whitespace-pre-wrap break-words">{context.staff_proposed_answer.answer}</p>
+                    <p className="text-muted-foreground">Proposed by {context.staff_proposed_answer.reviewer} in the Staff thread. This does not change the case assignment or record a sent response.</p>
+                    {context.staff_proposed_answer.edit_distance === null && (
+                        <p className="text-muted-foreground">No edit comparison is available for this proposal.</p>
+                    )}
+                </section>
+            )}
+            {context.knowledge_gap && (
+                <section aria-label="Knowledge gap" className="space-y-1 text-sm">
+                    <h4 className="font-medium">Knowledge gap</h4>
+                    <p className="whitespace-pre-wrap break-words">{context.knowledge_gap}</p>
+                    <p className="text-muted-foreground">No gap notice was posted to the Staff thread.</p>
+                </section>
+            )}
+            {context.rejected_draft && (
+                <section aria-label="Withheld draft" className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
+                    <h4 className="font-medium">Withheld draft</h4>
+                    <p>This output did not pass validation. Review it here; it was not sent.</p>
+                    <pre className="whitespace-pre-wrap break-words font-sans">{context.rejected_draft}</pre>
+                </section>
+            )}
             {context.progress_review_queue && (
                 <div role="status" className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
                     <p className="font-medium">Unresolved progress reports</p>

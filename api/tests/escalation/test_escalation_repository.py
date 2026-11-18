@@ -50,6 +50,40 @@ class TestEscalationRepositoryCreate:
     """Test escalation creation in SQLite."""
 
     @pytest.mark.asyncio
+    async def test_transaction_insert_obeys_callers_rollback(
+        self, escalation_repository
+    ):
+        await escalation_repository.initialize()
+        async with aiosqlite.connect(escalation_repository.db_path) as db:
+            await db.execute("BEGIN IMMEDIATE")
+            created = await escalation_repository.create_in_transaction(
+                db, _make_create()
+            )
+            await db.rollback()
+        assert await escalation_repository.get_by_id(created.id) is None
+
+    @pytest.mark.asyncio
+    async def test_transaction_insert_commits_with_related_metadata(
+        self, escalation_repository
+    ):
+        await escalation_repository.initialize()
+        parent = await escalation_repository.create(_make_create(message_id="parent"))
+        async with aiosqlite.connect(escalation_repository.db_path) as db:
+            await db.execute("BEGIN IMMEDIATE")
+            created = await escalation_repository.create_in_transaction(
+                db, _make_create(message_id="child")
+            )
+            await db.execute(
+                "UPDATE escalations SET routing_reason=? WHERE id=?",
+                (str(created.id), parent.id),
+            )
+            await db.commit()
+        assert (await escalation_repository.get_by_id(parent.id)).routing_reason == str(
+            created.id
+        )
+        assert (await escalation_repository.get_by_id(created.id)).message_id == "child"
+
+    @pytest.mark.asyncio
     async def test_create_escalation_returns_escalation_with_id(
         self, escalation_repository
     ):

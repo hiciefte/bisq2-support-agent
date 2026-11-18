@@ -13,6 +13,14 @@ from jsonschema import validate
 logger = logging.getLogger(__name__)
 
 
+class ResponsesGenerationError(RuntimeError):
+    """Sanitized failure with validated usage, never rejected provider content."""
+
+    def __init__(self, usage: dict | None = None):
+        super().__init__("Responses answer generation failed")
+        self.usage = deepcopy(usage)
+
+
 class _ResponseContractError(RuntimeError):
     """Controlled diagnostic text that never contains provider or tool payloads."""
 
@@ -157,6 +165,7 @@ class OpenAIResponsesLLMWrapper:
     def invoke(self, prompt: str, system_content: str | None = None):
         from app.services.rag.llm_provider import LLMResponse
 
+        usage = None
         try:
             response = self._plain(
                 self.client.responses.create(
@@ -170,7 +179,7 @@ class OpenAIResponsesLLMWrapper:
             return LLMResponse(content=self._text(output), usage=usage)
         except Exception as exc:
             _log_failure("answer", exc)
-            raise RuntimeError("Responses answer generation failed") from None
+            raise ResponsesGenerationError(usage) from None
 
     def _rpc(
         self, client: httpx.Client, method: str, params: dict, request_id: int

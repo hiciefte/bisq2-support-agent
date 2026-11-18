@@ -20,6 +20,7 @@ from app.channels.plugins.matrix.room_filter import (
     resolve_allowed_responder_rooms,
 )
 from app.channels.runtime import ChannelRuntime
+from app.channels.staff import StaffResolver
 from app.core.config import Settings
 from app.models.escalation import Escalation, EscalationStatus
 from app.services.channel_autoresponse_policy_service import (
@@ -107,7 +108,8 @@ async def test_context_intake_normalizes_replies_and_edits(tmp_path, relation_ty
 
 @pytest.mark.asyncio
 async def test_staff_edit_still_records_staff_activity(tmp_path):
-    service, _, client, channel = setup_boundary(tmp_path)
+    service, runtime, client, channel = setup_boundary(tmp_path)
+    runtime.register("staff_resolver:matrix", StaffResolver(["@staff:example.invalid"]))
     handler = MatrixMessageHandler(
         client=client,
         connection_manager=SimpleNamespace(),
@@ -137,7 +139,11 @@ async def test_staff_edit_still_records_staff_activity(tmp_path):
 async def test_quote_only_reply_preserves_activity_without_admission(
     tmp_path, is_staff
 ):
-    service, _, client, channel = setup_boundary(tmp_path)
+    service, runtime, client, channel = setup_boundary(tmp_path)
+    runtime.register(
+        "staff_resolver:matrix",
+        StaffResolver(["@participant:example.invalid"] if is_staff else []),
+    )
     handler = MatrixMessageHandler(
         client=client,
         connection_manager=SimpleNamespace(),

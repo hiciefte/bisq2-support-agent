@@ -174,7 +174,13 @@ class Settings(BaseSettings):
     MATRIX_CONTEXT_TRIAL_ID: str = ""
     MATRIX_CONTEXT_TRIAL_START_AT: str = ""
     MATRIX_CONTEXT_TRIAL_END_AT: str = ""
+    # Legacy descriptors retain their original count bound. New spend-bound
+    # trials require all four explicit owner-confirmed monetary settings.
     MATRIX_CONTEXT_TRIAL_MAX_CASES: int = 10
+    MATRIX_CONTEXT_TRIAL_BUDGET_USD: str = ""
+    MATRIX_CONTEXT_TRIAL_DAILY_BUDGET_USD: str = ""
+    MATRIX_CONTEXT_TRIAL_INPUT_USD_PER_MILLION: str = ""
+    MATRIX_CONTEXT_TRIAL_OUTPUT_USD_PER_MILLION: str = ""
     MATRIX_STAFF_ROOM: str = ""  # Room ID for staff escalation notifications
     MATRIX_SYNC_SESSION_FILE: str = "matrix_session.json"
     MATRIX_SYNC_IGNORE_UNVERIFIED_DEVICES: bool = True

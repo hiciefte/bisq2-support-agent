@@ -2,7 +2,7 @@
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 from app.channels.plugins.matrix import message_handler as matrix_message_handler_module
@@ -146,8 +146,44 @@ async def test_stop_removes_callback_and_stops_sync_loop() -> None:
     await handler.start()
     await handler.stop()
 
-    client.remove_event_callback.assert_called_once_with(handler._on_message)
+    assert client.remove_event_callback.call_args_list == [
+        call(handler._on_message),
+        call(handler._on_context_attachment),
+    ]
+    assert handler._attachment_callback_registered is False
     connection_manager.stop_sync.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_attached_handler_registers_and_removes_attachment_callback() -> None:
+    """Real nio callbacks survive shutdown only when owned by another handler."""
+    from nio import AsyncClient
+
+    client = AsyncClient("https://offline.invalid", "@bot:example.org")
+    unrelated = AsyncMock()
+    client.add_event_callback(unrelated, object)
+    connection_manager = SimpleNamespace(
+        sync_forever=AsyncMock(), stop_sync=MagicMock()
+    )
+    channel = SimpleNamespace(
+        runtime=SimpleNamespace(
+            settings=SimpleNamespace(MATRIX_CONTEXT_TRIAL_BUDGET_USD="60")
+        )
+    )
+    handler = MatrixMessageHandler(
+        client=client, connection_manager=connection_manager, channel=channel
+    )
+    try:
+        await handler.start()
+        callbacks = [entry.func for entry in client.event_callbacks]
+        assert handler._on_message in callbacks
+        assert handler._on_context_attachment in callbacks
+        assert handler._attachment_callback_registered
+        await handler.stop()
+        assert [entry.func for entry in client.event_callbacks] == [unrelated]
+        assert not handler._attachment_callback_registered
+    finally:
+        await client.close()
 
 
 @pytest.mark.asyncio
@@ -175,12 +211,17 @@ async def test_stop_cleans_up_failed_bootstrap_and_preserves_error() -> None:
     assert raised.value is error
     assert handler._sync_task is None
     assert handler._callback_registered is False
-    client.remove_event_callback.assert_called_once_with(handler._on_message)
+    expected_removals = [
+        call(handler._on_message),
+        call(handler._on_context_attachment),
+    ]
+    assert client.remove_event_callback.call_args_list == expected_removals
+    assert handler._attachment_callback_registered is False
     connection_manager.stop_sync.assert_called_once()
     # Cleanup is complete; a second local stop neither reconnects nor replays.
     await handler.stop()
     connection_manager.sync_forever.assert_awaited_once()
-    client.remove_event_callback.assert_called_once()
+    assert client.remove_event_callback.call_args_list == expected_removals
 
 
 @pytest.mark.asyncio

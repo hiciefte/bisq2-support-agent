@@ -4,8 +4,10 @@ Listens for m.reaction events via nio callbacks and converts them
 into normalized ReactionEvents for processing.
 """
 
+import asyncio
 import logging
 import re
+import sqlite3
 from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -22,17 +24,26 @@ from app.channels.reactions import (
     ReactionRating,
 )
 from app.channels.staff import resolve_channel_staff_resolver
+from app.channels.staff_assist.context_feedback import (
+    STAFF_CONTEXT_VERDICTS,
+    ContextFeedbackStore,
+    event_timestamp_ms,
+    is_context_feedback_room,
+)
 from app.models.escalation import EscalationDeliveryStatus
 
 NioReactionEventType: Any = object
 NioRedactionEventType: Any = object
+NioBadEventType: Any = None
 
 try:
+    from nio import BadEvent as _NioBadEvent
     from nio import ReactionEvent as _NioReactionEvent
     from nio import RedactionEvent as _NioRedactionEvent
 except ImportError:  # pragma: no cover - exercised in environments without nio
     pass
 else:
+    NioBadEventType = _NioBadEvent
     NioReactionEventType = _NioReactionEvent
     NioRedactionEventType = _NioRedactionEvent
 
@@ -76,22 +87,34 @@ class MatrixReactionHandler(ReactionHandlerBase):
 
     async def start_listening(self) -> None:
         """Register nio callbacks for m.reaction and m.room.redaction events."""
+        if self._callback_registered:
+            return
         client = self.runtime.resolve("matrix_client")
         client.add_event_callback(self._on_reaction_event, NioReactionEvent)
         client.add_event_callback(self._on_redaction_event, NioRedactionEvent)
+        if NioBadEventType is not None:
+            client.add_event_callback(self._on_content_redaction_event, NioBadEventType)
         self._callback_registered = True
         self._logger.info("Matrix reaction listener started")
 
     async def stop_listening(self) -> None:
         """Remove nio callbacks."""
         client = self.runtime.resolve_optional("matrix_client")
-        if (
-            client
-            and self._callback_registered
-            and hasattr(client, "remove_event_callback")
-        ):
-            client.remove_event_callback(self._on_reaction_event)
-            client.remove_event_callback(self._on_redaction_event)
+        if client is not None and self._callback_registered:
+            callbacks = [
+                self._on_reaction_event,
+                self._on_redaction_event,
+                self._on_content_redaction_event,
+            ]
+            if hasattr(client, "remove_event_callback"):
+                for callback in callbacks:
+                    client.remove_event_callback(callback)
+            elif isinstance(getattr(client, "event_callbacks", None), list):
+                client.event_callbacks[:] = [
+                    entry
+                    for entry in client.event_callbacks
+                    if entry.func not in callbacks
+                ]
             self._callback_registered = False
             self._reaction_to_message.clear()
             self._reaction_to_sender.clear()
@@ -106,6 +129,8 @@ class MatrixReactionHandler(ReactionHandlerBase):
         """
         try:
             room_id = str(getattr(room, "room_id", "") or "").strip()
+            if await self._handle_context_verdict(room_id=room_id, event=event):
+                return
             if not is_responder_room_allowed(
                 getattr(self.runtime, "settings", None), room_id
             ):
@@ -179,6 +204,112 @@ class MatrixReactionHandler(ReactionHandlerBase):
                 "Error processing Matrix reaction event: %s",
                 getattr(event, "event_id", "unknown"),
             )
+
+    def _context_feedback_store(self) -> ContextFeedbackStore | None:
+        service = self.runtime.resolve_optional("escalation_service")
+        path = getattr(getattr(service, "repository", None), "db_path", None)
+        return ContextFeedbackStore(path) if isinstance(path, str) and path else None
+
+    async def _handle_context_verdict(self, *, room_id: str, event: Any) -> bool:
+        if not is_context_feedback_room(
+            getattr(self.runtime, "settings", None), room_id
+        ):
+            return False
+        source = getattr(event, "source", {})
+        content = source.get("content", {}) if isinstance(source, dict) else {}
+        if not isinstance(content, dict):
+            return False
+        relation = content.get("m.relates_to", {})
+        if not isinstance(relation, dict) or relation.get("rel_type") != "m.annotation":
+            return False
+        target = relation.get("event_id")
+        if not isinstance(target, str) or not target:
+            return False
+        # A tracked ordinary escalation is independently identified; its
+        # established approval path must not depend on the Staff-note ledger.
+        if self._lookup_staff_escalation_record(target) is not None:
+            return False
+        store = self._context_feedback_store()
+        if store is None or not await store.has_note(room_id, target):
+            return False
+        # All reactions on these notes are internal, including unknown emojis
+        # and untrusted senders. Never fall through to feedback/learning/send.
+        sender = str(getattr(event, "sender", "") or "")
+        if not self._is_staff_sender(sender):
+            return True
+        key = self._normalize_staff_action_key(str(relation.get("key", "")))
+        verdict = STAFF_CONTEXT_VERDICTS.get(key)
+        timestamp = event_timestamp_ms(event)
+        event_id = getattr(event, "event_id", None)
+        if verdict and timestamp is not None and isinstance(event_id, str):
+            await store.record_verdict(
+                room_id=room_id,
+                target_event_id=target,
+                event_id=event_id,
+                reviewer=sender,
+                verdict=verdict,
+                timestamp_ms=timestamp,
+            )
+        return True
+
+    async def handle_context_thread_answer(
+        self, *, room_id: str, event: Any, sender: str, answer: str
+    ) -> bool:
+        if not is_context_feedback_room(
+            getattr(self.runtime, "settings", None), room_id
+        ):
+            return False
+        if not self._is_staff_sender(sender):
+            return False
+        source = getattr(event, "source", {})
+        content = source.get("content", {}) if isinstance(source, dict) else {}
+        if not isinstance(content, dict):
+            return False
+        relation = content.get("m.relates_to", {})
+        if not isinstance(relation, dict) or relation.get("rel_type") not in {
+            "m.thread",
+            "m.replace",
+        }:
+            return False
+        replaces = (
+            relation.get("event_id", "")
+            if relation.get("rel_type") == "m.replace"
+            else ""
+        )
+        root = relation.get("event_id", "") if not replaces else ""
+        timestamp = event_timestamp_ms(event)
+        event_id = getattr(event, "event_id", None)
+        target = relation.get("event_id")
+        if (
+            not isinstance(target, str)
+            or not target
+            or not isinstance(event_id, str)
+            or not event_id
+            or timestamp is None
+        ):
+            return False
+        # Commands are not proposed reply text. They retain their existing path.
+        if answer.strip().startswith("/"):
+            return False
+        store = self._context_feedback_store()
+        if store is None:
+            return False
+        reply_to = relation.get("m.in_reply_to", {})
+        return await store.record_answer(
+            room_id=room_id,
+            root_event_id=root,
+            event_id=event_id,
+            reviewer=sender,
+            answer=answer,
+            timestamp_ms=timestamp,
+            reply_to_event_id=(
+                reply_to.get("event_id", "")
+                if isinstance(reply_to, dict)
+                and relation.get("is_falling_back", False) is False
+                else ""
+            ),
+            replaces_event_id=replaces,
+        )
 
     @staticmethod
     def _normalize_staff_action_key(key: str) -> str:
@@ -586,6 +717,19 @@ class MatrixReactionHandler(ReactionHandlerBase):
             )
             return True
 
+    async def _on_content_redaction_event(self, room: Any, event: Any) -> None:
+        """nio 0.25 parses room-v11 content-only redactions as BadEvent."""
+        source = getattr(event, "source", None)
+        if not isinstance(source, dict) or source.get("type") != "m.room.redaction":
+            return
+        content = source.get("content")
+        target = content.get("redacts") if isinstance(content, dict) else None
+        if not isinstance(target, str) or not target or source.get("redacts"):
+            return
+        normalized = NioRedactionEvent.from_dict({**source, "redacts": target})
+        if isinstance(normalized, NioRedactionEvent):
+            await self._on_redaction_event(room, normalized)
+
     async def _on_redaction_event(self, room: Any, event: Any) -> None:
         """Handle a redaction event (reaction removal).
 
@@ -594,8 +738,47 @@ class MatrixReactionHandler(ReactionHandlerBase):
         """
         redacts = getattr(event, "redacts", None)
         if not redacts:
+            source = getattr(event, "source", {})
+            redacts = (
+                source.get("content", {}).get("redacts")
+                if isinstance(source, dict)
+                else None
+            )
+        if not isinstance(redacts, str) or not redacts:
             return
         room_id = str(getattr(room, "room_id", "") or "").strip()
+        engine = self.runtime.resolve_optional("matrix_context_runtime")
+        observe = getattr(engine, "observe_source_event", None)
+        if callable(observe):
+            try:
+                await observe(
+                    room_id,
+                    event,
+                    None,
+                    is_staff=self._is_staff_sender(
+                        str(getattr(event, "sender", "") or "")
+                    ),
+                )
+            except Exception:
+                self._logger.exception("Context redaction observation failed")
+        if is_context_feedback_room(getattr(self.runtime, "settings", None), room_id):
+            store = self._context_feedback_store()
+            if store is not None and self._is_staff_sender(
+                str(getattr(event, "sender", "") or "")
+            ):
+                try:
+                    # Idempotent local projection only: no Matrix read/send or
+                    # delivery retry. Bound transient SQLite retries to three.
+                    for attempt in range(3):
+                        try:
+                            await store.redact_verdict(room_id, redacts)
+                            break
+                        except sqlite3.OperationalError:
+                            if attempt == 2:
+                                raise
+                            await asyncio.sleep(0.05 * (attempt + 1))
+                except Exception:
+                    self._logger.exception("Staff verdict redaction failed")
         if not is_responder_room_allowed(
             getattr(self.runtime, "settings", None), room_id
         ):

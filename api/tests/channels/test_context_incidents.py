@@ -360,7 +360,12 @@ async def test_linked_acknowledgements_are_stored_without_generation_or_late_cha
     ]
     assert text in case.question
     assert case.channel_metadata["incident_generation_question"] == ROOT
-    bundle.retrieve.assert_called_once_with(ROOT)
+    bundle.retrieve.assert_called_once_with(
+        ROOT,
+        detected_version=None,
+        detect_from_query=False,
+        require_reranker_success=True,
+    )
     prompt = json.loads(bundle.llm.invoke.call_args.args[0])
     assert prompt["question"] == ROOT
     assert all(m["content"] != text for m in prompt["recent_messages"])
@@ -491,7 +496,19 @@ async def test_missing_or_changed_original_defers_whole_incident(runtime_case):
 
 
 @pytest.mark.asyncio
-async def test_high_risk_linked_followup_does_not_lower_original_risk(runtime_case):
+async def test_high_risk_linked_followup_does_not_lower_original_risk(
+    runtime_case, monkeypatch
+):
+    from app.channels.staff_assist.staff_context import StaffContextService
+
+    requests = []
+    original_preview = StaffContextService.preview
+
+    def preview(service, request):
+        requests.append(request)
+        return original_preview(service, request)
+
+    monkeypatch.setattr(StaffContextService, "preview", preview)
     bundle = runtime_case
     release = hold_worker(bundle)
     root = incoming(bundle, "$root", ROOT)
@@ -505,8 +522,10 @@ async def test_high_risk_linked_followup_does_not_lower_original_risk(runtime_ca
     release.set()
     await bundle.engine.drain()
     case = await saved_case(bundle)
-    assert case.channel_metadata["context_reason"] == "high_risk_action"
-    bundle.llm.invoke.assert_not_called()
+    assert case.channel_metadata["money_at_risk"] is True
+    assert "money at risk" in case.ai_draft_answer
+    assert len(requests) == 1 and requests[0].high_risk_action is True
+    bundle.llm.invoke.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -904,7 +923,10 @@ async def test_anchored_question_followups_share_one_case_call_and_thread(runtim
         message.message_id for message in messages
     ]
     bundle.retrieve.assert_called_once_with(
-        "\n---\n".join(message.question for message in messages)
+        "\n---\n".join(message.question for message in messages),
+        detected_version="Bisq 1",
+        detect_from_query=False,
+        require_reranker_success=True,
     )
     bundle.llm.invoke.assert_called_once()
     assert bundle.sender.await_count == 2
@@ -1152,7 +1174,10 @@ async def test_recent_activity_cannot_extend_absolute_heuristic_lifetime(
     linked = incoming(
         bundle, "$late-linked", "Does that change anything?", reply_to_event_id="$root"
     )
-    assert await store.find(linked, None) == (original.id, False)
+    assert await store.find(linked, original.channel_metadata["context_trial_id"]) == (
+        original.id,
+        False,
+    )
     await bundle.engine.close()
     bundle.llm.invoke.assert_not_called()
 

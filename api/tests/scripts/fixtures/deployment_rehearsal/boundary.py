@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Networkless external-command model. Never usable against a real Docker daemon."""
 
+import ast
 import hashlib
 import io
 import json
 import os
 import re
 import signal
+import sqlite3
 import sys
 import tarfile
 import time
@@ -213,20 +215,48 @@ def docker():
     elif args[0] == "compose":
         options = args[1:]
         overlays = []
-        while options and options[0] in ("--project-name", "-f"):
+        compose_source = ROOT / "install/docker/docker-compose.yml"
+        while options and options[0] in (
+            "--project-name",
+            "--project-directory",
+            "--env-file",
+            "-f",
+        ):
             key, value, *options = options
             if key == "-f" and value.endswith(".compose.json"):
                 overlays.append(json.loads(Path(value).read_text()))
+            elif key == "-f" and value.endswith("/docker/docker-compose.yml"):
+                candidate_source = Path(value).resolve()
+                assert candidate_source in {
+                    (ROOT / "candidate/docker/docker-compose.yml").resolve(),
+                    (ROOT / "install/docker/docker-compose.yml").resolve(),
+                }
+                compose_source = candidate_source
+            elif key == "--project-directory":
+                assert Path(value).resolve() == (ROOT / "install/docker").resolve()
+            elif key == "--env-file":
+                assert Path(value).resolve() == (ROOT / "install/docker/.env").resolve()
         action, *rest = options
         if action == "config":
-            emit(
-                {
-                    "services": {
-                        name: {"image": "fixture-original-" + name}
-                        for name in state["containers"]
-                    }
-                }
-            )
+            services = {
+                name: {"image": "fixture-original-" + name}
+                for name in state["containers"]
+            }
+            if state.get("scenario", "").startswith("staff_quality_"):
+                # Resolve only the exact new empty pass-throughs in this fixture;
+                # all real configuration parsing remains a Docker boundary model.
+                environment = {}
+                source = compose_source.read_text()
+                for name in (
+                    "MATRIX_CONTEXT_TRIAL_BUDGET_USD",
+                    "MATRIX_CONTEXT_TRIAL_DAILY_BUDGET_USD",
+                    "MATRIX_CONTEXT_TRIAL_INPUT_USD_PER_MILLION",
+                    "MATRIX_CONTEXT_TRIAL_OUTPUT_USD_PER_MILLION",
+                ):
+                    if f"      - {name}=${{{name}:-}}\n" in source:
+                        environment[name] = ""
+                services["api"]["environment"] = environment
+            emit({"services": services})
         elif action == "ps":
             names = [name for name in state["containers"] if name in rest]
             values = (
@@ -274,6 +304,30 @@ def docker():
                 Pid=value["State"]["Pid"] + 100, StartedAt="fixture-replacement"
             )
             state["switches"].append(service)
+            if service == "api" and state.get("scenario") == "staff_quality_success":
+                # Model the reviewed API's additive, inactive startup migration.
+                with sqlite3.connect(ROOT / "install/api/data/escalations.db") as db:
+                    db.execute(
+                        "ALTER TABLE escalations ADD COLUMN staff_context_verdicts TEXT NOT NULL DEFAULT '[]'"
+                    )
+                    tree = ast.parse(
+                        (ROOT / "candidate/scripts/lib/deployment_host.py").read_text()
+                    )
+                    ddl = next(
+                        ast.literal_eval(node.value)
+                        for node in tree.body
+                        if isinstance(node, ast.Assign)
+                        and any(
+                            isinstance(target, ast.Name)
+                            and target.id == "STAFF_QUALITY_LEDGER_DDL"
+                            for target in node.targets
+                        )
+                    )
+                    for name, statement in ddl.items():
+                        # Budget settings stay empty in this source-only rollout;
+                        # the application creates spend storage only on binding.
+                        if name != "matrix_context_trial_spend":
+                            db.execute(statement)
         elif action == "exec":
             assert "app.scripts.validate_deployment_chat" in rest
             body = json.load(sys.stdin)

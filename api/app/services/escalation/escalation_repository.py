@@ -106,6 +106,7 @@ def _row_to_escalation(row: aiosqlite.Row) -> Escalation:
     d = dict(row)
     d["channel_metadata"] = _parse_json(d.get("channel_metadata"))
     d["sources"] = _parse_json(d.get("sources"))
+    d["staff_context_verdicts"] = _parse_json(d.get("staff_context_verdicts")) or []
     d["created_at"] = _parse_datetime(d["created_at"])
     d["claimed_at"] = _parse_datetime(d.get("claimed_at"))
     d["responded_at"] = _parse_datetime(d.get("responded_at"))
@@ -171,6 +172,33 @@ class EscalationRepository:
             for idx_sql in CREATE_INDICES_SQL:
                 await db.execute(idx_sql)
             await db.execute(CREATE_RATING_TOKEN_TABLE_SQL)
+            from app.channels.staff_assist.context_feedback import (
+                CREATE_ANSWER_EVENTS_SQL,
+                CREATE_VERDICT_EVENTS_SQL,
+            )
+
+            await db.execute(CREATE_VERDICT_EVENTS_SQL)
+            await db.execute(CREATE_ANSWER_EVENTS_SQL)
+            if not await _column_exists(
+                db,
+                table_name="matrix_context_answer_events",
+                column_name="reply_to_event_id",
+            ):
+                try:
+                    await db.execute(
+                        "ALTER TABLE matrix_context_answer_events ADD COLUMN reply_to_event_id TEXT"
+                    )
+                except sqlite3.OperationalError as exc:
+                    # Concurrent initialization may have completed this additive
+                    # migration; all unrelated SQLite failures remain fatal.
+                    if "duplicate column name" not in str(exc).lower():
+                        raise
+            await _ensure_escalations_column(
+                db,
+                column_name="staff_context_verdicts",
+                alter_sql="ALTER TABLE escalations ADD COLUMN staff_context_verdicts TEXT NOT NULL DEFAULT '[]'",
+                success_log="Added Staff-context verdict projection",
+            )
             # Self-migration: add staff_answer_rating for existing databases
             await _ensure_escalations_column(
                 db,
@@ -240,59 +268,60 @@ class EscalationRepository:
         """Insert a new escalation. Raises DuplicateEscalationError on duplicate message_id."""
         from app.models.escalation import DuplicateEscalationError
 
-        now = datetime.now(timezone.utc).isoformat()
         try:
             async with aiosqlite.connect(self.db_path) as db:
-                db.row_factory = aiosqlite.Row
-                cursor = await db.execute(
-                    """
-                    INSERT INTO escalations (
-                        message_id, channel, user_id, username,
-                        channel_metadata, question_original, question,
-                        ai_draft_answer_original, ai_draft_answer,
-                        user_language, translation_applied,
-                        confidence_score, routing_action, routing_reason,
-                        sources, priority, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        data.message_id,
-                        data.channel,
-                        data.user_id,
-                        data.username,
-                        (
-                            json.dumps(data.channel_metadata)
-                            if data.channel_metadata
-                            else None
-                        ),
-                        data.question_original,
-                        data.question,
-                        data.ai_draft_answer_original,
-                        data.ai_draft_answer,
-                        data.user_language,
-                        int(bool(data.translation_applied)),
-                        data.confidence_score,
-                        data.routing_action,
-                        data.routing_reason,
-                        json.dumps(data.sources) if data.sources else None,
-                        data.priority.value,
-                        now,
-                    ),
-                )
+                result = await self.create_in_transaction(db, data)
                 await db.commit()
-                row_id = cursor.lastrowid
-
-                cursor = await db.execute(
-                    "SELECT * FROM escalations WHERE id = ?", (row_id,)
-                )
-                row = await cursor.fetchone()
-                return _row_to_escalation(row)
+                return result
         except Exception as e:
             if "UNIQUE constraint failed" in str(e):
                 raise DuplicateEscalationError(
                     f"Escalation with message_id={data.message_id} already exists"
                 ) from e
             raise
+
+    async def create_in_transaction(
+        self, db: aiosqlite.Connection, data: EscalationCreate
+    ) -> Escalation:
+        """Insert using the caller's transaction; the caller owns commit/rollback."""
+        db.row_factory = aiosqlite.Row
+        now = datetime.now(timezone.utc).isoformat()
+        cursor = await db.execute(
+            """
+            INSERT INTO escalations (
+                message_id, channel, user_id, username,
+                channel_metadata, question_original, question,
+                ai_draft_answer_original, ai_draft_answer,
+                user_language, translation_applied,
+                confidence_score, routing_action, routing_reason,
+                sources, priority, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                data.message_id,
+                data.channel,
+                data.user_id,
+                data.username,
+                (json.dumps(data.channel_metadata) if data.channel_metadata else None),
+                data.question_original,
+                data.question,
+                data.ai_draft_answer_original,
+                data.ai_draft_answer,
+                data.user_language,
+                int(bool(data.translation_applied)),
+                data.confidence_score,
+                data.routing_action,
+                data.routing_reason,
+                json.dumps(data.sources) if data.sources else None,
+                data.priority.value,
+                now,
+            ),
+        )
+        row_id = cursor.lastrowid
+
+        cursor = await db.execute("SELECT * FROM escalations WHERE id = ?", (row_id,))
+        row = await cursor.fetchone()
+        return _row_to_escalation(row)
 
     # ------------------------------------------------------------------
     # Read

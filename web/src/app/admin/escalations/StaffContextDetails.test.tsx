@@ -2,6 +2,40 @@ import { render, screen, within } from "@testing-library/react";
 import { staffContextMetadata } from "@/lib/staff-context";
 import { StaffContextDetails } from "./StaffContextDetails";
 
+test("separates the proposed reply from uncertainty and renders rejected output literally", () => {
+    const rejected = '<script>unsafe()</script> {"reply": "incomplete"';
+    const context = staffContextMetadata({
+        response_kind: "public_context",
+        staff_reply: "Open Settings > Network Info.",
+        staff_note: "The version is unknown; confirm the documented precondition.",
+        rejected_draft: rejected,
+        money_at_risk: true,
+    });
+    const { container } = render(<StaffContextDetails context={context!} />);
+    expect(within(screen.getByRole("region", { name: "Proposed reply" })).getByText("Open Settings > Network Info.")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Note for Staff" })).getByText(/version is unknown/)).toBeInTheDocument();
+    expect(screen.getByText("Money at risk")).toBeInTheDocument();
+    expect(screen.getByText(rejected)).toBeInTheDocument();
+    expect(container.querySelector("script")).toBeNull();
+    expect(screen.getByText(/it was not sent/)).toBeInTheDocument();
+});
+
+test("knowledge gaps stay distinct from replies and malformed metadata is not rendered", () => {
+    const context = staffContextMetadata({
+        response_kind: "public_context",
+        knowledge_gap: "Current payout-signing error",
+        staff_reply: { text: "not a string" },
+        rejected_draft: ["not a string"],
+        money_at_risk: "true",
+    });
+    render(<StaffContextDetails context={context!} />);
+    expect(screen.getByRole("region", { name: "Knowledge gap" })).toHaveTextContent("Current payout-signing error");
+    expect(screen.getByText("No gap notice was posted to the Staff thread.")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Proposed reply" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Withheld draft" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Money at risk")).not.toBeInTheDocument();
+});
+
 test("progress review queues disclose unconfirmed membership and omitted coverage", () => {
     const context = staffContextMetadata({
         response_kind: "public_context",
@@ -290,4 +324,37 @@ test.each([
     expect(context.staff_activity_decision).toBeUndefined();
     render(<StaffContextDetails context={context} />);
     expect(screen.queryByText(/triggering Staff turn is included/)).not.toBeInTheDocument();
+});
+
+
+test("shows a Staff proposal separately without claiming an assignment or sent response", () => {
+    const context = staffContextMetadata({
+        response_kind: "public_context",
+        staff_reply: "AI draft",
+        staff_context_proposed_answer: {
+            answer: "<script>proposal()</script>",
+            reviewer: "Reviewer",
+            timestamp_ms: 1000,
+            draft_version_known: false,
+            edit_distance: 0,
+        },
+    });
+    const { container } = render(<StaffContextDetails context={context!} />);
+    expect(screen.getByRole("region", { name: "Staff-proposed answer" })).toHaveTextContent("<script>proposal()</script>");
+    expect(screen.getByText(/does not change the case assignment/)).toBeInTheDocument();
+    expect(screen.getByText(/No edit comparison is available/)).toBeInTheDocument();
+    expect(container.querySelector("script")).toBeNull();
+    expect(context?.staff_proposed_answer?.edit_distance).toBeNull();
+});
+
+test("refuses malformed Staff proposals and invalid edit-distance values", () => {
+    const base = { response_kind: "public_context" };
+    for (const proposal of [[], "text", { answer: {}, reviewer: "Reviewer", timestamp_ms: 1 }, { answer: "text", reviewer: "Reviewer", timestamp_ms: -1 }]) {
+        expect(staffContextMetadata({ ...base, staff_context_proposed_answer: proposal })?.staff_proposed_answer).toBeUndefined();
+    }
+    const context = staffContextMetadata({ ...base, staff_context_proposed_answer: { answer: "text", reviewer: "Reviewer", timestamp_ms: 1, draft_version_known: true, edit_distance: NaN } });
+    expect(context?.staff_proposed_answer?.edit_distance).toBeNull();
+    render(<StaffContextDetails context={context!} />);
+    expect(screen.getByText(/No edit comparison is available/)).toBeInTheDocument();
+    expect(screen.queryByText(/draft version.*unknown/)).not.toBeInTheDocument();
 });

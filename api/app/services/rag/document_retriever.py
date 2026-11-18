@@ -74,7 +74,10 @@ def is_bisq_version_comparison_query(query: str) -> bool:
 
 
 def _classify_query_protocol(
-    query: str, detected_version: str | None = None
+    query: str,
+    detected_version: str | None = None,
+    *,
+    detect_from_query: bool = True,
 ) -> tuple[bool, bool, bool]:
     """Classify retrieval protocol intent without duplicating routing heuristics.
 
@@ -83,7 +86,17 @@ def _classify_query_protocol(
 
     ``detected_version`` may come from heuristic conversation state. Unknown
     values preserve uncertainty instead of selecting a product by default.
+    Staff can disable query heuristics after resolving attributed requester scope.
     """
+    if not detect_from_query:
+        # Staff has already established scope from attributed requester facts.
+        # An unknown scope must remain broad, even if helper text or generic
+        # protocol terminology in the retrieval query triggers legacy heuristics.
+        return (
+            detected_version in ("Bisq 1", "multisig_v1"),
+            detected_version in ("Bisq 2", "bisq_easy"),
+            False,
+        )
     is_comparison_query = is_bisq_version_comparison_query(query)
 
     if is_comparison_query:
@@ -367,7 +380,11 @@ class DocumentRetriever:
         ]
 
     def retrieve_with_version_priority(
-        self, query: str, detected_version: str | None = None
+        self,
+        query: str,
+        detected_version: str | None = None,
+        *,
+        detect_from_query: bool = True,
     ) -> List[Document]:
         """Multi-stage retrieval that adapts to protocol-specific queries.
 
@@ -384,8 +401,9 @@ class DocumentRetriever:
         Args:
             query: The search query
             detected_version: Optional explicitly detected version ("Bisq 1", "Bisq 2", or "Unknown")
-                             Overrides query text pattern matching when provided.
                              Maps to protocols: Bisq 1 -> multisig_v1, Bisq 2 -> bisq_easy
+            detect_from_query: False uses only supplied scope, retaining broad
+                               retrieval when requester scope is unknown.
 
         Returns:
             List of documents prioritized by protocol relevance
@@ -398,12 +416,16 @@ class DocumentRetriever:
         # may still explicitly request a comparison ("Bisq 1 vs Bisq 2"). In that case we
         # must retrieve both protocols; otherwise we'd bias to the detected version and the
         # prompt won't have enough context to produce a comparison answer.
-        if detected_version:
+        if not detect_from_query:
+            logger.info("Using attributed requester scope: %s", detected_version)
+        elif detected_version:
             logger.info("Using explicitly detected version: %s", detected_version)
         else:
             logger.info("No explicit version provided, detecting from query text...")
         is_multisig_query, mentions_bisq_easy, is_comparison_query = (
-            _classify_query_protocol(query, detected_version)
+            _classify_query_protocol(
+                query, detected_version, detect_from_query=detect_from_query
+            )
         )
 
         try:
@@ -490,16 +512,24 @@ class DocumentRetriever:
 
                     # Stage 2: Add 'all' content if we don't have enough bisq_easy content
                     # Threshold of 4 ensures we have sufficient bisq_easy context before adding general docs
-                    if len(all_docs) < 4:
+                    if not detect_from_query or len(all_docs) < 4:
                         logger.info("Stage 2: Searching for 'all' protocol content...")
-                        all_protocol_docs = self.retriever.retrieve(
-                            query, k=4, filter_dict={"protocol": "all"}
-                        )
-                        all_protocol_lc = self._to_langchain_documents(
-                            all_protocol_docs
-                        )
-                        logger.info(f"Found {len(all_protocol_lc)} 'all' documents")
-                        all_docs.extend(all_protocol_lc)
+                        try:
+                            all_protocol_docs = self.retriever.retrieve(
+                                query, k=4, filter_dict={"protocol": "all"}
+                            )
+                            all_protocol_lc = self._to_langchain_documents(
+                                all_protocol_docs
+                            )
+                            logger.info(f"Found {len(all_protocol_lc)} 'all' documents")
+                            all_docs.extend(all_protocol_lc)
+                        except Exception:
+                            if detect_from_query or not all_docs:
+                                raise
+                            logger.warning(
+                                "Staff supplemental lookup failed; retaining primary hits",
+                                exc_info=True,
+                            )
 
                     # Stage 3: Only add multisig_v1 content if we still don't have enough
                     # Threshold of 3 ensures multisig_v1 content is truly a last resort
@@ -669,7 +699,12 @@ class DocumentRetriever:
         return unique_sources
 
     def retrieve_with_scores(
-        self, query: str, detected_version: str | None = None
+        self,
+        query: str,
+        detected_version: str | None = None,
+        *,
+        detect_from_query: bool = True,
+        require_reranker_success: bool = False,
     ) -> Tuple[List[Document], List[float]]:
         """Retrieve documents with similarity scores for confidence calculation.
 
@@ -680,6 +715,11 @@ class DocumentRetriever:
             query: The search query
             detected_version: Detected Bisq version from user context.
                              Maps to protocols: Bisq 1 -> multisig_v1, Bisq 2 -> bisq_easy
+            detect_from_query: False preserves caller-established uncertainty;
+                               helper/query keywords cannot select a product.
+            require_reranker_success: Staff requires proven ranking and retains
+                                      unranked candidates for later eligibility
+                                      filtering and evidence backfill.
 
         Returns:
             Tuple of (documents, scores) where scores are similarity values (0-1)
@@ -773,7 +813,9 @@ class DocumentRetriever:
         # signals a comparison. Bisq 1 is actively used and heavily represented in the wiki,
         # so we must not over-bias to Bisq Easy for comparison/ambiguous queries.
         is_multisig_query, mentions_bisq_easy, is_comparison_query = (
-            _classify_query_protocol(query, detected_version)
+            _classify_query_protocol(
+                query, detected_version, detect_from_query=detect_from_query
+            )
         )
 
         try:
@@ -814,8 +856,16 @@ class DocumentRetriever:
                 )
 
                 # Stage 2: 'all' content
-                if len(all_docs_with_scores) < 4:
-                    _append_stage(k=4, filter_dict={"protocol": "all"})
+                if not detect_from_query or len(all_docs_with_scores) < 4:
+                    try:
+                        _append_stage(k=4, filter_dict={"protocol": "all"})
+                    except Exception:
+                        if detect_from_query or not all_docs_with_scores:
+                            raise
+                        logger.warning(
+                            "Staff supplemental lookup failed; retaining scored primary hits",
+                            exc_info=True,
+                        )
 
                 # Stage 3: multisig_v1 fallback
                 if len(all_docs_with_scores) < 3:
@@ -824,7 +874,13 @@ class DocumentRetriever:
         except Exception as e:
             logger.error(f"Error in score-based retrieval: {e!s}", exc_info=True)
             # Fallback to standard retrieval without scores
-            docs = self.retrieve_with_version_priority(query, detected_version)
+            docs = (
+                self.retrieve_with_version_priority(query, detected_version)
+                if detect_from_query
+                else self.retrieve_with_version_priority(
+                    query, detected_version, detect_from_query=False
+                )
+            )
             # Return neutral scores for fallback
             return docs, [0.5] * len(docs)
 
@@ -867,9 +923,18 @@ class DocumentRetriever:
                     RetrievedDocument.from_langchain_document(doc, score=score)
                     for doc, score in zip(unique_docs, retrieval_scores, strict=True)
                 ]
-                reranked = self.reranker.rerank(
-                    query, rerank_candidates, top_n=rerank_top_n
-                )
+                if require_reranker_success:
+                    from app.services.rag.colbert_reranker import ColBERTReranker
+
+                    if not isinstance(self.reranker, ColBERTReranker):
+                        raise ValueError("Reranker success cannot be verified")
+                    reranked = self.reranker.rerank(
+                        query, rerank_candidates, top_n=rerank_top_n, require_model=True
+                    )
+                else:
+                    reranked = self.reranker.rerank(
+                        query, rerank_candidates, top_n=rerank_top_n
+                    )
                 reranked_docs: List[Document] = []
                 retrieval_score_lookup = {
                     self._dedupe_key_from_retrieved(candidate): candidate.score
@@ -886,6 +951,22 @@ class DocumentRetriever:
                     lc_doc.metadata = metadata
                     reranked_docs.append(lc_doc)
 
+                if require_reranker_success:
+                    # Staff applies product/source eligibility after retrieval.
+                    # Keep omitted candidates for backfill without pretending
+                    # that the model ranked them; other callers keep top-N.
+                    ranked_keys = {
+                        self._dedupe_key_from_metadata(doc.metadata)
+                        for doc in reranked_docs
+                    }
+                    reranked_docs.extend(
+                        doc
+                        for doc in unique_docs
+                        if self._dedupe_key_from_metadata(doc.metadata)
+                        not in ranked_keys
+                    )
+                    for index, doc in enumerate(reranked_docs):
+                        doc.metadata = {**doc.metadata, "_retrieval_rank": index}
                 unique_docs = reranked_docs
                 retrieval_scores = []
                 for doc in unique_docs:

@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import sqlite3
+from contextlib import closing
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace as NS
@@ -57,7 +59,21 @@ def enable_trial(bundle, **changes):
     for key, value in vars(settings).items():
         setattr(bundle.runtime.settings, key, value)
     bundle.engine = MatrixContextRuntime(bundle.runtime)
+    if bundle.engine._trial is not None and not bundle.engine._trial.spend_bounded:
+        seed_historical_trial(bundle.repository.db_path, bundle.engine._trial)
     return bundle.engine._trial
+
+
+def seed_historical_trial(db_path, trial):
+    """These tests exercise preserved legacy receipts, not a new cap-only pilot."""
+    with closing(sqlite3.connect(db_path)) as db, db:
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS matrix_context_trials (trial_id TEXT PRIMARY KEY, descriptor TEXT NOT NULL)"
+        )
+        db.execute(
+            "INSERT OR IGNORE INTO matrix_context_trials VALUES (?, ?)",
+            (trial.trial_id, trial.descriptor()),
+        )
 
 
 @pytest.mark.parametrize(
@@ -136,6 +152,7 @@ async def test_concurrent_reservations_and_restart_cannot_replenish_cap(tmp_path
         trial_settings(MATRIX_CONTEXT_TRIAL_MAX_CASES=cap)
     )
     store = ContextTrialStore(str(tmp_path / "trial.db"), trial)
+    seed_historical_trial(store.db_path, trial)
     results = await asyncio.gather(*(store.reserve(case_id) for case_id in range(30)))
     assert results.count(None) == cap
     assert results.count("context_trial_capacity_reached") == 30 - cap
@@ -161,6 +178,7 @@ async def test_concurrent_reservations_and_restart_cannot_replenish_cap(tmp_path
 async def test_restart_rejects_changed_trial_descriptor(tmp_path, field, value):
     trial = ContextTrial.from_settings(trial_settings())
     store = ContextTrialStore(str(tmp_path / "trial.db"), trial)
+    seed_historical_trial(store.db_path, trial)
     assert await store.check() is None
     changed = ContextTrialStore(store.db_path, replace(trial, **{field: value}))
     assert await changed.reserve(1) == "context_trial_configuration_changed"
@@ -170,6 +188,7 @@ async def test_restart_rejects_changed_trial_descriptor(tmp_path, field, value):
 async def test_time_boundaries_before_admission_and_publication(tmp_path, monkeypatch):
     trial = ContextTrial.from_settings(trial_settings())
     store = ContextTrialStore(str(tmp_path / "trial.db"), trial)
+    seed_historical_trial(store.db_path, trial)
     monkeypatch.setattr(
         context_trial, "utc_now", lambda: trial.start_at - timedelta(microseconds=1)
     )
