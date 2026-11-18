@@ -38,7 +38,7 @@ from .deployment_journal import (
     require,
     timestamp,
 )
-from .deployment_protocol import MONITORING_SCHEMAS, STAFF_PILOT_ALERT
+from .deployment_protocol import MONITORING_SCHEMAS, STAFF_PILOT_ALERT, STAFF_SPEND_ENV
 from .docker_identity import container_identity_sha256
 from .lifecycle_lock import verify_inherited_lock
 
@@ -98,10 +98,55 @@ def private_json(path: Path) -> dict:
     return value
 
 
+def _order_independent_binds(value: object) -> object:
+    """Sort only ordinary binds whose canonical destinations cannot overlap."""
+    if not isinstance(value, list):
+        return value
+
+    def canonical_absolute(path: str) -> bool:
+        return path.startswith("/") and all(
+            part not in {"", ".", ".."} for part in path.split("/")[1:]
+        )
+
+    destinations: list[str] = []
+    for entry in value:
+        if not isinstance(entry, str) or any(
+            ord(character) < 32 or ord(character) == 127 for character in entry
+        ):
+            return value
+        fields = entry.split(":")
+        # Preserve unfamiliar modes, including relabeling/propagation options,
+        # as order-sensitive. Never rewrite options within an entry.
+        if len(fields) not in {2, 3} or (
+            len(fields) == 3 and fields[2] not in {"ro", "rw"}
+        ):
+            return value
+        source, destination = fields[:2]
+        if not (
+            canonical_absolute(source)
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", source)
+        ) or not canonical_absolute(destination):
+            return value
+        if any(
+            destination == other
+            or destination.startswith(other + "/")
+            or other.startswith(destination + "/")
+            for other in destinations
+        ):
+            return value
+        destinations.append(destination)
+    return sorted(value)
+
+
 def replacement_host_config(config: dict) -> dict:
     """Compare only documented Docker representation changes on replacement."""
     require(isinstance(config, dict), "host_replacement_host_config")
     result = dict(config)
+    if "Binds" in result:
+        # _replacement separately requires exact resolved Mounts. Here only the
+        # order of proven independent bind entries may vary; retain every byte
+        # of their source, destination and mode, plus their multiplicity.
+        result["Binds"] = _order_independent_binds(result["Binds"])
     # Moby buildSandboxOptions uses len > 0 for these three DNS slices:
     # nil and [] both inherit daemon defaults. Nonempty order stays significant.
     for field in ("Dns", "DnsOptions", "DnsSearch"):
@@ -135,6 +180,21 @@ def replacement_host_config(config: dict) -> dict:
         )
         result["MaskedPaths"] = sorted(paths)
     return result
+
+
+# The v7 inactive migration permits these exact application-owned table schemas.
+# Keep constraints as well as columns; an empty malformed table is not readiness.
+STAFF_QUALITY_LEDGER_DDL = {
+    "matrix_context_verdict_events": "CREATE TABLE matrix_context_verdict_events (\n    event_id TEXT PRIMARY KEY,\n    room_id TEXT NOT NULL,\n    escalation_id INTEGER REFERENCES escalations(id) ON DELETE CASCADE,\n    reviewer TEXT,\n    target_event_id TEXT,\n    verdict TEXT,\n    timestamp_ms INTEGER,\n    revoked INTEGER NOT NULL DEFAULT 0 CHECK(revoked IN (0, 1))\n)",
+    "matrix_context_answer_events": "CREATE TABLE matrix_context_answer_events (\n    event_id TEXT PRIMARY KEY,\n    room_id TEXT NOT NULL,\n    escalation_id INTEGER REFERENCES escalations(id) ON DELETE CASCADE,\n    original_event_id TEXT,\n    reviewer TEXT,\n    answer TEXT,\n    draft TEXT,\n    timestamp_ms INTEGER,\n    revoked INTEGER NOT NULL DEFAULT 0 CHECK(revoked IN (0, 1))\n)",
+    "matrix_context_trial_spend": "CREATE TABLE matrix_context_trial_spend (trial_id TEXT NOT NULL, escalation_id INTEGER NOT NULL, kind TEXT NOT NULL, call_id TEXT NOT NULL, started_at TEXT NOT NULL, utc_day TEXT NOT NULL, input_tokens_bound INTEGER NOT NULL, max_output_tokens INTEGER NOT NULL, reserved_nanodollars INTEGER NOT NULL, actual_nanodollars INTEGER, input_tokens INTEGER, output_tokens INTEGER, status TEXT NOT NULL, PRIMARY KEY (trial_id, escalation_id, kind, call_id))",
+}
+
+
+def _schema_tokens(sql):
+    return re.findall(
+        r"'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"|[A-Za-z_][A-Za-z_0-9]*|[0-9]+|[^\s]", sql
+    )
 
 
 class CommandRunner:
@@ -289,6 +349,7 @@ class DeploymentHost:
                 "deployment-plan-v4",
                 "deployment-plan-v5",
                 "deployment-plan-v6",
+                "deployment-plan-v7",
             },
             "host_plan_version",
         )
@@ -416,6 +477,7 @@ class DeploymentHost:
             preserved_heap_hashes,
             python_runner_hashes,
             staff_monitoring_hashes,
+            staff_quality_hashes,
             tooling_hashes,
         )
 
@@ -425,6 +487,7 @@ class DeploymentHost:
         heap = bool(self.plan.get("preserved_heap_sha256"))
         monitoring = self.plan["schema"] == "deployment-plan-v5"
         staff = self.plan["schema"] == "deployment-plan-v6"
+        quality = self.plan["schema"] == "deployment-plan-v7"
         for path, prefix in (
             (self.install, "candidate" if published else "previous"),
             (self.candidate, "candidate"),
@@ -461,6 +524,7 @@ class DeploymentHost:
             "deployment-plan-v4",
             "deployment-plan-v5",
             "deployment-plan-v6",
+            "deployment-plan-v7",
         }
         require(
             classify_services(
@@ -469,6 +533,7 @@ class DeploymentHost:
                 preserve_bisq2_heap_repair=heap,
                 include_retention_monitoring=monitoring,
                 include_staff_pilot_monitoring=staff,
+                include_staff_quality_tools=quality,
                 include_python_runner_pins=bool(self.plan.get("python_runner_sha256")),
             )
             == self.plan["services"],
@@ -488,6 +553,19 @@ class DeploymentHost:
             require(
                 self.approval["tooling_sha256"] == self.plan["tooling_sha256"],
                 "approval_tooling",
+            )
+        if quality:
+            pins = staff_quality_hashes(
+                self.candidate,
+                source["previous_commit"],
+                source["candidate_commit"],
+                paths,
+            )
+            require(
+                pins
+                == self.plan["staff_quality_sha256"]
+                == self.approval["staff_quality_sha256"],
+                "host_staff_quality_source",
             )
         if heap:
             require(
@@ -1607,6 +1685,11 @@ class DeploymentHost:
             ),
             "host_channels_enabled",
         )
+        if self.plan["schema"] == "deployment-plan-v7":
+            require(
+                all(values.get(name, "") == "" for name in STAFF_SPEND_ENV),
+                "host_staff_quality_environment",
+            )
         require(values.get("DATA_DIR") == "/data", "host_runtime_data_path")
         database = self.install / "api/data/feedback.db"
         require(
@@ -1674,8 +1757,49 @@ class DeploymentHost:
                 "host_helper_changed",
             )
 
+    def _staff_quality_config(self, config):
+        """Only absent/empty new API settings are equivalent in this source rollout."""
+        if self.plan["schema"] != "deployment-plan-v7":
+            return config
+        result = json.loads(json.dumps(config))
+        environment = result.get("services", {}).get("api", {}).get("environment")
+        require(isinstance(environment, dict), "host_staff_quality_environment")
+        present = set(STAFF_SPEND_ENV) & environment.keys()
+        require(
+            not present or present == set(STAFF_SPEND_ENV),
+            "host_staff_quality_environment",
+        )
+        for name in present:
+            require(environment[name] == "", "host_staff_quality_environment")
+            del environment[name]
+        return result
+
+    def _staff_quality_environment_file(self):
+        if self.plan["schema"] != "deployment-plan-v7":
+            return
+        # Compose is run with a filtered process environment. Refuse nonempty or
+        # unusual dotenv assignments before effects, rather than discovering a
+        # newly configured trial after source publication. Never print values.
+        path = self.install / "docker/.env"
+        require(path.is_file() and not path.is_symlink(), "host_environment_file")
+        text = path.read_text(encoding="utf-8")
+        seen = set()
+        for line in text.splitlines():
+            for name in STAFF_SPEND_ENV:
+                if re.match(
+                    r"^\s*(?:export\s+)?['\"]?" + name + r"['\"]?(?:\s|=|$)", line
+                ):
+                    require(
+                        name not in seen
+                        and re.fullmatch(r"\s*" + name + r"=\s*(?:#.*)?", line)
+                        is not None,
+                        "host_staff_quality_environment",
+                    )
+                    seen.add(name)
+
     def _configuration(self):
-        config = json.loads(self._shell("config"))
+        self._staff_quality_environment_file()
+        config = self._staff_quality_config(json.loads(self._shell("config")))
         env = self.install / "docker/.env"
         require(env.is_file() and not env.is_symlink(), "host_environment_file")
         require(
@@ -1736,6 +1860,27 @@ class DeploymentHost:
                     }
                 else:
                     tables[table] = None
+            quality = self.plan["schema"] == "deployment-plan-v7"
+            if quality:
+                # The reviewed API creates these previously absent ledgers while
+                # sync/generation remain off. Only empty creation is immaterial;
+                # a row is actual new work and must stop this source rollout.
+                for table, expected_ddl in STAFF_QUALITY_LEDGER_DDL.items():
+                    if table in names:
+                        actual_ddl = db.execute(
+                            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+                            (table,),
+                        ).fetchone()[0]
+                        require(
+                            _schema_tokens(actual_ddl) == _schema_tokens(expected_ddl),
+                            "host_staff_quality_ledger_schema",
+                        )
+                        require(
+                            db.execute("SELECT 1 FROM " + table + " LIMIT 1").fetchone()
+                            is None,
+                            "host_staff_quality_ledger_not_empty",
+                        )
+                    tables[table] = {"count": 0}
             require("escalations" in names, "host_history_schema")
             cursor = db.execute(
                 "SELECT * FROM escalations WHERE channel='matrix' ORDER BY id"
@@ -1747,6 +1892,25 @@ class DeploymentHost:
             )
             rows = cursor.fetchmany(10001)
             require(len(rows) <= 10000, "host_history_bound")
+            if quality and "staff_context_verdicts" in columns:
+                info = [
+                    row
+                    for row in db.execute("PRAGMA table_info(escalations)")
+                    if row[1] == "staff_context_verdicts"
+                ]
+                require(
+                    len(info) == 1
+                    and info[0][2:] == ("TEXT", 1, "'[]'", 0)
+                    and info[0][0] == len(columns) - 1
+                    and db.execute(
+                        "SELECT 1 FROM escalations WHERE staff_context_verdicts IS NULL OR staff_context_verdicts != '[]' LIMIT 1"
+                    ).fetchone()
+                    is None,
+                    "host_staff_quality_verdict_migration",
+                )
+                index = columns.index("staff_context_verdicts")
+                rows = [row[:index] + row[index + 1 :] for row in rows]
+                columns.pop(index)
             for row in rows:
                 raw_metadata = row[columns.index("channel_metadata")]
                 try:
@@ -1782,6 +1946,8 @@ class DeploymentHost:
                 "count": len(rows),
                 "sha256": digest(encode(rows)),
             }
+            if quality:
+                tables["matrix_cases"]["columns"] = columns
         return {"files": files, "tables": tables}
 
     def _scheduler_jobs(self, scheduler):
@@ -1935,6 +2101,19 @@ class DeploymentHost:
                 "com.docker.compose.replace",
             ):
                 config["Labels"].pop(label, None)
+        if self.plan["schema"] == "deployment-plan-v7" and service == "api":
+            # Published pass-throughs are inactive; an absent variable and its
+            # explicit empty default have the same application meaning. Never
+            # permit a monetary value, partial bundle or any other env change.
+            for config in (old, new):
+                present = set(STAFF_SPEND_ENV) & config["Env"].keys()
+                require(
+                    not present or present == set(STAFF_SPEND_ENV),
+                    "host_staff_quality_environment",
+                )
+                for name in present:
+                    require(config["Env"][name] == "", "host_staff_quality_environment")
+                    del config["Env"][name]
         require(old == new, "host_replacement_configuration")
 
     def verify_preservation(self):
@@ -2192,7 +2371,8 @@ class DeploymentHost:
         self._helpers()
         effects = self._state()
         self._source(published="publish_source" in effects)
-        config = json.loads(self._shell("config"))
+        self._staff_quality_environment_file()
+        config = self._staff_quality_config(json.loads(self._shell("config")))
         containers = self._inspect()
         require(set(config["services"]) == set(containers), "host_compose_topology")
         self._disabled(containers)
@@ -2697,7 +2877,7 @@ class DeploymentHost:
             self.install, "merge", "--ff-only", "--no-edit", source["candidate_commit"]
         )
         self._source(published=True)
-        if heap or monitoring:
+        if heap or monitoring or self.plan["schema"] == "deployment-plan-v7":
             self._configuration()
         if monitoring:
             self._monitoring_reload()
@@ -2709,6 +2889,8 @@ class DeploymentHost:
             "source_clean": True,
             "unrelated_preserved": True,
         }
+        if self.plan["schema"] == "deployment-plan-v7":
+            result["staff_quality_config_preserved"] = True
         if heap:
             result["preserved_heap_reconciled"] = True
         if monitoring:

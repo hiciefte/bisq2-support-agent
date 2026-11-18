@@ -290,6 +290,126 @@ def test_replacement_accepts_only_equivalent_dns_and_mask_representations(
     assert (before, current) == originals
 
 
+@pytest.mark.parametrize("host", [True], indirect=True)
+@pytest.mark.parametrize("service", ["api", "matrix-alert-relay"])
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize(
+    "binds",
+    [
+        ["fixture-data:/data:rw", "fixture-secret:/run/fixture-secrets:ro"],
+        ["/fixture/data:/data", "/fixture/secret:/run/fixture-secrets:ro"],
+        ["fixture-data:/data:rw", "fixture-other:/database:rw"],
+    ],
+)
+def test_replacement_accepts_independent_bind_order_without_changing_snapshots(
+    host, service, reverse, binds
+):
+    before = host.baseline["containers"][service]
+    before["HostConfig"]["Binds"] = list(reversed(binds)) if reverse else binds
+    before["Mounts"] = [
+        {"Source": "/fixture/" + str(index), "Destination": entry.split(":")[1]}
+        for index, entry in enumerate(binds)
+    ]
+    current = copy.deepcopy(before)
+    current["HostConfig"]["Binds"].reverse()
+    current["Mounts"].reverse()
+    snapshots = copy.deepcopy((before, current))
+    host._replacement(service, current, current["Image"])
+    assert (before, current) == snapshots
+
+
+@pytest.mark.parametrize(
+    "binds",
+    [
+        ["fixture-a:/data", "fixture-b:/data/nested"],
+        ["fixture-a:/data", "fixture-b:/data"],
+        ["fixture-a:/", "fixture-b:/data"],
+        ["fixture-a:/data/", "fixture-b:/other"],
+        ["fixture-a://data", "fixture-b:/other"],
+        ["fixture-a:/data/./nested", "fixture-b:/other"],
+        ["fixture-a:/data/../nested", "fixture-b:/other"],
+        ["fixture-a:relative", "fixture-b:/other"],
+        ["first", "second"],
+        ["", "fixture-b:/other"],
+        ["fixture-a:/data\x00", "fixture-b:/other"],
+        ["fixture-a:/data\n", "fixture-b:/other"],
+        [None, "fixture-b:/other"],
+        ["./relative:/data", "fixture-b:/other"],
+        ["/fixture/../data:/data", "fixture-b:/other"],
+        ["/fixture//data:/data", "fixture-b:/other"],
+        [":/data", "fixture-b:/other"],
+        ["fixture-a:/data:", "fixture-b:/other"],
+        ["fixture-a:/data:ro:extra", "fixture-b:/other"],
+        ["fixture-a:/data:ro,z", "fixture-b:/other"],
+        ["fixture-a:/data:Z", "fixture-b:/other"],
+        ["fixture-a:/data:rshared", "fixture-b:/other"],
+        ["fixture-a:/data:unknown", "fixture-b:/other"],
+        ["fixture-a:/data", "fixture-a:/data", "fixture-b:/other"],
+    ],
+)
+def test_replacement_keeps_unproven_bind_order_strict(host, module, binds):
+    before = host.baseline["containers"]["api"]
+    before["HostConfig"]["Binds"] = binds
+    current = copy.deepcopy(before)
+    current["HostConfig"]["Binds"].reverse()
+    snapshots = copy.deepcopy((before, current))
+    assert module.replacement_host_config(before["HostConfig"])["Binds"] == binds
+    with pytest.raises(module.JournalError, match="host_replacement_host_config"):
+        host._replacement("api", current, current["Image"])
+    assert (before, current) == snapshots
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        ["fixture-other:/data:rw", "fixture-secret:/run/fixture-secrets:ro"],
+        ["fixture-data:/data:ro", "fixture-secret:/run/fixture-secrets:ro"],
+        ["fixture-data:/data", "fixture-secret:/run/fixture-secrets:ro"],
+        ["fixture-data:/other:rw", "fixture-secret:/run/fixture-secrets:ro"],
+        ["fixture-data:/data:rw"],
+        [
+            "fixture-data:/data:rw",
+            "fixture-secret:/run/fixture-secrets:ro",
+            "fixture-secret:/run/fixture-secrets:ro",
+        ],
+    ],
+)
+def test_replacement_keeps_bind_sources_options_and_multiplicity_exact(
+    host, module, replacement
+):
+    before = host.baseline["containers"]["api"]
+    before["HostConfig"]["Binds"] = [
+        "fixture-data:/data:rw",
+        "fixture-secret:/run/fixture-secrets:ro",
+    ]
+    current = copy.deepcopy(before)
+    current["HostConfig"]["Binds"] = replacement
+    with pytest.raises(module.JournalError, match="host_replacement_host_config"):
+        host._replacement("api", current, current["Image"])
+
+
+def test_replacement_bind_order_exception_cannot_hide_resolved_mount_drift(
+    host, module
+):
+    before = host.baseline["containers"]["api"]
+    before["HostConfig"]["Binds"] = ["fixture-a:/data", "fixture-b:/other"]
+    current = copy.deepcopy(before)
+    current["HostConfig"]["Binds"].reverse()
+    current["Mounts"][0]["RW"] = False
+    with pytest.raises(module.JournalError, match="host_replacement_mounts"):
+        host._replacement("api", current, current["Image"])
+
+
+@pytest.mark.parametrize("old,new", [(None, []), ([], None)])
+def test_replacement_keeps_null_and_empty_binds_distinct(host, module, old, new):
+    before = host.baseline["containers"]["api"]
+    before["HostConfig"]["Binds"] = old
+    current = copy.deepcopy(before)
+    current["HostConfig"]["Binds"] = new
+    with pytest.raises(module.JournalError, match="host_replacement_host_config"):
+        host._replacement("api", current, current["Image"])
+
+
 @pytest.mark.parametrize("field", ["Dns", "DnsOptions", "DnsSearch"])
 @pytest.mark.parametrize(
     "old,new",
@@ -312,7 +432,9 @@ def test_replacement_preserves_nonempty_dns_values_order_and_multiplicity(
         host._replacement("api", current, current["Image"])
 
 
-@pytest.mark.parametrize("field", ["Dns", "DnsOptions", "DnsSearch", "MaskedPaths"])
+@pytest.mark.parametrize(
+    "field", ["Dns", "DnsOptions", "DnsSearch", "MaskedPaths", "Binds"]
+)
 @pytest.mark.parametrize("side", ["original", "replacement"])
 @pytest.mark.parametrize("value", [None, []])
 def test_replacement_does_not_equate_absent_host_fields_with_empty(
@@ -1558,6 +1680,60 @@ def prepare_route_switch(host, module, protocol, monkeypatch):
         )
         save_receipt(host, module, protocol, phase, payload)
     return service, target, commands
+
+
+@pytest.mark.parametrize("host", [True, "distinct-relay"], indirect=True)
+def test_coupled_switch_accepts_only_relay_bind_permutation_once(
+    host, module, protocol, monkeypatch
+):
+    # Reproduce the observed two-entry relay permutation without private paths.
+    binds = ["/fixture/relay-state:/data:rw", "/fixture/relay-secrets:/run/secrets:ro"]
+    mounts = [
+        {"Source": "/fixture/relay-state", "Destination": "/data", "RW": True},
+        {
+            "Source": "/fixture/relay-secrets",
+            "Destination": "/run/secrets",
+            "RW": False,
+        },
+    ]
+    for relay in (
+        host.baseline["containers"]["matrix-alert-relay"],
+        host.fixture_state["matrix-alert-relay"],
+    ):
+        relay["HostConfig"]["Binds"] = copy.deepcopy(binds)
+        relay["Mounts"] = copy.deepcopy(mounts)
+    _, phase, commands = prepare_route_switch(host, module, protocol, monkeypatch)
+    shell = host._shell
+
+    def permute_relay(action, *args, **kwargs):
+        result = shell(action, *args, **kwargs)
+        if action == "switch":
+            relay = host.fixture_state["matrix-alert-relay"]
+            relay["HostConfig"]["Binds"].reverse()
+            relay["Mounts"].reverse()
+        return result
+
+    monkeypatch.setattr(host, "_shell", permute_relay)
+    payload = host.effect(phase, "f" * 64)
+    save_receipt(host, module, protocol, phase, payload)
+    assert set(payload["consumers"]) == {"api", "matrix-alert-relay"}
+    assert all(item["ready"] for item in payload["consumers"].values())
+    assert payload["nginx_routing_verified"] is True
+    assert (
+        host.fixture_state["matrix-alert-relay"]["HostConfig"]["Binds"] == binds[::-1]
+    )
+    switches = [args[1:] for action, args in host.fixture_calls if action == "switch"]
+    assert switches == [("api", "matrix-alert-relay")]
+    assert len([c for c in commands if c[-3:] == ["nginx", "-s", "reload"]]) == 1
+    assert any(c[-1] == "http://localhost:8000/ready" for c in commands)
+    assert host.fixture_state["scheduler"]["State"]["Paused"] is True
+    assert not list(host.root.glob("smoke_*.intent.json"))
+    assert not (host.root / "availability-recovery.intent.json").exists()
+    with pytest.raises(
+        module.JournalError, match="host_phase_order|host_phase_repeated"
+    ):
+        host.effect(phase, "e" * 64)
+    assert [action for action, _args in host.fixture_calls].count("switch") == 1
 
 
 @pytest.mark.parametrize("host", [False, "web-only"], indirect=True)

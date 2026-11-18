@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Networkless external-command model. Never usable against a real Docker daemon."""
 
+import ast
 import hashlib
 import io
 import json
 import os
 import re
 import signal
+import sqlite3
 import sys
 import tarfile
 import time
@@ -219,14 +221,25 @@ def docker():
                 overlays.append(json.loads(Path(value).read_text()))
         action, *rest = options
         if action == "config":
-            emit(
-                {
-                    "services": {
-                        name: {"image": "fixture-original-" + name}
-                        for name in state["containers"]
-                    }
-                }
-            )
+            services = {
+                name: {"image": "fixture-original-" + name}
+                for name in state["containers"]
+            }
+            if state["scenario"].startswith("staff_quality_"):
+                # Resolve only the exact new empty pass-throughs in this fixture;
+                # all real configuration parsing remains a Docker boundary model.
+                environment = {}
+                source = (ROOT / "install/docker/docker-compose.yml").read_text()
+                for name in (
+                    "MATRIX_CONTEXT_TRIAL_BUDGET_USD",
+                    "MATRIX_CONTEXT_TRIAL_DAILY_BUDGET_USD",
+                    "MATRIX_CONTEXT_TRIAL_INPUT_USD_PER_MILLION",
+                    "MATRIX_CONTEXT_TRIAL_OUTPUT_USD_PER_MILLION",
+                ):
+                    if f"      - {name}=${{{name}:-}}\n" in source:
+                        environment[name] = ""
+                services["api"]["environment"] = environment
+            emit({"services": services})
         elif action == "ps":
             names = [name for name in state["containers"] if name in rest]
             values = (
@@ -274,6 +287,27 @@ def docker():
                 Pid=value["State"]["Pid"] + 100, StartedAt="fixture-replacement"
             )
             state["switches"].append(service)
+            if service == "api" and state["scenario"] == "staff_quality_success":
+                # Model the reviewed API's additive, inactive startup migration.
+                with sqlite3.connect(ROOT / "install/api/data/escalations.db") as db:
+                    db.execute(
+                        "ALTER TABLE escalations ADD COLUMN staff_context_verdicts TEXT NOT NULL DEFAULT '[]'"
+                    )
+                    tree = ast.parse(
+                        (ROOT / "candidate/scripts/lib/deployment_host.py").read_text()
+                    )
+                    ddl = next(
+                        ast.literal_eval(node.value)
+                        for node in tree.body
+                        if isinstance(node, ast.Assign)
+                        and any(
+                            isinstance(target, ast.Name)
+                            and target.id == "STAFF_QUALITY_LEDGER_DDL"
+                            for target in node.targets
+                        )
+                    )
+                    for statement in ddl.values():
+                        db.execute(statement)
         elif action == "exec":
             assert "app.scripts.validate_deployment_chat" in rest
             body = json.load(sys.stdin)

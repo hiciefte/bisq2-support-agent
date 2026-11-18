@@ -34,6 +34,9 @@ from lib.deployment_protocol import (
     RETENTION_MONITORING_FILES,
     STAFF_PILOT_MONITORING_FILES,
     STAFF_PILOT_RULE_APPEND_SHA256,
+    STAFF_QUALITY_FILES,
+    STAFF_QUALITY_TOOLS,
+    STAFF_SPEND_ENV,
     phases_for,
     validate_plan,
 )
@@ -134,6 +137,7 @@ def classify_services(
     include_retention_monitoring: bool = False,
     include_python_runner_pins: bool = False,
     include_staff_pilot_monitoring: bool = False,
+    include_staff_quality_tools: bool = False,
 ) -> list[str]:
     """A strict source-only subset of update.sh's selective rebuild rules."""
     require(
@@ -145,8 +149,22 @@ def classify_services(
         ),
         "staff_monitoring_incompatible_capability",
     )
+    require(
+        not include_staff_quality_tools
+        or not (
+            include_staff_pilot_monitoring
+            or include_retention_monitoring
+            or preserve_bisq2_heap_repair
+            or include_python_runner_pins
+        ),
+        "staff_quality_incompatible_capability",
+    )
     selected = set()
     for path in paths:
+        if include_staff_quality_tools and path in STAFF_QUALITY_FILES:
+            if path in STAFF_QUALITY_TOOLS:
+                selected.add("api")
+            continue
         if include_staff_pilot_monitoring and path in STAFF_PILOT_MONITORING_FILES:
             continue
         if include_python_runner_pins and path in PYTHON_RUNNER_FILES:
@@ -321,6 +339,60 @@ def staff_monitoring_hashes(
     return pins, preserved
 
 
+def staff_quality_hashes(
+    repository: Path, previous: str, candidate: str, paths: list[str]
+) -> dict[str, str]:
+    """Admit only the initial offline-tools and empty spend-settings bundle."""
+    require(STAFF_QUALITY_FILES <= set(paths), "staff_quality_source_scope")
+
+    def blob(revision: str, name: str) -> bytes:
+        entry = local_git(repository, "ls-tree", "-z", revision, "--", name)
+        require(
+            bool(
+                re.fullmatch(
+                    rb"100644 blob [0-9a-f]{40}\t" + re.escape(name.encode()) + rb"\0",
+                    entry,
+                )
+            ),
+            "staff_quality_source_entry",
+        )
+        return local_git(repository, "show", revision + ":" + name)
+
+    pins = {name: digest(blob(candidate, name)) for name in sorted(STAFF_QUALITY_FILES)}
+    name = "docker/docker-compose.yml"
+    before = blob(previous, name)
+    anchor = b"      - MATRIX_CONTEXT_TRIAL_MAX_CASES=${MATRIX_CONTEXT_TRIAL_MAX_CASES:-10}\n"
+    addition = b"".join(
+        ("      - " + key + "=${" + key + ":-}\n").encode() for key in STAFF_SPEND_ENV
+    )
+    require(
+        before.count(anchor) == 1
+        and before.replace(anchor, anchor + addition) == blob(candidate, name),
+        "staff_quality_compose_content",
+    )
+    name = "docker/.env.example"
+    before = blob(previous, name)
+    old_comment = b"# Optional staff-only trial: explicit timezone dates, duration <=48h, <=10 paid cases.\n"
+    new_comment = (
+        b"# Optional Staff-only trial: explicit timezone dates, fixed window <=30 days.\n"
+        b"# New trials require both model budgets and both conservative price ceilings.\n"
+        b"# Leave blank until a separately authorized trial is bound; no default spend.\n"
+    )
+    anchor = b"MATRIX_CONTEXT_TRIAL_MAX_CASES=10\n"
+    replacement = (
+        b"# Historical count-bound descriptors only; not a new spend-bound trial quota.\n"
+        + anchor
+        + b"".join((key + "=\n").encode() for key in STAFF_SPEND_ENV)
+    )
+    require(
+        before.count(old_comment) == before.count(anchor) == 1
+        and before.replace(old_comment, new_comment).replace(anchor, replacement)
+        == blob(candidate, name),
+        "staff_quality_example_content",
+    )
+    return pins
+
+
 def python_runner_hashes(
     repository: Path, previous: str, candidate: str, paths: list[str]
 ) -> dict[str, str]:
@@ -464,6 +536,7 @@ def prepare(args: argparse.Namespace) -> dict:
     monitoring = getattr(args, "include_retention_monitoring", False)
     staff = getattr(args, "include_staff_pilot_monitoring", False)
     runner_pins = getattr(args, "include_python_runner_pins", False)
+    quality = getattr(args, "include_staff_quality_tools", False)
     require(
         not runner_pins or monitoring, "python_runner_requires_monitoring_capability"
     )
@@ -476,6 +549,7 @@ def prepare(args: argparse.Namespace) -> dict:
             include_retention_monitoring=monitoring,
             include_python_runner_pins=runner_pins,
             include_staff_pilot_monitoring=staff,
+            include_staff_quality_tools=quality,
         ),
         "service_selection_mismatch",
     )
@@ -530,6 +604,14 @@ def prepare(args: argparse.Namespace) -> dict:
         plan["staff_monitoring_sha256"], plan["preserved_retention_sha256"] = (
             staff_monitoring_hashes(repository, args.previous, args.commit, paths)
         )
+    if quality:
+        plan.update(
+            schema="deployment-plan-v7", kind="selective-api-web-with-staff-quality-v1"
+        )
+        plan.setdefault("tooling_sha256", {})
+        plan["staff_quality_sha256"] = staff_quality_hashes(
+            repository, args.previous, args.commit, paths
+        )
     validate_plan(plan)
     save_plan(args.operation, repository, plan)
     return inspect_status(args.operation)
@@ -547,6 +629,7 @@ def inspect_status(operation: Path) -> dict:
             "deployment-plan-v4",
             "deployment-plan-v5",
             "deployment-plan-v6",
+            "deployment-plan-v7",
         },
         "runtime_binding": "not_assessed",
         "deadline_expired": timestamp(now()) >= timestamp(journal.plan["deadline"]),
@@ -586,6 +669,11 @@ def main() -> int:
         "--include-staff-pilot-monitoring",
         action="store_true",
         help="Publish the fixed Staff watchdog source and append-only alert; never install or arm host units",
+    )
+    plan.add_argument(
+        "--include-staff-quality-tools",
+        action="store_true",
+        help="Publish exactly three offline Staff utilities and empty budget pass-throughs; never configure or enable a trial",
     )
     plan.add_argument(
         "--include-python-runner-pins",

@@ -13,6 +13,7 @@ import ast
 import hashlib
 import json
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -20,6 +21,7 @@ import sys
 import tempfile
 import time
 import unittest
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -215,6 +217,7 @@ def prepare(source, root, scenario):
     """Create a disposable Git and runtime fixture with explicit external doubles."""
     staff = scenario in {"staff_monitoring_success", "staff_monitoring_rule_missing"}
     monitoring = scenario == "monitoring_success" or staff
+    quality = scenario in {"staff_quality_success", "staff_quality_config_refusal"}
     root.mkdir(mode=0o700, parents=True, exist_ok=False)
     candidate, install = root / "candidate", root / "install"
     candidate.mkdir()
@@ -256,6 +259,39 @@ def prepare(source, root, scenario):
         for name in STAFF_MONITORING_FILES:
             if name.endswith(".py"):
                 (candidate / name).unlink()
+    if quality:
+        # Use the exact source migration; no runtime settings are installed.
+        before_compose = (source / "docker/docker-compose.yml").read_text()
+        for key in (
+            "MATRIX_CONTEXT_TRIAL_BUDGET_USD",
+            "MATRIX_CONTEXT_TRIAL_DAILY_BUDGET_USD",
+            "MATRIX_CONTEXT_TRIAL_INPUT_USD_PER_MILLION",
+            "MATRIX_CONTEXT_TRIAL_OUTPUT_USD_PER_MILLION",
+        ):
+            before_compose = before_compose.replace(f"      - {key}=${{{key}:-}}\n", "")
+        (candidate / "docker/docker-compose.yml").write_text(before_compose)
+        before_example = (
+            (source / "docker/.env.example")
+            .read_text()
+            .replace(
+                "# Optional Staff-only trial: explicit timezone dates, fixed window <=30 days.\n"
+                "# New trials require both model budgets and both conservative price ceilings.\n"
+                "# Leave blank until a separately authorized trial is bound; no default spend.\n",
+                "# Optional staff-only trial: explicit timezone dates, duration <=48h, <=10 paid cases.\n",
+            )
+            .replace(
+                "# Historical count-bound descriptors only; not a new spend-bound trial quota.\n",
+                "",
+            )
+        )
+        for key in (
+            "MATRIX_CONTEXT_TRIAL_BUDGET_USD",
+            "MATRIX_CONTEXT_TRIAL_DAILY_BUDGET_USD",
+            "MATRIX_CONTEXT_TRIAL_INPUT_USD_PER_MILLION",
+            "MATRIX_CONTEXT_TRIAL_OUTPUT_USD_PER_MILLION",
+        ):
+            before_example = before_example.replace(f"{key}=\n", "")
+        (candidate / "docker/.env.example").write_text(before_example)
     git(candidate, "init", "-q")
     previous = commit(candidate)
     (candidate / "api/app/release_fixture.py").write_text("VERSION = 2\n")
@@ -276,6 +312,15 @@ def prepare(source, root, scenario):
         (candidate / "docker/prometheus/alert_rules.yml").write_text(
             fixture_privacy_rules()
         )
+    if quality:
+        for name in (
+            "docker/docker-compose.yml",
+            "docker/.env.example",
+            "api/app/scripts/replay_staff_context.py",
+            "api/app/scripts/replay_staff_context_continuation.py",
+            "api/app/scripts/summarize_staff_context.py",
+        ):
+            shutil.copyfile(source / name, candidate / name)
     revision = commit(candidate)
     subprocess.run(
         [
@@ -297,10 +342,13 @@ def prepare(source, root, scenario):
         "COMPOSE_PROJECT_NAME=fixture\nOPENAI_MODEL=openai:fixture\n"
         "ENABLE_BISQ_MCP_INTEGRATION=true\n"
     )
+    if scenario == "staff_quality_config_refusal":
+        with (install / "docker/.env").open("a") as stream:
+            stream.write("MATRIX_CONTEXT_TRIAL_BUDGET_USD=60\n")
     (install / "docker/.env").chmod(0o600)
     data = install / "api/data"
     data.mkdir()
-    with sqlite3.connect(data / "feedback.db") as db:
+    with closing(sqlite3.connect(data / "feedback.db")) as db, db:
         db.executescript(
             "CREATE TABLE channel_autoresponse_policy("
             "channel_id TEXT, enabled INTEGER, generation_enabled INTEGER); "
@@ -309,7 +357,7 @@ def prepare(source, root, scenario):
             "singleton_id INTEGER, autonomous_delivery_enabled INTEGER); "
             "INSERT INTO channel_launch_global VALUES(1,0);"
         )
-    with sqlite3.connect(data / "escalations.db") as db:
+    with closing(sqlite3.connect(data / "escalations.db")) as db, db:
         db.executescript(
             "CREATE TABLE escalations("
             "id INTEGER, channel TEXT, question TEXT, channel_metadata TEXT); "
@@ -439,7 +487,11 @@ def prepare(source, root, scenario):
         *(
             ("--include-staff-pilot-monitoring",)
             if staff
-            else ("--include-retention-monitoring",) if monitoring else ()
+            else (
+                ("--include-retention-monitoring",)
+                if monitoring
+                else ("--include-staff-quality-tools",) if quality else ()
+            )
         ),
     )
     assert planned.returncode == 0, planned.stderr
@@ -516,7 +568,13 @@ def prepare(source, root, scenario):
         "data_compatible_rollback": True,
         "policy": "private-disabled-channels",
     }
-    if staff:
+    if quality:
+        approval.update(
+            schema="deployment-approval-v7",
+            tooling_sha256=plan["tooling_sha256"],
+            staff_quality_sha256=plan["staff_quality_sha256"],
+        )
+    elif staff:
         approval.update(
             schema="deployment-approval-v6",
             tooling_sha256=plan["tooling_sha256"],
@@ -546,6 +604,56 @@ def invoke(candidate, env, *arguments):
     )
 
 
+def database_snapshot(path):
+    with closing(sqlite3.connect(path)) as db, db:
+        result = {}
+        for name, sql in db.execute(
+            "SELECT name,sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall():
+            assert re.fullmatch(r"[a-z_]+", name)
+            result[name] = {
+                "sql": sql,
+                "columns": db.execute("PRAGMA table_info(" + name + ")").fetchall(),
+                "rows": sorted(
+                    db.execute("SELECT * FROM " + name).fetchall(), key=repr
+                ),
+            }
+        return result
+
+
+def verify_quality_migration(before, after, expected_ddl):
+    """Preserve existing semantics, permitting precisely the startup additions."""
+    assert set(after) == set(before) | set(expected_ddl)
+
+    def tokens(sql):
+        return re.findall(r"'(?:''|[^'])*'|[A-Za-z_][A-Za-z_0-9]*|[0-9]+|[^\s]", sql)
+
+    for name, old in before.items():
+        current = after[name]
+        if name != "escalations":
+            assert current == old
+            continue
+        assert current["columns"][:-1] == old["columns"]
+        assert current["columns"][-1] == (
+            len(old["columns"]),
+            "staff_context_verdicts",
+            "TEXT",
+            1,
+            "'[]'",
+            0,
+        )
+        assert all(row[-1] == "[]" for row in current["rows"])
+        assert [row[:-1] for row in current["rows"]] == old["rows"]
+        expected = (
+            old["sql"].rsplit(")", 1)[0]
+            + ", staff_context_verdicts TEXT NOT NULL DEFAULT '[]')"
+        )
+        assert tokens(current["sql"]) == tokens(expected)
+    for name, ddl in expected_ddl.items():
+        assert after[name]["rows"] == []
+        assert tokens(after[name]["sql"]) == tokens(ddl)
+
+
 def run_case(source, root, scenario):
     """Exercise ordinary owner/client phases and verify their durable evidence."""
     assert sys.platform == "linux", "real lifecycle ownership requires Linux /proc"
@@ -563,6 +671,7 @@ def run_case(source, root, scenario):
     data_before = {
         path.name: sha(path.read_bytes()) for path in (install / "api/data").iterdir()
     }
+    database_before = database_snapshot(install / "api/data/escalations.db")
     applied = invoke(
         candidate,
         env,
@@ -609,7 +718,12 @@ def run_case(source, root, scenario):
             "real ciphertext framing/receive hashing and fsync run over synthetic bytes",
         ],
     }
-    if scenario in {"success", "monitoring_success", "staff_monitoring_success"}:
+    if scenario in {
+        "success",
+        "monitoring_success",
+        "staff_monitoring_success",
+        "staff_quality_success",
+    }:
         assert applied.returncode == 0, applied.stderr
         outcome = json.loads(applied.stdout)
         assert outcome["completed"] is True
@@ -637,6 +751,25 @@ def run_case(source, root, scenario):
             list((operation / "receipts").glob("*.json"))
         )
         report["already_complete_no_replay"] = True
+        if scenario == "staff_quality_success":
+            publication = json.loads(
+                (operation / "receipts/publish_source.json").read_text()
+            )
+            assert publication["payload"]["staff_quality_config_preserved"] is True
+            with closing(
+                sqlite3.connect(install / "api/data/escalations.db")
+            ) as db, db:
+                assert db.execute(
+                    "SELECT staff_context_verdicts FROM escalations"
+                ).fetchall() == [("[]",)]
+                for name in (
+                    "matrix_context_verdict_events",
+                    "matrix_context_answer_events",
+                    "matrix_context_trial_spend",
+                ):
+                    assert db.execute("SELECT COUNT(*) FROM " + name).fetchone() == (0,)
+            report["empty_additive_review_migration_preserved"] = True
+            report["budget_not_configured"] = True
         if scenario in {"monitoring_success", "staff_monitoring_success"}:
             assert state["monitoring_backup_restarts"] == 2
             assert (
@@ -688,7 +821,7 @@ def run_case(source, root, scenario):
         report["missing_loaded_staff_rule_refused"] = True
         report["failed_publication_not_replayed"] = True
         report["read_only_reconciliation"] = True
-    elif scenario == "preflight_refusal":
+    elif scenario in {"preflight_refusal", "staff_quality_config_refusal"}:
         assert (
             applied.returncode == 2
             and not state["builds"]
@@ -738,9 +871,35 @@ def run_case(source, root, scenario):
         assert git(install, "rev-parse", "HEAD") == plan["source"]["previous_commit"]
         report["lost_smoke_not_replayed"] = True
         report["read_only_reconciliation"] = True
-    assert data_before == {
+    data_after = {
         path.name: sha(path.read_bytes()) for path in (install / "api/data").iterdir()
     }
+    if scenario == "staff_quality_success":
+        assert set(data_before) == set(data_after)
+        assert {
+            key: value for key, value in data_before.items() if key != "escalations.db"
+        } == {
+            key: value for key, value in data_after.items() if key != "escalations.db"
+        }
+        tree = ast.parse((source / "scripts/lib/deployment_host.py").read_text())
+        expected_ddl = next(
+            ast.literal_eval(node.value)
+            for node in tree.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "STAFF_QUALITY_LEDGER_DDL"
+                for target in node.targets
+            )
+        )
+        verify_quality_migration(
+            database_before,
+            database_snapshot(install / "api/data/escalations.db"),
+            expected_ddl,
+        )
+        report["preexisting_database_schema_and_rows_preserved"] = True
+        report["other_runtime_files_byte_identical"] = True
+    else:
+        assert data_before == data_after
     if heartbeat_before is not None:
         heartbeat = install / "docker/scripts/scheduler-heartbeat.sh"
         assert (
@@ -882,6 +1041,18 @@ class ExternalBoundaryRegression(unittest.TestCase):
     "explicit isolated Linux rehearsal only",
 )
 class OrdinaryDeploymentRehearsal(unittest.TestCase):
+    def test_staff_quality_publication_keeps_spend_inactive(self):
+        with tempfile.TemporaryDirectory() as parent:
+            run_case(SOURCE, Path(parent) / "staff-quality", "staff_quality_success")
+
+    def test_staff_quality_configuration_requires_separate_authority(self):
+        with tempfile.TemporaryDirectory() as parent:
+            run_case(
+                SOURCE,
+                Path(parent) / "staff-quality-refusal",
+                "staff_quality_config_refusal",
+            )
+
     def test_staff_monitoring_publication_preserves_legacy_retention(self):
         with tempfile.TemporaryDirectory() as parent:
             run_case(
@@ -924,6 +1095,8 @@ if __name__ == "__main__":
             "monitoring_success",
             "staff_monitoring_success",
             "staff_monitoring_rule_missing",
+            "staff_quality_success",
+            "staff_quality_config_refusal",
         ],
         required=True,
     )
