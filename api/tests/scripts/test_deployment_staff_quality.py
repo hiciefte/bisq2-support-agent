@@ -316,6 +316,9 @@ def test_config_comparison_only_normalizes_exact_empty_api_bundle(
     "line",
     [
         "MATRIX_CONTEXT_TRIAL_BUDGET_USD=60",
+        "MATRIX_CONTEXT_TRIAL_BUDGET_USD:60",
+        "MATRIX_CONTEXT_TRIAL_BUDGET_USD: 60",
+        "export MATRIX_CONTEXT_TRIAL_BUDGET_USD:60",
         "export MATRIX_CONTEXT_TRIAL_BUDGET_USD=60",
         "'MATRIX_CONTEXT_TRIAL_BUDGET_USD'=60",
         'MATRIX_CONTEXT_TRIAL_BUDGET_USD="${VALUE}"',
@@ -374,7 +377,8 @@ def test_only_v7_accepts_exact_empty_additive_review_schema(host, module, schema
         for ddl in module.STAFF_QUALITY_LEDGER_DDL.values():
             db.execute(ddl)
     after = module.DeploymentHost._preserved_data(host, host.fixture_state)
-    assert (before == after) is (schema == "deployment-plan-v7")
+    host.baseline["protected_data"] = before
+    assert host._protected_data_preserved(after) is (schema == "deployment-plan-v7")
     with closing(sqlite3.connect(database)) as db, db:
         db.execute("UPDATE escalations SET question='Changed historical fact'")
     assert module.DeploymentHost._preserved_data(host, host.fixture_state) != after
@@ -410,26 +414,39 @@ def test_v7_migration_exception_never_hides_history_or_new_work(host, module, fa
                 "answer_row": "matrix_context_answer_events",
                 "spend_row": "matrix_context_trial_spend",
             }[fault]
-            db.execute("CREATE TABLE " + table + " (id INTEGER)")
-            db.execute("INSERT INTO " + table + " VALUES(1)")
-        else:
-            default = "NULL" if fault == "wrong_default" else "'[]'"
-            (
+            db.execute(module.STAFF_QUALITY_LEDGER_DDL[table])
+            if fault == "spend_row":
                 db.execute(
-                    "ALTER TABLE escalations ADD COLUMN staff_context_verdicts TEXT NOT NULL DEFAULT "
-                    + default
+                    "INSERT INTO matrix_context_trial_spend "
+                    "(trial_id,escalation_id,kind,call_id,started_at,utc_day,"
+                    "input_tokens_bound,max_output_tokens,reserved_nanodollars,status) "
+                    "VALUES('trial',1,'gate','call','2026-01-01T00:00:00+00:00',"
+                    "'2026-01-01',1,10,100,'uncertain')"
                 )
-                if fault != "wrong_default"
-                else db.execute(
-                    "ALTER TABLE escalations ADD COLUMN staff_context_verdicts TEXT DEFAULT NULL"
+            else:
+                db.execute(
+                    "INSERT INTO "
+                    + table
+                    + " (event_id,room_id) VALUES('event','room')"
                 )
+        else:
+            default = "'[1]'" if fault == "wrong_default" else "'[]'"
+            db.execute(
+                "ALTER TABLE escalations ADD COLUMN staff_context_verdicts TEXT NOT NULL DEFAULT "
+                + default
             )
+            db.execute("UPDATE escalations SET staff_context_verdicts='[]'")
             if fault == "verdict_value":
                 db.execute("UPDATE escalations SET staff_context_verdicts='[{}]'")
     if fault == "other_column":
         assert module.DeploymentHost._preserved_data(host, host.fixture_state) != before
     else:
-        with pytest.raises(module.JournalError):
+        reason = (
+            "host_staff_quality_ledger_not_empty"
+            if fault.endswith("_row")
+            else "host_staff_quality_verdict_migration"
+        )
+        with pytest.raises(module.JournalError, match=reason):
             module.DeploymentHost._preserved_data(host, host.fixture_state)
 
 
@@ -525,3 +542,180 @@ def test_rehearsal_migration_check_retains_all_old_schema_rows_and_files(
         )
         with pytest.raises(AssertionError):
             verify_quality_migration(before, bad, module.STAFF_QUALITY_LEDGER_DDL)
+
+
+@pytest.mark.parametrize("count", range(5))
+def test_preflight_spend_bundle_matches_replacement_contract(
+    host, module, protocol, count
+):
+    host.plan["schema"] = "deployment-plan-v7"
+    current = copy.deepcopy(host.fixture_state)
+    current["api"]["Config"]["Env"].extend(
+        f"{name}=false" for name in module.DISABLED_FLAGS
+    )
+    current["api"]["Config"]["Env"].extend(
+        f"{name}=" for name in protocol.STAFF_SPEND_ENV[:count]
+    )
+    data = host.install / "api/data"
+    data.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(data / "feedback.db")) as db, db:
+        db.executescript(
+            "CREATE TABLE channel_autoresponse_policy(channel_id,enabled,generation_enabled); INSERT INTO channel_autoresponse_policy VALUES('matrix',0,0),('bisq2',0,0); CREATE TABLE channel_launch_global(singleton_id,autonomous_delivery_enabled); INSERT INTO channel_launch_global VALUES(1,0);"
+        )
+    if count in (0, 4):
+        module.DeploymentHost._disabled(host, current)
+    else:
+        with pytest.raises(module.JournalError, match="host_staff_quality_environment"):
+            module.DeploymentHost._disabled(host, current)
+
+
+@pytest.mark.parametrize(
+    "object_name",
+    [
+        "matrix_context_verdict_events",
+        "matrix_context_answer_events",
+        "matrix_context_trial_spend",
+        "staff_context_verdicts",
+    ],
+)
+def test_preexisting_empty_addition_cannot_be_removed(host, module, object_name):
+    host.plan["schema"] = "deployment-plan-v7"
+    data = host.install / "api/data"
+    data.mkdir(parents=True, exist_ok=True)
+    database = data / "escalations.db"
+    with closing(sqlite3.connect(database)) as db, db:
+        db.execute(
+            "CREATE TABLE escalations(id INTEGER, channel TEXT, channel_metadata TEXT)"
+        )
+        if object_name == "staff_context_verdicts":
+            db.execute(
+                "ALTER TABLE escalations ADD COLUMN staff_context_verdicts TEXT NOT NULL DEFAULT '[]'"
+            )
+        else:
+            db.execute(module.STAFF_QUALITY_LEDGER_DDL[object_name])
+    host.baseline["protected_data"] = module.DeploymentHost._preserved_data(
+        host, host.fixture_state
+    )
+    with closing(sqlite3.connect(database)) as db, db:
+        if object_name == "staff_context_verdicts":
+            db.execute("ALTER TABLE escalations DROP COLUMN staff_context_verdicts")
+        else:
+            db.execute("DROP TABLE " + object_name)
+    assert not host._protected_data_preserved(
+        module.DeploymentHost._preserved_data(host, host.fixture_state)
+    )
+
+
+@pytest.mark.parametrize(
+    "object_name",
+    [
+        "matrix_context_verdict_events",
+        "matrix_context_answer_events",
+        "matrix_context_trial_spend",
+    ],
+)
+def test_view_cannot_impersonate_absent_ledger(host, module, object_name):
+    host.plan["schema"] = "deployment-plan-v7"
+    data = host.install / "api/data"
+    data.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(data / "escalations.db")) as db, db:
+        db.execute(
+            "CREATE TABLE escalations(id INTEGER, channel TEXT, channel_metadata TEXT)"
+        )
+        db.execute("CREATE VIEW " + object_name + " AS SELECT 1 AS event_id")
+    with pytest.raises(module.JournalError, match="host_staff_quality_ledger_schema"):
+        module.DeploymentHost._preserved_data(host, host.fixture_state)
+
+
+def test_extra_verdict_column_constraint_is_not_reviewed_migration(host, module):
+    host.plan["schema"] = "deployment-plan-v7"
+    data = host.install / "api/data"
+    data.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(data / "escalations.db")) as db, db:
+        db.execute(
+            "CREATE TABLE escalations(id INTEGER, channel TEXT, channel_metadata TEXT, staff_context_verdicts TEXT NOT NULL DEFAULT '[]' CHECK(staff_context_verdicts='[]'))"
+        )
+    with pytest.raises(
+        module.JournalError, match="host_staff_quality_verdict_migration"
+    ):
+        module.DeploymentHost._preserved_data(host, host.fixture_state)
+
+
+@pytest.mark.parametrize(
+    "constraint",
+    [
+        "CHECK(staff_context_verdicts='[]')",
+        'UNIQUE("staff_context_verdicts")',
+        "UNIQUE('staff_context_verdicts')",
+        "CONSTRAINT frozen CHECK([STAFF_CONTEXT_VERDICTS]='[]')",
+    ],
+)
+def test_table_constraint_cannot_hide_verdict_write_failure(host, module, constraint):
+    host.plan["schema"] = "deployment-plan-v7"
+    data = host.install / "api/data"
+    data.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(data / "escalations.db")) as db, db:
+        db.execute(
+            "CREATE TABLE escalations(id INTEGER, channel TEXT, channel_metadata TEXT, "
+            "staff_context_verdicts TEXT NOT NULL DEFAULT '[]', " + constraint + ")"
+        )
+        db.execute("INSERT INTO escalations(id,channel) VALUES(1,'matrix')")
+        with pytest.raises(sqlite3.IntegrityError):
+            if constraint.startswith("UNIQUE"):
+                db.execute("INSERT INTO escalations(id,channel) VALUES(2,'matrix')")
+            else:
+                db.execute(
+                    "UPDATE escalations SET staff_context_verdicts='[{}]' WHERE id=1"
+                )
+    with pytest.raises(
+        module.JournalError, match="host_staff_quality_verdict_migration"
+    ):
+        module.DeploymentHost._preserved_data(host, host.fixture_state)
+
+
+def test_unrelated_existing_constraint_preserved_by_verdict_migration(host, module):
+    host.plan["schema"] = "deployment-plan-v7"
+    data = host.install / "api/data"
+    data.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(data / "escalations.db")) as db, db:
+        db.execute(
+            "CREATE TABLE escalations(id INTEGER, channel TEXT, channel_metadata TEXT, "
+            "staff_context_verdicts TEXT NOT NULL DEFAULT '[]', "
+            "CHECK(channel IN ('matrix','web')))"
+        )
+        db.execute("INSERT INTO escalations(id,channel) VALUES(1,'matrix')")
+    result = module.DeploymentHost._preserved_data(host, host.fixture_state)
+    assert result["staff_quality_presence"]["staff_context_verdicts"] is True
+    assert result["tables"]["matrix_cases"]["count"] == 1
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        "CREATE UNIQUE INDEX unique_channel ON escalations(channel)",
+        "CREATE TRIGGER immutable_question BEFORE UPDATE ON escalations BEGIN SELECT RAISE(ABORT,'blocked'); END",
+        "CREATE VIEW hidden_cases AS SELECT * FROM escalations",
+    ],
+)
+def test_rehearsal_schema_comparison_rejects_unreviewed_objects(
+    tmp_path, module, extra
+):
+    from test_deployment_rehearsal import database_snapshot, verify_quality_migration
+
+    database = tmp_path / "schema.db"
+    with closing(sqlite3.connect(database)) as db, db:
+        db.execute(
+            "CREATE TABLE escalations(id INTEGER, channel TEXT, channel_metadata TEXT)"
+        )
+    before = database_snapshot(database)
+    with closing(sqlite3.connect(database)) as db, db:
+        db.execute(
+            "ALTER TABLE escalations ADD COLUMN staff_context_verdicts TEXT NOT NULL DEFAULT '[]'"
+        )
+        for ddl in module.STAFF_QUALITY_LEDGER_DDL.values():
+            db.execute(ddl)
+        db.execute(extra)
+    with pytest.raises(AssertionError):
+        verify_quality_migration(
+            before, database_snapshot(database), module.STAFF_QUALITY_LEDGER_DDL
+        )

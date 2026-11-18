@@ -607,10 +607,13 @@ def invoke(candidate, env, *arguments):
 def database_snapshot(path):
     with closing(sqlite3.connect(path)) as db, db:
         result = {}
-        for name, sql in db.execute(
-            "SELECT name,sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        for name, sql, kind in db.execute(
+            "SELECT name,sql,type FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
         ).fetchall():
             assert re.fullmatch(r"[a-z_]+", name)
+            if kind != "table":
+                result[name] = {"sql": sql, "kind": kind}
+                continue
             result[name] = {
                 "sql": sql,
                 "columns": db.execute("PRAGMA table_info(" + name + ")").fetchall(),
@@ -765,9 +768,14 @@ def run_case(source, root, scenario):
                 for name in (
                     "matrix_context_verdict_events",
                     "matrix_context_answer_events",
-                    "matrix_context_trial_spend",
                 ):
                     assert db.execute("SELECT COUNT(*) FROM " + name).fetchone() == (0,)
+                assert (
+                    db.execute(
+                        "SELECT 1 FROM sqlite_master WHERE name='matrix_context_trial_spend'"
+                    ).fetchone()
+                    is None
+                )
             report["empty_additive_review_migration_preserved"] = True
             report["budget_not_configured"] = True
         if scenario in {"monitoring_success", "staff_monitoring_success"}:
@@ -891,6 +899,7 @@ def run_case(source, root, scenario):
                 for target in node.targets
             )
         )
+        expected_ddl.pop("matrix_context_trial_spend")
         verify_quality_migration(
             database_before,
             database_snapshot(install / "api/data/escalations.db"),

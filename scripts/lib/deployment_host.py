@@ -197,6 +197,35 @@ def _schema_tokens(sql):
     )
 
 
+def _column_declaration(sql, name):
+    """Return the declaration only when no other clause constrains the column."""
+    depth, clause, declarations = 0, [], []
+    for token in _schema_tokens(sql):
+        if token == "(":
+            depth += 1
+            if depth == 1:
+                continue
+        if (token == "," and depth == 1) or (token == ")" and depth == 1):
+            declarations.append(clause)
+            clause = []
+        elif depth >= 1:
+            clause.append(token)
+        if token == ")":
+            depth -= 1
+    matches = [clause for clause in declarations if clause and clause[0] == name]
+    if len(matches) != 1:
+        return None
+    for clause in declarations:
+        if clause is matches[0]:
+            continue
+        # SQLite also permits table-level and cross-column constraints. Their
+        # presence cannot be hidden by checking only PRAGMA table_info or the
+        # inline declaration. Quoted identifiers still refer to this column.
+        if any(token.strip("'\"`[]").casefold() == name.casefold() for token in clause):
+            return None
+    return matches[0]
+
+
 class CommandRunner:
     """No output forwarding; timeouts preserve uncertainty rather than retry."""
 
@@ -1686,8 +1715,10 @@ class DeploymentHost:
             "host_channels_enabled",
         )
         if self.plan["schema"] == "deployment-plan-v7":
+            present = set(STAFF_SPEND_ENV) & values.keys()
             require(
-                all(values.get(name, "") == "" for name in STAFF_SPEND_ENV),
+                (not present or present == set(STAFF_SPEND_ENV))
+                and all(values.get(name, "") == "" for name in STAFF_SPEND_ENV),
                 "host_staff_quality_environment",
             )
         require(values.get("DATA_DIR") == "/data", "host_runtime_data_path")
@@ -1787,7 +1818,7 @@ class DeploymentHost:
         for line in text.splitlines():
             for name in STAFF_SPEND_ENV:
                 if re.match(
-                    r"^\s*(?:export\s+)?['\"]?" + name + r"['\"]?(?:\s|=|$)", line
+                    r"^\s*(?:export\s+)?['\"]?" + name + r"['\"]?(?:\s|=|:|$)", line
                 ):
                     require(
                         name not in seen
@@ -1861,11 +1892,20 @@ class DeploymentHost:
                 else:
                     tables[table] = None
             quality = self.plan["schema"] == "deployment-plan-v7"
+            schema_presence = {}
             if quality:
                 # The reviewed API creates these previously absent ledgers while
                 # sync/generation remain off. Only empty creation is immaterial;
                 # a row is actual new work and must stop this source rollout.
                 for table, expected_ddl in STAFF_QUALITY_LEDGER_DDL.items():
+                    objects = db.execute(
+                        "SELECT type FROM sqlite_master WHERE name=?", (table,)
+                    ).fetchall()
+                    require(
+                        not objects or objects == [("table",)],
+                        "host_staff_quality_ledger_schema",
+                    )
+                    schema_presence[table] = table in names
                     if table in names:
                         actual_ddl = db.execute(
                             "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
@@ -1892,6 +1932,10 @@ class DeploymentHost:
             )
             rows = cursor.fetchmany(10001)
             require(len(rows) <= 10000, "host_history_bound")
+            if quality:
+                schema_presence["staff_context_verdicts"] = (
+                    "staff_context_verdicts" in columns
+                )
             if quality and "staff_context_verdicts" in columns:
                 info = [
                     row
@@ -1906,6 +1950,16 @@ class DeploymentHost:
                         "SELECT 1 FROM escalations WHERE staff_context_verdicts IS NULL OR staff_context_verdicts != '[]' LIMIT 1"
                     ).fetchone()
                     is None,
+                    "host_staff_quality_verdict_migration",
+                )
+                table_sql = db.execute(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name='escalations'"
+                ).fetchone()[0]
+                require(
+                    _column_declaration(table_sql, "staff_context_verdicts")
+                    == _schema_tokens(
+                        "staff_context_verdicts TEXT NOT NULL DEFAULT '[]'"
+                    ),
                     "host_staff_quality_verdict_migration",
                 )
                 index = columns.index("staff_context_verdicts")
@@ -1948,7 +2002,32 @@ class DeploymentHost:
             }
             if quality:
                 tables["matrix_cases"]["columns"] = columns
-        return {"files": files, "tables": tables}
+        result = {"files": files, "tables": tables}
+        if quality:
+            result["staff_quality_presence"] = schema_presence
+        return result
+
+    def _protected_data_preserved(self, current):
+        baseline = self.baseline["protected_data"]
+        if current == baseline:
+            return True
+        if self.plan["schema"] != "deployment-plan-v7":
+            return False
+        before = baseline.get("staff_quality_presence")
+        after = current.get("staff_quality_presence")
+        if not isinstance(before, dict) or not isinstance(after, dict):
+            return False
+        if before.keys() != after.keys() or any(
+            type(before[key]) is not bool
+            or type(after[key]) is not bool
+            or (before[key] and not after[key])
+            for key in before
+        ):
+            return False
+        # Absent -> reviewed empty addition is permitted; removal never is.
+        return {k: v for k, v in current.items() if k != "staff_quality_presence"} == {
+            k: v for k, v in baseline.items() if k != "staff_quality_presence"
+        }
 
     def _scheduler_jobs(self, scheduler):
         # docker cp reads the stopped/paused container filesystem; it does not
@@ -2126,7 +2205,7 @@ class DeploymentHost:
         current = self._inspect()
         self._preserved(current)
         require(
-            self._preserved_data(current) == self.baseline["protected_data"],
+            self._protected_data_preserved(self._preserved_data(current)),
             "host_protected_data_changed",
         )
         require(
@@ -2480,7 +2559,7 @@ class DeploymentHost:
             "host_configuration_changed",
         )
         require(
-            self._preserved_data(containers) == self.baseline["protected_data"]
+            self._protected_data_preserved(self._preserved_data(containers))
             and self._scheduler_jobs(containers["scheduler"])
             == self.baseline["scheduler_jobs"],
             "host_preservation_baseline_changed",
@@ -3055,7 +3134,7 @@ class DeploymentHost:
             "host_scheduler_pause_changed",
         )
         require(
-            self._preserved_data(current) == self.baseline["protected_data"],
+            self._protected_data_preserved(self._preserved_data(current)),
             "host_protected_data_changed",
         )
         require(

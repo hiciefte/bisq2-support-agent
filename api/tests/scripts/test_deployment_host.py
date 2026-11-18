@@ -322,6 +322,7 @@ def test_replacement_accepts_independent_bind_order_without_changing_snapshots(
     "binds",
     [
         ["fixture-a:/data", "fixture-b:/data/nested"],
+        ["fixture-z:/data", "fixture-a:/data/nested"],
         ["fixture-a:/data", "fixture-b:/data"],
         ["fixture-a:/", "fixture-b:/data"],
         ["fixture-a:/data/", "fixture-b:/other"],
@@ -1729,6 +1730,7 @@ def test_coupled_switch_accepts_only_relay_bind_permutation_once(
     assert host.fixture_state["scheduler"]["State"]["Paused"] is True
     assert not list(host.root.glob("smoke_*.intent.json"))
     assert not (host.root / "availability-recovery.intent.json").exists()
+    assert host.verify_preservation()["preserved"] is True
     with pytest.raises(
         module.JournalError, match="host_phase_order|host_phase_repeated"
     ):

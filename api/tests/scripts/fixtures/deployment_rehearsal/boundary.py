@@ -306,8 +306,11 @@ def docker():
                             for target in node.targets
                         )
                     )
-                    for statement in ddl.values():
-                        db.execute(statement)
+                    for name, statement in ddl.items():
+                        # Budget settings stay empty in this source-only rollout;
+                        # the application creates spend storage only on binding.
+                        if name != "matrix_context_trial_spend":
+                            db.execute(statement)
         elif action == "exec":
             assert "app.scripts.validate_deployment_chat" in rest
             body = json.load(sys.stdin)

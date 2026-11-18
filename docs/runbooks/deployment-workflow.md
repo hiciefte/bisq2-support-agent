@@ -249,9 +249,12 @@ protected settings nor creates a trial descriptor or enables generation.
 
 The only data-preservation normalization is the API's additive
 `staff_context_verdicts TEXT NOT NULL DEFAULT '[]'` column appended to
-`escalations`, with every row still exactly `[]`. All previous columns and values
-remain hashed. Newly created verdict, proposed-answer and spend ledgers must be
-empty, so actual new work is not hidden by the migration exception. Older plan
+`escalations`, with every row still exactly `[]`. Existing column names and all
+previous Matrix escalation row values remain compared; this is not a digest of
+all non-Matrix escalation rows. Reviewed empty additions are allowed, but removal
+of a table or column present at the baseline is refused. Newly created verdict,
+proposed-answer and spend ledgers must be empty, so actual new work is not hidden
+by the migration exception. Older plan
 versions retain the original strict schema comparison.
 
 The existing build and switch still use the preserved installed configuration.
