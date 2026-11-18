@@ -225,7 +225,7 @@ def docker():
                 name: {"image": "fixture-original-" + name}
                 for name in state["containers"]
             }
-            if state["scenario"].startswith("staff_quality_"):
+            if state.get("scenario", "").startswith("staff_quality_"):
                 # Resolve only the exact new empty pass-throughs in this fixture;
                 # all real configuration parsing remains a Docker boundary model.
                 environment = {}
@@ -287,7 +287,7 @@ def docker():
                 Pid=value["State"]["Pid"] + 100, StartedAt="fixture-replacement"
             )
             state["switches"].append(service)
-            if service == "api" and state["scenario"] == "staff_quality_success":
+            if service == "api" and state.get("scenario") == "staff_quality_success":
                 # Model the reviewed API's additive, inactive startup migration.
                 with sqlite3.connect(ROOT / "install/api/data/escalations.db") as db:
                     db.execute(
