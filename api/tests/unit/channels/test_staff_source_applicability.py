@@ -30,6 +30,10 @@ pytestmark = pytest.mark.unit
         ("If I used Bisq 1, would that work?", None),
         ("Could Bisq 1 solve this?", None),
         ("Someone suggested Bisq 1.", None),
+        ("Someone told me, Bisq 1 might be involved. Which app am I using?", None),
+        ("Should I switch to Bisq 1?", None),
+        ("I am thinking about switching to Bisq 2.", None),
+        ("In Bisq 1, where can I open mediation?", "bisq1"),
         ('They wrote "I am using Bisq 1".', None),
         ("What differs between Bisq 1 and Bisq Easy?", None),
         ("Bisq 1 rather than Bisq 2?", None),
@@ -105,6 +109,19 @@ def test_comparison_page_is_not_mistaken_for_an_explicit_conflict():
     )
     assert result["eligible_for_reply"]
     assert result["explicitly_named_products"] == ["bisq1", "bisq2"]
+
+
+def test_primary_source_scope_survives_incidental_other_product_body():
+    evidence = source(
+        title="Bisq 1 wallet recovery",
+        content="Bisq 2 uses a different procedure.",
+        provenance={"protocol": "all"},
+    )
+    result = source_applicability(evidence, product="bisq2")
+    assert result["explicit_text_scope"] == "bisq1"
+    assert result["blocked_reasons"] == ["explicit_product_mismatch"]
+    comparison = evidence.model_copy(update={"title": "Bisq 1 versus Bisq 2 recovery"})
+    assert source_applicability(comparison, product="bisq2")["eligible_for_reply"]
 
 
 def test_incidental_or_excluded_product_mention_does_not_define_source_scope():

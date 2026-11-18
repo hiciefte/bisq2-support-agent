@@ -285,7 +285,7 @@ class ContextTrialStore:
                 kind != "gate"
                 and db.execute(
                     "SELECT 1 FROM matrix_context_trial_spend WHERE trial_id=? "
-                    "AND escalation_id=? AND kind=?",
+                    "AND escalation_id=? AND kind=? AND status!='not_started'",
                     key[:3],
                 ).fetchone()
             ):
@@ -462,15 +462,22 @@ class BudgetedContextLLM:
         kind: str = "note",
         call_id: str = "initial",
         before_call: Any = None,
+        before_provider: Any = None,
+        on_not_started: Any = None,
     ):
         self.store, self.llm, self.case_id = store, llm, case_id
         self.kind, self.call_id = kind, call_id
         self.before_call = before_call
+        self.before_provider = before_provider
+        self.on_not_started = on_not_started
         self.started = False
         self.reason: str | None = None
 
     def invoke(self, prompt: str, system_content: str | None = None):
-        from app.services.rag.openai_responses import OpenAIResponsesLLMWrapper
+        from app.services.rag.openai_responses import (
+            OpenAIResponsesLLMWrapper,
+            ResponsesGenerationError,
+        )
 
         trial = self.store.trial
         # Only the known single-call, no-tool, no-retry Responses adapter has a
@@ -508,22 +515,49 @@ class BudgetedContextLLM:
         )
         if self.reason:
             raise RuntimeError(self.reason)
-        self.reason = (
-            trial.reason()
-            or (
+        try:
+            self.reason = trial.reason() or (
                 "context_trial_day_changed"
                 if utc_now().date() != admission_day
                 else None
             )
-            or (self.before_call() if self.before_call else None)
-        )
-        if self.reason:
+            if not self.reason and self.before_call:
+                self.reason = self.before_call()
+            # The durable intent hook can block on disk I/O across the cutoff
+            # or UTC day. Recheck immediately at the provider boundary.
+            self.reason = (
+                self.reason
+                or trial.reason()
+                or (
+                    "context_trial_day_changed"
+                    if utc_now().date() != admission_day
+                    else None
+                )
+            )
+            if not self.reason and self.before_provider:
+                self.reason = self.before_provider()
+            if self.reason:
+                raise RuntimeError(self.reason)
+        except Exception:
             self.store.cancel_unstarted_call(
                 self.case_id, kind=self.kind, call_id=self.call_id
             )
-            raise RuntimeError(self.reason)
+            if self.on_not_started:
+                # Keep the original pre-call error even if the audit disk also
+                # fails. The zero-cost ledger row remains the canonical outcome.
+                try:
+                    self.on_not_started(self.reason or "pre_call_hook_failed")
+                except Exception:
+                    pass
+            raise
         self.started = True
-        response = self.llm.invoke(prompt, system_content=system_content)
+        try:
+            response = self.llm.invoke(prompt, system_content=system_content)
+        except ResponsesGenerationError as exc:
+            self.store.settle_call(
+                self.case_id, kind=self.kind, call_id=self.call_id, usage=exc.usage
+            )
+            raise
         self.store.settle_call(
             self.case_id,
             kind=self.kind,

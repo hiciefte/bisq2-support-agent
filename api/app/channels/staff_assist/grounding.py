@@ -35,15 +35,23 @@ class GroundingBriefService:
         draft_answer: str | None = None,
         user_version: str | None = None,
         product: str | None = None,
+        infer_product: bool = True,
     ) -> dict[str, Any] | None:
         query = str(question or "").strip()
         if not query:
             return None
 
-        product = product or explicit_product(query)
-        protocol = {"bisq1": "multisig_v1", "bisq2": "all"}.get(
-            product
-        ) or self._infer_protocol(knowledge_sources)
+        # The Staff resolver has already interpreted attribution and negation.
+        # With unknown product, do not let a lower-level code/release retriever
+        # infer it again from the same words or from a retrieved document.
+        if not infer_product and product is None:
+            return None
+
+        if infer_product:
+            product = product or explicit_product(query)
+        protocol = {"bisq1": "multisig_v1", "bisq2": "all"}.get(product)
+        if protocol is None and infer_product:
+            protocol = self._infer_protocol(knowledge_sources)
         repo = code_repo_for_context(product, protocol)
         user_version = user_version or explicit_user_version(query)
         version_kwargs = {"user_version": user_version} if user_version else {}
@@ -107,7 +115,9 @@ class GroundingBriefService:
         return {
             "summary": "Staff-only grounding for this support request.",
             "likely_protocol": (protocol if protocol != "all" else None)
-            or self._infer_protocol_from_evidence(evidence),
+            or (
+                self._infer_protocol_from_evidence(evidence) if infer_product else None
+            ),
             "evidence": evidence,
             "release_notes": release_notes,
             "safe_customer_guidance": safe_customer_guidance,

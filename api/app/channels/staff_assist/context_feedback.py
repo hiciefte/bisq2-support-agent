@@ -62,6 +62,38 @@ def event_timestamp_ms(event: Any) -> int | None:
     return value
 
 
+def _published_draft(
+    metadata: dict[str, Any], reply_to_event_id: str, timestamp_ms: int
+) -> str | None:
+    """Use an acknowledged version, never an unpublished or newer draft."""
+    saved_history = metadata.get("staff_note_history")
+    if not isinstance(saved_history, list):
+        return None
+    history = [
+        item
+        for item in saved_history
+        if isinstance(item, dict)
+        and isinstance(item.get("event_id"), str)
+        and item["event_id"]
+        and isinstance(item.get("reply"), str)
+    ]
+    explicit = [item for item in history if item["event_id"] == reply_to_event_id]
+    if explicit:
+        replies = {item["reply"] for item in explicit}
+        return replies.pop() if len(replies) == 1 else None
+    prior = [
+        item
+        for item in history
+        if type(item.get("acknowledged_at_ms")) is int
+        and 0 <= item["acknowledged_at_ms"] <= timestamp_ms
+    ]
+    if not prior:
+        return None
+    latest = max(item["acknowledged_at_ms"] for item in prior)
+    replies = {item["reply"] for item in prior if item["acknowledged_at_ms"] == latest}
+    return replies.pop() if len(replies) == 1 else None
+
+
 class ContextFeedbackStore:
     """Persist native-event feedback atomically, independent of generation state.
 
@@ -84,7 +116,7 @@ class ContextFeedbackStore:
         # Exact persisted native event IDs; no text matching or room-history read.
         field = "staff_root_event_id" if thread else "staff_note_event_id"
         cursor = await db.execute(
-            "SELECT id, ai_draft_answer, channel_metadata FROM escalations "
+            "SELECT id, channel_metadata FROM escalations "
             "WHERE channel='matrix' AND json_valid(channel_metadata) "
             "AND json_extract(channel_metadata, '$.delivery_audience')='staff_room' "
             "AND json_extract(channel_metadata, '$.response_kind')='public_context' "
@@ -241,35 +273,27 @@ class ContextFeedbackStore:
             return
         metadata = json.loads(case["channel_metadata"] or "{}")
         if answer:
-            metadata["staff_context_answer_event"] = {
+            metadata["staff_context_proposed_answer"] = {
                 "event_id": answer["event_id"],
                 "original_event_id": answer["original_event_id"],
                 "timestamp_ms": answer["timestamp_ms"],
                 "reviewer": answer["reviewer"],
+                "answer": answer["answer"],
+                "edit_distance": (
+                    compute_edit_distance(answer["draft"], answer["answer"])
+                    if isinstance(answer["draft"], str)
+                    else None
+                ),
+                "draft_version_known": isinstance(answer["draft"], str),
             }
         else:
-            metadata.pop("staff_context_answer_event", None)
+            metadata.pop("staff_context_proposed_answer", None)
+        metadata.pop("staff_context_answer_event", None)
+        # Matrix proposals are not Admin claims, completed responses or proof of
+        # reuse. Updating a proposal must not transfer/revoke a claim or response.
         await db.execute(
-            "UPDATE escalations SET staff_answer=?, staff_id=?, responded_at=?, edit_distance=?, "
-            "delivery_status='not_required', channel_metadata=? WHERE id=?",
-            (
-                answer["answer"] if answer else None,
-                answer["reviewer"] if answer else None,
-                (
-                    datetime.fromtimestamp(
-                        answer["timestamp_ms"] / 1000, timezone.utc
-                    ).isoformat()
-                    if answer
-                    else None
-                ),
-                (
-                    compute_edit_distance(answer["draft"], answer["answer"])
-                    if answer
-                    else None
-                ),
-                json.dumps(metadata),
-                case_id,
-            ),
+            "UPDATE escalations SET channel_metadata=? WHERE id=?",
+            (json.dumps(metadata), case_id),
         )
 
     async def record_answer(
@@ -314,19 +338,7 @@ class ContextFeedbackStore:
                 if case is None:
                     return False
                 metadata = json.loads(case["channel_metadata"])
-                draft = metadata.get("staff_reply") or (
-                    metadata.get("model_decision") or {}
-                ).get("reply")
-                if not isinstance(draft, str):
-                    draft = (metadata.get("model_decision") or {}).get("text")
-                if not isinstance(draft, str):
-                    draft = case["ai_draft_answer"]
-                for historical in metadata.get("staff_note_history", []):
-                    if historical.get("event_id") == reply_to_event_id and isinstance(
-                        historical.get("reply"), str
-                    ):
-                        draft = historical["reply"]
-                        break
+                draft = _published_draft(metadata, reply_to_event_id, timestamp_ms)
                 case_id, original_event_id = case["id"], event_id
             await db.execute(
                 "INSERT OR IGNORE INTO matrix_context_answer_events "

@@ -24,9 +24,17 @@ def summarize(database: Path) -> list[dict[str, Any]]:
     uri = database.resolve().as_uri() + "?mode=ro"
     with closing(sqlite3.connect(uri, uri=True)) as db:
         db.row_factory = sqlite3.Row
+        columns = {row[1] for row in db.execute("PRAGMA table_info(escalations)")}
+        verdict_column = (
+            "staff_context_verdicts"
+            if "staff_context_verdicts" in columns
+            else "'[]' AS staff_context_verdicts"
+        )
         rows = db.execute(
-            "SELECT * FROM escalations WHERE channel='matrix' ORDER BY id"
-        ).fetchall()
+            "SELECT channel_metadata,routing_reason,"
+            + verdict_column
+            + " FROM escalations WHERE channel='matrix' ORDER BY id"
+        )
         trials: dict[str, dict[str, Any]] = {}
         table = db.execute(
             "SELECT 1 FROM sqlite_master WHERE name='matrix_context_trials' AND type='table'"
@@ -59,7 +67,6 @@ def summarize(database: Path) -> list[dict[str, Any]]:
                 and diagnostic.get("response_received") is True
                 and diagnostic.get("response_event_id")
                 == metadata.get("staff_note_event_id")
-                and metadata.get("context_status") != "delivery_uncertain"
             )
             if (
                 metadata.get("context_status") == "delivered" or acknowledged
@@ -81,7 +88,8 @@ def summarize(database: Path) -> list[dict[str, Any]]:
                     verdict = record.get("verdict")
                     if verdict in VERDICTS:
                         trial["verdict_counts"][verdict] += 1
-            if row["staff_answer"]:
+            proposal = metadata.get("staff_context_proposed_answer")
+            if isinstance(proposal, dict) and proposal.get("answer"):
                 trial["cases_with_proposed_staff_answer"] += 1
         spend_table = db.execute(
             "SELECT 1 FROM sqlite_master WHERE name='matrix_context_trial_spend' AND type='table'"

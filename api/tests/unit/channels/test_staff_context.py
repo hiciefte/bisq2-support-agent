@@ -14,6 +14,7 @@ from app.channels.staff_assist.public_context import (
 from app.channels.staff_assist.staff_context import (
     StaffContextRequest,
     StaffContextService,
+    StaffExamplesSnapshot,
     load_staff_examples,
 )
 from app.channels.staff_assist.staff_prompt import STAFF_CONTEXT_PROMPT
@@ -93,6 +94,7 @@ def test_steps_menu_paths_symbols_and_over_55_words_are_not_discarded(reply):
         "Which application are you using?",
         "Did you restore from a backup?",
         "What error appeared after restarting?",
+        "Could you provide the exact error text?",
         "Welche Version wird angezeigt?",
         "你使用哪个版本？",
     ],
@@ -133,6 +135,9 @@ def test_one_question_contract_cannot_be_bypassed_by_a_source(
         "What is your recovery phrase?",
         "The mediator has released your funds.",
         "We have already processed your refund.",
+        "We refunded your deposit.",
+        "I contacted the mediator.",
+        "Staff released the payment.",
         "This is guaranteed to fix the connection.",
     ],
 )
@@ -142,6 +147,50 @@ def test_protected_invariants_reject_and_retain_exact_text(reply):
     assert preview.rendered_note is None
     assert preview.validation_diagnostic == "unsafe_reply"
     assert preview.rejected_draft == llm.invoke.return_value.content
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Could you reset your wallet?",
+        "Would you please send bitcoin?",
+        "Have you tried restoring the wallet?",
+        "Could resetting your wallet help?",
+    ],
+)
+def test_source_free_procedural_questions_are_rejected_and_retained(question):
+    llm = model(action="question", reply=question, source_ids=[])
+    preview = StaffContextService(llm).preview(request(evidence=[]))
+    assert preview.rendered_note is None
+    assert preview.validation_diagnostic == "invalid_question"
+    assert preview.rejected_draft == llm.invoke.return_value.content
+
+
+def test_completed_staff_action_in_internal_note_is_also_rejected():
+    llm = model(staff_note="We refunded the deposit.")
+    preview = StaffContextService(llm).preview(request())
+    assert preview.rendered_note is None
+    assert preview.validation_diagnostic == "unsafe_reply"
+    assert preview.rejected_draft == llm.invoke.return_value.content
+
+
+def test_unencodable_optional_examples_fall_back_before_hashing(tmp_path):
+    (tmp_path / "staff-context-examples.json").write_text('[{"reply":"\\ud800"}]')
+    service = StaffContextService(model(), data_dir=tmp_path)
+    assert service.examples_source == "synthetic_fallback_invalid_file"
+    assert service.preview(request()).rendered_note
+
+
+def test_verified_example_snapshot_never_reopens_mutable_file(tmp_path):
+    snapshot = StaffExamplesSnapshot(("Which version is shown?",), "private_file")
+    (tmp_path / "staff-context-examples.json").write_text("not valid json")
+    llm = model()
+    service = StaffContextService(llm, data_dir=tmp_path, verified_examples=snapshot)
+    assert service.preview(request()).rendered_note
+    assert json.loads(llm.invoke.call_args.args[0])["style_examples"] == [
+        {"reply": "Which version is shown?"}
+    ]
+    assert service.examples_source == "private_file"
 
 
 def test_protective_secret_warning_is_allowed_and_scam_warning_is_preserved():

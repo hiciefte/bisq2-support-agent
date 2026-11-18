@@ -245,13 +245,23 @@ class MatrixMessageHandler:
                 else None
             )
             capture = getattr(handler, "handle_context_thread_answer", None)
-            if callable(capture) and await capture(
-                room_id=room_id,
-                event=effective_event,
-                sender=sender_id,
-                answer=context_text(effective_event),
-            ):
-                return
+            if callable(capture):
+                try:
+                    if await capture(
+                        room_id=room_id,
+                        event=effective_event,
+                        sender=sender_id,
+                        answer=context_text(effective_event),
+                    ):
+                        return
+                except Exception:
+                    logger.exception(
+                        "Staff thread feedback capture failed event=%s",
+                        incoming.message_id,
+                    )
+                    # Never reinterpret a failed internal feedback write as a
+                    # source message, command, or public response request.
+                    return
             if not is_responder_room_allowed(settings, room_id):
                 return
         await self._record_trust_event(
@@ -269,7 +279,13 @@ class MatrixMessageHandler:
                 engine = channel.runtime.resolve_optional("matrix_context_runtime")
                 observe = getattr(engine, "observe_source_event", None)
                 if callable(observe):
-                    await observe(room_id, effective_event, channel, is_staff=True)
+                    try:
+                        await observe(room_id, effective_event, channel, is_staff=True)
+                    except Exception:
+                        logger.exception(
+                            "Staff context observation failed event=%s",
+                            incoming.message_id,
+                        )
             await self._record_staff_activity(room_id=room_id, staff_id=sender_id)
             await self._maybe_handle_staff_command(
                 room_id=room_id,

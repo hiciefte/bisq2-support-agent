@@ -199,8 +199,9 @@ at-most-seven-day windows. Their pre-retrieval reservations, including silence
 and uncertainty, remain unchanged. `MATRIX_CONTEXT_TRIAL_MAX_CASES` is not a quota
 for new spend-bound trials, and creating a new count-only descriptor is refused.
 
-Source events before the start timestamp remain deferred for Admin review, with
-no paid retrieval or generation. Keep generation off during initial sync catch-up,
+Spend-bound v3 source events before the start timestamp are excluded from intake:
+they create no Admin case and trigger no paid retrieval or generation. Historical
+count-bound trials retain their deferred-case behavior. Keep generation off during initial sync catch-up,
 verify the restored account/device and encrypted room state, and record the saved
 cursor before enabling the trial policy. The trial does not reset that cursor.
 Trial authentication restores only the established session; it cannot fall back
@@ -211,8 +212,11 @@ staff sends. A local expiry task turns Matrix generation off and cancels pending
 context workers. Already-started network/model
 operations may finish after cancellation and remain uncertain until reconciled;
 they are never automatically retried. A process that is down at expiration still
-rejects expired work after restart. Reaching a budget ceiling denies further model admission;
-an operator can then reconcile the admitted cases and turn the policy off.
+rejects expired work after restart. Reaching a daily budget ceiling denies further
+model admission for that UTC day; it does not turn the policy off, and admission
+can resume the next UTC day within the unchanged total budget and cutoff. A total
+budget ceiling denies further model admission; the watchdog can then reconcile
+the admitted calls and stop the trial under its separately bound authority.
 
 Cases retain whether generation was called, the exact model decision, and reported
 token counters. `model_called=null` with a reserved call means interruption left

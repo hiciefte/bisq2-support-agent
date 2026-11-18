@@ -979,6 +979,18 @@ def test_public_question_only_note_remains_suppressed():
         llm_output(text="Which release?", source_ids=["public-doc"])
     ).preview(request())
     assert preview.decision.reason == "clarification_suppressed"
+    assert preview.rendered_note is None
+
+
+def test_staff_only_preview_preserves_recent_reply_hold():
+    llm = staff_llm_output()
+    preview = PublicContextService(llm).preview(
+        request(audience="staff_only", recent_bot_reply=True)
+    )
+    assert preview.decision.reason == "recent_bot_reply"
+    assert preview.rendered_note is None
+    assert not preview.model_called
+    llm.invoke.assert_not_called()
 
 
 def staff_llm_output(**overrides):

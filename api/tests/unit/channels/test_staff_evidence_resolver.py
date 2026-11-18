@@ -151,6 +151,7 @@ async def test_helper_product_and_version_are_not_requester_scope():
     assert args["question"] == "Mine is stuck."
     assert args["product"] is None
     assert args["user_version"] is None
+    assert args["infer_product"] is False
     assert (
         result.evidence[0].provenance["staff_applicability"][
             "requester_explicit_product"

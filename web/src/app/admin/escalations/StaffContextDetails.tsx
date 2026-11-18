@@ -53,6 +53,16 @@ export function StaffContextDetails({ context }: { context: StaffContextMetadata
                     <p className="whitespace-pre-wrap break-words">{context.staff_note}</p>
                 </section>
             )}
+            {context.staff_proposed_answer && (
+                <section aria-label="Staff-proposed answer" className="space-y-1 text-sm">
+                    <h4 className="font-medium">Staff-proposed answer</h4>
+                    <p className="whitespace-pre-wrap break-words">{context.staff_proposed_answer.answer}</p>
+                    <p className="text-muted-foreground">Proposed by {context.staff_proposed_answer.reviewer} in the Staff thread. This does not change the case assignment or record a sent response.</p>
+                    {context.staff_proposed_answer.edit_distance === null && (
+                        <p className="text-muted-foreground">The draft version being compared is unknown.</p>
+                    )}
+                </section>
+            )}
             {context.knowledge_gap && (
                 <section aria-label="Knowledge gap" className="space-y-1 text-sm">
                     <h4 className="font-medium">Knowledge gap</h4>

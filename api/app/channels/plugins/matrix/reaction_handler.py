@@ -32,13 +32,16 @@ from app.models.escalation import EscalationDeliveryStatus
 
 NioReactionEventType: Any = object
 NioRedactionEventType: Any = object
+NioBadEventType: Any = None
 
 try:
+    from nio import BadEvent as _NioBadEvent
     from nio import ReactionEvent as _NioReactionEvent
     from nio import RedactionEvent as _NioRedactionEvent
 except ImportError:  # pragma: no cover - exercised in environments without nio
     pass
 else:
+    NioBadEventType = _NioBadEvent
     NioReactionEventType = _NioReactionEvent
     NioRedactionEventType = _NioRedactionEvent
 
@@ -85,6 +88,8 @@ class MatrixReactionHandler(ReactionHandlerBase):
         client = self.runtime.resolve("matrix_client")
         client.add_event_callback(self._on_reaction_event, NioReactionEvent)
         client.add_event_callback(self._on_redaction_event, NioRedactionEvent)
+        if NioBadEventType is not None:
+            client.add_event_callback(self._on_content_redaction_event, NioBadEventType)
         self._callback_registered = True
         self._logger.info("Matrix reaction listener started")
 
@@ -98,6 +103,8 @@ class MatrixReactionHandler(ReactionHandlerBase):
         ):
             client.remove_event_callback(self._on_reaction_event)
             client.remove_event_callback(self._on_redaction_event)
+            if NioBadEventType is not None:
+                client.remove_event_callback(self._on_content_redaction_event)
             self._callback_registered = False
             self._reaction_to_message.clear()
             self._reaction_to_sender.clear()
@@ -200,6 +207,8 @@ class MatrixReactionHandler(ReactionHandlerBase):
             return False
         source = getattr(event, "source", {})
         content = source.get("content", {}) if isinstance(source, dict) else {}
+        if not isinstance(content, dict):
+            return False
         relation = content.get("m.relates_to", {})
         if not isinstance(relation, dict) or relation.get("rel_type") != "m.annotation":
             return False
@@ -240,6 +249,8 @@ class MatrixReactionHandler(ReactionHandlerBase):
             return False
         source = getattr(event, "source", {})
         content = source.get("content", {}) if isinstance(source, dict) else {}
+        if not isinstance(content, dict):
+            return False
         relation = content.get("m.relates_to", {})
         if not isinstance(relation, dict) or relation.get("rel_type") not in {
             "m.thread",
@@ -254,9 +265,12 @@ class MatrixReactionHandler(ReactionHandlerBase):
         root = relation.get("event_id", "") if not replaces else ""
         timestamp = event_timestamp_ms(event)
         event_id = getattr(event, "event_id", None)
+        target = relation.get("event_id")
         if (
-            not isinstance(root, str)
+            not isinstance(target, str)
+            or not target
             or not isinstance(event_id, str)
+            or not event_id
             or timestamp is None
         ):
             return False
@@ -686,6 +700,19 @@ class MatrixReactionHandler(ReactionHandlerBase):
             )
             return True
 
+    async def _on_content_redaction_event(self, room: Any, event: Any) -> None:
+        """nio 0.25 parses room-v11 content-only redactions as BadEvent."""
+        source = getattr(event, "source", None)
+        if not isinstance(source, dict) or source.get("type") != "m.room.redaction":
+            return
+        content = source.get("content")
+        target = content.get("redacts") if isinstance(content, dict) else None
+        if not isinstance(target, str) or not target or source.get("redacts"):
+            return
+        normalized = NioRedactionEvent.from_dict({**source, "redacts": target})
+        if isinstance(normalized, NioRedactionEvent):
+            await self._on_redaction_event(room, normalized)
+
     async def _on_redaction_event(self, room: Any, event: Any) -> None:
         """Handle a redaction event (reaction removal).
 
@@ -706,18 +733,26 @@ class MatrixReactionHandler(ReactionHandlerBase):
         engine = self.runtime.resolve_optional("matrix_context_runtime")
         observe = getattr(engine, "observe_source_event", None)
         if callable(observe):
-            await observe(
-                room_id,
-                event,
-                None,
-                is_staff=self._is_staff_sender(str(getattr(event, "sender", "") or "")),
-            )
+            try:
+                await observe(
+                    room_id,
+                    event,
+                    None,
+                    is_staff=self._is_staff_sender(
+                        str(getattr(event, "sender", "") or "")
+                    ),
+                )
+            except Exception:
+                self._logger.exception("Context redaction observation failed")
         if is_context_feedback_room(getattr(self.runtime, "settings", None), room_id):
             store = self._context_feedback_store()
             if store is not None and self._is_staff_sender(
                 str(getattr(event, "sender", "") or "")
             ):
-                await store.redact_verdict(room_id, redacts)
+                try:
+                    await store.redact_verdict(room_id, redacts)
+                except Exception:
+                    self._logger.exception("Staff verdict redaction failed")
         if not is_responder_room_allowed(
             getattr(self.runtime, "settings", None), room_id
         ):

@@ -72,25 +72,66 @@ def test_nonmonetary_diagnostics_do_not_gain_a_money_label(reply):
     assert "money at risk" not in preview.rendered_note
 
 
-def test_unrelated_participant_money_text_does_not_label_focal_request():
+@pytest.mark.parametrize(
+    "role,speaker,expected",
+    [
+        ("participant", "participant-1", False),
+        ("user", "requester", True),
+    ],
+)
+def test_unrelated_participant_money_text_does_not_label_focal_request(
+    role, speaker, expected
+):
     preview = StaffContextService(model()).preview(
         request(
             recent_messages=[
                 {
-                    "role": "participant",
-                    "speaker": "participant-1",
+                    "role": role,
+                    "speaker": speaker,
                     "content": "My deposit and refund are missing.",
                 }
             ]
         )
     )
-    assert preview.money_at_risk is False
+    assert preview.money_at_risk is expected
 
 
 def test_trusted_input_flag_still_forces_label_without_changing_reply():
     preview = StaffContextService(model()).preview(request(high_risk_action=True))
+    unflagged = StaffContextService(model()).preview(request(high_risk_action=False))
     assert preview.money_at_risk is True
     assert preview.decision.action == "reply"
+    assert preview.decision.reply == unflagged.decision.reply
+    assert unflagged.money_at_risk is False
+    assert "money at risk" not in unflagged.rendered_note
+
+
+@pytest.mark.parametrize(
+    "reply,staff_note",
+    [
+        (
+            "Send a screenshot of the About page to the support thread.",
+            "The displayed BTC price refreshes periodically.",
+        ),
+        (
+            "Send a screenshot, while the BTC price refreshes periodically.",
+            "The connection details are unknown.",
+        ),
+    ],
+)
+def test_unrelated_clauses_and_fields_do_not_combine_into_money_risk(reply, staff_note):
+    preview = StaffContextService(model(reply=reply, staff_note=staff_note)).preview(
+        request()
+    )
+    assert preview.rendered_note is not None
+    assert preview.money_at_risk is False
+
+
+def test_decimal_amount_does_not_split_a_monetary_instruction():
+    preview = StaffContextService(
+        model(reply="Send 0.01 BTC only after verifying the documented prerequisites.")
+    ).preview(request())
+    assert preview.money_at_risk is True
 
 
 def test_rejected_monetary_output_keeps_existing_safeguard_and_admin_label():

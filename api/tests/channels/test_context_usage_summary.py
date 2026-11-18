@@ -73,3 +73,59 @@ async def test_no_spend_receipts_does_not_invent_zero_measured_cost(tmp_path):
     result = summarize(path)[0]
     assert result["model_usage_by_kind"] is None
     assert result["share_of_posted_notes_with_verdict"] is None
+
+
+def test_legacy_summary_reads_only_report_columns_and_separates_proposals(
+    tmp_path, monkeypatch
+):
+    import json
+    import sqlite3
+
+    path = tmp_path / "legacy-columns.db"
+    metadata = {
+        "delivery_audience": "staff_room",
+        "response_kind": "public_context",
+        "context_trial_id": "legacy",
+    }
+    with closing(sqlite3.connect(path)) as db, db:
+        db.execute(
+            "CREATE TABLE escalations (id INTEGER, channel TEXT, channel_metadata TEXT, routing_reason TEXT, question TEXT, staff_answer TEXT)"
+        )
+        db.execute(
+            "INSERT INTO escalations VALUES (1, 'matrix', ?, '', 'private question', NULL)",
+            (
+                json.dumps(
+                    {
+                        **metadata,
+                        "staff_context_proposed_answer": {"answer": "Proposed only"},
+                    }
+                ),
+            ),
+        )
+        db.execute(
+            "INSERT INTO escalations VALUES (2, 'matrix', ?, '', 'private question', 'Existing Admin response')",
+            (json.dumps(metadata),),
+        )
+    connect = sqlite3.connect
+
+    def report_connection(*args, **kwargs):
+        db = connect(*args, **kwargs)
+
+        def authorizer(action, table, column, *_):
+            if (
+                action == sqlite3.SQLITE_READ
+                and table == "escalations"
+                and column in {"question", "staff_answer"}
+            ):
+                return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK
+
+        db.set_authorizer(authorizer)
+        return db
+
+    monkeypatch.setattr(sqlite3, "connect", report_connection)
+    result = summarize(path)[0]
+    assert result["cases"] == 2
+    assert result["cases_with_proposed_staff_answer"] == 1
+    assert result["cases_with_verdict"] == 0
+    assert result["notes_posted"] == 0

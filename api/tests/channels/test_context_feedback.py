@@ -15,6 +15,10 @@ from app.services.escalation.escalation_repository import EscalationRepository
 pytestmark = pytest.mark.unit
 
 
+def proposal(case):
+    return case.channel_metadata.get("staff_context_proposed_answer")
+
+
 @pytest.fixture
 async def feedback(tmp_path):
     repository = EscalationRepository(str(tmp_path / "cases.db"))
@@ -43,7 +47,14 @@ async def feedback(tmp_path):
                         "event_id": "$oldnote",
                         "reply": "Check your network.",
                         "version": 0,
-                    }
+                        "acknowledged_at_ms": 100,
+                    },
+                    {
+                        "event_id": "$note",
+                        "reply": "Check Settings > Network.",
+                        "version": 1,
+                        "acknowledged_at_ms": 200,
+                    },
                 ],
             },
         )
@@ -118,6 +129,7 @@ async def test_only_trusted_latest_per_person_with_restart_and_redaction(feedbac
     )
     await handler._on_reaction_event(room, reaction("$newer", "✏️", 3000))
     case = await feedback.repository.get_by_id(feedback.case.id)
+    assert len(case.staff_context_verdicts) == 2
     assert {v.reviewer: v.verdict for v in case.staff_context_verdicts} == {
         "@staff:example.org": "would_send_after_edit",
         "@second:example.org": "not_needed",
@@ -194,11 +206,13 @@ async def test_native_staff_thread_answer_stored_without_send_or_learning(feedba
         sender="@staff:example.org", **args
     )
     case = await feedback.repository.get_by_id(feedback.case.id)
-    assert case.staff_answer == "Check Settings > Network."
-    assert case.edit_distance == 0
-    assert case.staff_id == "@staff:example.org"
-    assert case.responded_at.timestamp() == 5
-    assert case.delivery_status.value == "not_required"
+    assert proposal(case)["answer"] == "Check Settings > Network."
+    assert proposal(case)["edit_distance"] == 0
+    assert proposal(case)["reviewer"] == "@staff:example.org"
+    assert proposal(case)["timestamp_ms"] == 5000
+    assert case.staff_id is None and case.responded_at is None
+    assert case.staff_answer is None and case.edit_distance is None
+    assert case.delivery_status == feedback.case.delivery_status
     assert case.status.value == "pending"
     assert not await feedback.handler.handle_context_thread_answer(
         sender="@staff:example.org", **{**args, "answer": "/send"}
@@ -285,8 +299,8 @@ async def test_callback_captures_staff_answer_with_generation_and_responder_off(
     )
     await listener._on_message(SimpleNamespace(room_id="!staff:example.org"), event)
     case = await feedback.repository.get_by_id(feedback.case.id)
-    assert case.staff_answer == "Check Settings > Network."
-    assert case.edit_distance == 0
+    assert proposal(case)["answer"] == "Check Settings > Network."
+    assert proposal(case)["edit_distance"] == 0
     channel.handle_incoming.assert_not_awaited()
     feedback.client.room_send.assert_not_awaited()
 
@@ -322,7 +336,10 @@ async def test_answer_edit_distance_uses_explicit_older_note_version(feedback):
         timestamp_ms=2000,
         reply_to_event_id="$oldnote",
     )
-    assert (await feedback.repository.get_by_id(feedback.case.id)).edit_distance == 0
+    assert (
+        proposal(await feedback.repository.get_by_id(feedback.case.id))["edit_distance"]
+        == 0
+    )
     assert await feedback.store.record_answer(
         room_id="!staff:example.org",
         root_event_id="$root",
@@ -332,8 +349,9 @@ async def test_answer_edit_distance_uses_explicit_older_note_version(feedback):
         timestamp_ms=1000,
     )
     assert (
-        await feedback.repository.get_by_id(feedback.case.id)
-    ).staff_answer == "Check your network."
+        proposal(await feedback.repository.get_by_id(feedback.case.id))["answer"]
+        == "Check your network."
+    )
 
 
 @pytest.mark.asyncio
@@ -369,23 +387,27 @@ async def test_staff_answer_edit_and_redaction_reproject_without_network(feedbac
         answer="Check Settings > Network.",
     )
     case = await feedback.repository.get_by_id(feedback.case.id)
-    assert case.staff_answer == "Check Settings > Network." and case.edit_distance == 0
+    assert (
+        proposal(case)["answer"] == "Check Settings > Network."
+        and proposal(case)["edit_distance"] == 0
+    )
     room = SimpleNamespace(room_id=args["room_id"])
     await feedback.handler._on_redaction_event(
         room, SimpleNamespace(redacts="$edit", sender=args["reviewer"])
     )
     case = await feedback.repository.get_by_id(feedback.case.id)
-    assert case.staff_answer == "Original answer"
-    assert case.edit_distance > 0
+    assert proposal(case)["answer"] == "Original answer"
+    assert proposal(case)["edit_distance"] > 0
     await feedback.handler._on_redaction_event(
         room, SimpleNamespace(redacts="$answer", sender=args["reviewer"])
     )
     case = await feedback.repository.get_by_id(feedback.case.id)
+    assert proposal(case) is None
     assert case.staff_answer is None and case.edit_distance is None
     assert await feedback.store.record_answer(
         **args, event_id="$answer", answer="Original answer", timestamp_ms=1000
     )
-    assert (await feedback.repository.get_by_id(feedback.case.id)).staff_answer is None
+    assert proposal(await feedback.repository.get_by_id(feedback.case.id)) is None
     feedback.client.room_send.assert_not_awaited()
     assert feedback.service.learning_engine.mock_calls == []
 
@@ -422,4 +444,98 @@ async def test_summary_keeps_acknowledged_note_after_later_deferral(feedback):
         )
         await db.commit()
     report = summarize(Path(feedback.repository.db_path))[0]
-    assert report["notes_posted"] == 0 and report["notes_delivery_uncertain"] == 1
+    assert report["notes_posted"] == 1 and report["notes_delivery_uncertain"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["in_review", "responded"])
+async def test_matrix_proposal_preserves_admin_claim_and_completed_response(
+    feedback, status
+):
+    import aiosqlite
+
+    async with aiosqlite.connect(feedback.repository.db_path) as db:
+        await db.execute(
+            "UPDATE escalations SET status=?, staff_id='alice', claimed_at='2026-01-01T00:00:00+00:00', staff_answer='Admin response', responded_at='2026-01-01T01:00:00+00:00', edit_distance=0.3, delivery_status='delivered' WHERE id=?",
+            (status, feedback.case.id),
+        )
+        await db.commit()
+        before = await (
+            await db.execute(
+                "SELECT status,staff_id,claimed_at,staff_answer,responded_at,edit_distance,delivery_status FROM escalations WHERE id=?",
+                (feedback.case.id,),
+            )
+        ).fetchone()
+    assert await feedback.store.record_answer(
+        room_id="!staff:example.org",
+        root_event_id="$root",
+        event_id="$bob",
+        reviewer="bob",
+        answer="Proposed text",
+        timestamp_ms=5000,
+    )
+    case = await feedback.repository.get_by_id(feedback.case.id)
+    assert proposal(case)["reviewer"] == "bob"
+    await feedback.store.redact_verdict("!staff:example.org", "$bob")
+    async with aiosqlite.connect(feedback.repository.db_path) as db:
+        after = await (
+            await db.execute(
+                "SELECT status,staff_id,claimed_at,staff_answer,responded_at,edit_distance,delivery_status FROM escalations WHERE id=?",
+                (feedback.case.id,),
+            )
+        ).fetchone()
+    assert after == before
+    assert proposal(await feedback.repository.get_by_id(feedback.case.id)) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "history,expected",
+    [
+        (
+            [
+                {"event_id": "$a", "reply": "Published A", "acknowledged_at_ms": 100},
+                {"event_id": "$b", "reply": "Published B", "acknowledged_at_ms": 3000},
+            ],
+            0,
+        ),
+        ([{"event_id": "$a", "reply": "Published A"}], None),
+        (
+            [
+                {"event_id": "$a", "reply": "Published A", "acknowledged_at_ms": 100},
+                {"event_id": "$b", "reply": "Published B", "acknowledged_at_ms": 100},
+            ],
+            None,
+        ),
+    ],
+)
+async def test_general_thread_answer_compares_only_identified_published_version(
+    feedback, history, expected
+):
+    import json
+
+    import aiosqlite
+
+    metadata = dict(
+        feedback.case.channel_metadata,
+        staff_note_history=history,
+        staff_reply="Unpublished or later B",
+    )
+    async with aiosqlite.connect(feedback.repository.db_path) as db:
+        await db.execute(
+            "UPDATE escalations SET channel_metadata=? WHERE id=?",
+            (json.dumps(metadata), feedback.case.id),
+        )
+        await db.commit()
+    assert await feedback.store.record_answer(
+        room_id="!staff:example.org",
+        root_event_id="$root",
+        event_id="$answer",
+        reviewer="bob",
+        answer="Published A",
+        timestamp_ms=2000,
+    )
+    assert (
+        proposal(await feedback.repository.get_by_id(feedback.case.id))["edit_distance"]
+        == expected
+    )

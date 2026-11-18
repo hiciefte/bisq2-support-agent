@@ -40,7 +40,10 @@ pytestmark = pytest.mark.unit
 @pytest.fixture
 async def runtime_case(tmp_path):
     async for bundle in base_runtime_case.__wrapped__(tmp_path):
-        yield bundle
+        try:
+            yield bundle
+        finally:
+            await bundle.engine.close()
 
 
 def message(bundle, source):
@@ -200,7 +203,7 @@ async def test_unrelated_chatter_during_first_draft_does_not_lose_that_draft(
     no_public_delivery(bundle)
 
 
-async def test_final_delivery_lock_orders_concurrent_intake(runtime_case):
+async def test_final_delivery_lock_orders_concurrent_intake(runtime_case, monkeypatch):
     bundle = runtime_case
     await setup(
         bundle, [gate(["$source"]), draft(), gate(["$source", "$facts"]), draft()]
@@ -223,10 +226,18 @@ async def test_final_delivery_lock_orders_concurrent_intake(runtime_case):
     late = event(
         bundle, "$late", "A new confirmation just appeared", relation="$source"
     )
+    reached_lock = asyncio.Event()
+    original_acquire = bundle.service._acquire_delivery_lock
+
+    async def acquire(case_id):
+        reached_lock.set()
+        return await original_acquire(case_id)
+
+    monkeypatch.setattr(bundle.service, "_acquire_delivery_lock", acquire)
     intake = asyncio.create_task(
         bundle.engine.process(message(bundle, late), bundle.channel)
     )
-    await asyncio.sleep(0)
+    await asyncio.wait_for(reached_lock.wait(), timeout=3)
     before = await saved_case(bundle)
     assert "$late" not in {
         row["event_id"] for row in before.channel_metadata["incident_messages"]

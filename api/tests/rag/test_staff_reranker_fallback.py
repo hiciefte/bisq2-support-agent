@@ -4,6 +4,7 @@ from types import SimpleNamespace as NS
 from unittest.mock import Mock
 
 import pytest
+from app.channels.staff_assist.evidence_resolver import StaffEvidenceResolver
 from app.services.rag.colbert_reranker import ColBERTReranker
 from app.services.rag.document_retriever import DocumentRetriever
 
@@ -88,16 +89,57 @@ def test_verified_staff_ranking_preserves_original_retrieval_score():
     docs, scores = retriever.retrieve_with_scores(
         "A transfer failed", detect_from_query=False, require_reranker_success=True
     )
-    assert len(docs) == 1
+    assert len(docs) == 12
+    assert docs[0].metadata["_retrieved_id"] == "multisig_v1-1"
     assert docs[0].metadata["_reranked"] is True
     assert docs[0].metadata["_colbert_score"] == 0.99
-    assert scores == pytest.approx([0.8])
+    assert scores[0] == pytest.approx(0.8)
+    assert not any(doc.metadata.get("_reranked") for doc in docs[1:])
 
 
 def test_default_unavailable_reranker_retains_existing_behavior():
     retriever, _ = setup("unavailable")
     docs, _ = retriever.retrieve_with_scores("A transfer failed")
     assert len(docs) == 5
+
+
+@pytest.mark.asyncio
+async def test_successful_staff_rank_backfills_after_product_applicability_filter():
+    retriever, reranker = setup("success")
+
+    def titled_documents(query, k, filter_dict=None):
+        rows = scoped_documents(query, k, filter_dict)
+        for row in rows:
+            row.metadata.update(
+                type="wiki",
+                title=(
+                    "Bisq 2 applicable guide"
+                    if row.id == "bisq_easy-3"
+                    else "Bisq 1 wallet recovery"
+                ),
+                url=f"https://bisq.wiki/Guide_{row.id}",
+            )
+        return rows
+
+    retriever.retriever.retrieve_with_scores.side_effect = titled_documents
+    reranker._model.rerank.return_value = [
+        {"content": f"Evidence all {index}", "score": 0.99 - index / 100}
+        for index in range(4)
+    ] + [{"content": "Evidence bisq_easy 0", "score": 0.9}]
+    docs, _ = retriever.retrieve_with_scores(
+        "Which procedure applies?",
+        detect_from_query=False,
+        require_reranker_success=True,
+    )
+    assert len(docs) == 12
+    assert all(doc.metadata.get("_reranked") for doc in docs[:5])
+    assert docs[-1].metadata["_retrieved_id"] == "bisq_easy-3"
+    result = await StaffEvidenceResolver().resolve(
+        question="I use Bisq 2; which procedure applies?",
+        documents=docs,
+    )
+    assert [entry.content for entry in result.evidence] == ["Evidence bisq_easy 3"]
+    assert len(result.excluded_evidence) == 11
 
 
 def test_ambiguous_equal_bodies_cannot_attach_the_wrong_source_provenance():

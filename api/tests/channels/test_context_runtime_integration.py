@@ -165,8 +165,10 @@ async def runtime_case(tmp_path):
         sender=sender,
         engine=engine,
     )
-    yield bundle
-    await engine.close()
+    try:
+        yield bundle
+    finally:
+        await bundle.engine.close()
 
 
 async def saved_case(bundle):
@@ -798,17 +800,32 @@ async def test_concurrent_runtime_instances_claim_one_generation_and_send(runtim
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("topic_risk,expected", [("high", True), ("low", False)])
 async def test_trusted_high_risk_classification_generates_labeled_staff_draft(
     runtime_case,
+    topic_risk,
+    expected,
 ):
     from app.channels.models import ClassificationDecision
 
     bundle = runtime_case
-    bundle.incoming.classification = ClassificationDecision(topic_risk="high")
+    question = "Which settings page shows the application connection?"
+    bundle.incoming.question = question
+    bundle.client.room_context.side_effect = lambda *a, **kw: context(body=question)
+    bundle.incoming.classification = ClassificationDecision(topic_risk=topic_risk)
+    bundle.llm.invoke.return_value.content = json.dumps(
+        {
+            "action": "reply",
+            "reply": "Open Settings > Network to view the connection.",
+            "staff_note": "The guide documents this screen.",
+            "source_ids": ["e1"],
+            "reason": "documented_screen",
+        }
+    )
     case = await run(bundle)
     assert case.channel_metadata["context_status"] == "delivered"
-    assert case.channel_metadata["money_at_risk"] is True
-    assert "money at risk" in case.ai_draft_answer
+    assert case.channel_metadata["money_at_risk"] is expected
+    assert ("money at risk" in case.ai_draft_answer) is expected
     bundle.retrieve.assert_called_once()
     bundle.llm.invoke.assert_called_once()
     assert bundle.sender.await_count == 2

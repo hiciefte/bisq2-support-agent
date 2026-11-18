@@ -23,7 +23,16 @@ from tests.channels.test_context_runtime_integration import (
     saved_case,
 )
 
-runtime_case = shared_runtime_case
+
+@pytest.fixture
+async def runtime_case(tmp_path):
+    async for bundle in shared_runtime_case.__wrapped__(tmp_path):
+        try:
+            yield bundle
+        finally:
+            await bundle.engine.close()
+
+
 pytestmark = pytest.mark.unit
 
 
@@ -279,6 +288,10 @@ async def test_live_budget_refusal_spends_no_note_slot(runtime_case):
         bundle,
         event(bundle, "$facts", "It is still unresolved after the trade expired."),
     )
+    bundle.llm.invoke.assert_called_once()
+    prompt = json.loads(bundle.llm.invoke.call_args.args[0])
+    assert "$facts" in {row["event_id"] for row in prompt["messages"]}
+    assert case.channel_metadata["context_reason"] == "context_trial_unbounded_model"
     assert case.channel_metadata.get("conversation_generation_count", 0) == 0
     assert case.channel_metadata["model_called"] is False
     bundle.sender.assert_not_awaited()

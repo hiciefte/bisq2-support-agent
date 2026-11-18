@@ -137,7 +137,7 @@ async def make_parent(tmp_path):
                 "processed_observed_events": 1,
                 "planned_observed_events": 2,
                 "planned_final_virtual_time_ms": BASE + 30000,
-                "last_processed_virtual_time_ms": BASE,
+                "last_processed_virtual_time_ms": BASE + 10000,
             },
         },
     )

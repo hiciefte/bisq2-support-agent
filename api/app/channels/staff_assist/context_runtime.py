@@ -304,6 +304,7 @@ class MatrixContextRuntime:
         self._expiry_task: asyncio.Task | None = None
         self._conversations: StaffConversationCoordinator | None = None
         self._request_snapshots: dict[int, RequestSnapshot] = {}
+        self._conversation_workers: dict[int, asyncio.Task[Any]] = {}
         self._conversation_channel: Any = None
 
     def start(self) -> None:
@@ -362,8 +363,8 @@ class MatrixContextRuntime:
 
     async def drain(self) -> None:
         """Wait for in-flight work (used by deterministic integration tests)."""
-        if self._tasks:
-            await asyncio.gather(*self._tasks)
+        while self._tasks:
+            await asyncio.gather(*list(self._tasks))
 
     async def close(self) -> None:
         """Stop workers; persisted interrupted cases remain available in Admin."""
@@ -420,7 +421,12 @@ class MatrixContextRuntime:
             turn = conversation_turn(room_id, event, is_staff=is_staff)
         except ValueError:
             return
-        await self._ingest_conversation(turn, channel)
+        try:
+            await self._ingest_conversation(turn, channel)
+        except ValueError:
+            logger.warning(
+                "Rejected Matrix context observation event=%s", turn.event_id
+            )
 
     async def _ingest_conversation(self, turn: ConversationTurn, channel: Any) -> None:
         if await self._trial_reason():
@@ -434,13 +440,17 @@ class MatrixContextRuntime:
         if channel is None:
             return
         for case_id in result.affected_case_ids:
-            if case_id in self._active_cases:
-                continue
-            self._active_cases.add(case_id)
-            task = asyncio.create_task(self._run_conversation(case_id, channel))
-            self._tasks.add(task)
-            task.add_done_callback(self._tasks.discard)
+            self._start_conversation_worker(case_id, channel)
         self._schedule_expiry()
+
+    def _start_conversation_worker(self, case_id: int, channel: Any) -> None:
+        if case_id in self._active_cases or self._closed:
+            return
+        self._active_cases.add(case_id)
+        task = asyncio.create_task(self._run_conversation(case_id, channel))
+        self._conversation_workers[case_id] = task
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     async def _capture_conversation_turn(
         self, turn: ConversationTurn, *, allow_new: bool = True
@@ -550,6 +560,7 @@ class MatrixContextRuntime:
             event,
             *(getattr(response, "events_after", []) or []),
         ]
+        retained = {turn.event_id: turn for turn in snapshot.turns}
         # Supplement only this existing bounded anchor read. No pagination or
         # expanded room capture, and no new cases from historical neighbors.
         for item in timeline:
@@ -562,7 +573,28 @@ class MatrixContextRuntime:
                     is_bot=sender == getattr(client, "user_id", None),
                 )
             except ValueError:
+                invalid_id = getattr(item, "event_id", None)
+                if invalid_id in retained:
+                    await coordinator.invalidate_visible_event(snapshot, invalid_id)
+                    return "source_changed_or_redacted"
                 continue
+            previous = retained.get(turn.event_id)
+            if previous is not None and (
+                previous.sender_id != turn.sender_id
+                or previous.timestamp_ms != turn.timestamp_ms
+                or previous.text != turn.text
+                or previous.non_text != turn.non_text
+                or (
+                    not previous.replaces_event_id
+                    and (
+                        previous.reply_to_event_id != turn.reply_to_event_id
+                        or previous.thread_root_event_id != turn.thread_root_event_id
+                    )
+                )
+                or previous.replaces_event_id != turn.replaces_event_id
+            ):
+                await coordinator.invalidate_visible_event(snapshot, turn.event_id)
+                return "source_changed_or_redacted"
             if (
                 self._trial.start_at.timestamp() * 1000
                 <= turn.timestamp_ms
@@ -573,7 +605,7 @@ class MatrixContextRuntime:
             None if await coordinator.is_current(snapshot) else "conversation_changed"
         )
 
-    async def _run_request_admission(self, case_id: int, channel: Any) -> None:
+    async def _run_request_admission(self, case_id: int, channel: Any) -> bool:
         coordinator = self._conversation_coordinator()
         policy = self.runtime.resolve_optional("channel_autoresponse_policy_service")
         while not self._closed:
@@ -581,7 +613,7 @@ class MatrixContextRuntime:
                 case_id, now_ms=int(utc_now().timestamp() * 1000)
             )
             if snapshot.kind != "admission":
-                return
+                return True
             wait = (
                 snapshot.last_requester_at_ms
                 + coordinator.delay_ms
@@ -591,7 +623,7 @@ class MatrixContextRuntime:
                 await asyncio.sleep(wait)
                 continue
             if not await coordinator.claim(snapshot):
-                return
+                return False
             uncertain = False
             classification_dispatched = False
             llm = BudgetedContextLLM(
@@ -601,6 +633,11 @@ class MatrixContextRuntime:
                 kind="gate",
                 call_id=snapshot.version,
                 before_call=lambda: (
+                    "review_or_policy_changed"
+                    if self._closed or not is_staff_context_enabled(policy, "matrix")
+                    else coordinator.admission_call_guard(snapshot)
+                ),
+                before_provider=lambda: (
                     "review_or_policy_changed"
                     if self._closed or not is_staff_context_enabled(policy, "matrix")
                     else coordinator.admission_call_guard(snapshot)
@@ -619,7 +656,7 @@ class MatrixContextRuntime:
                     await coordinator.record_admission(
                         snapshot, failure={"reason": reason, "model_called": False}
                     )
-                    return
+                    return False
                 classification_dispatched = True
                 decision = await asyncio.to_thread(service.classify, snapshot)
                 reason = await self._trial_reason() or (
@@ -637,7 +674,7 @@ class MatrixContextRuntime:
                             "usage": service.usage,
                         },
                     )
-                    return
+                    return False
                 result = await coordinator.record_admission(
                     snapshot, decision, usage=service.usage
                 )
@@ -662,19 +699,22 @@ class MatrixContextRuntime:
                         "uncertain": uncertain,
                     },
                 )
-                return
+                if not llm.started and llm.reason == "request_admission_changed":
+                    continue
+                return False
             finally:
                 await coordinator.finish(snapshot, uncertain=uncertain)
             if result and result.created:
-                await self._run_conversation(result.case_id, channel)
-                return
+                self._start_conversation_worker(result.case_id, channel)
+                return False
             if result and not result.created:
                 current = await coordinator.service.repository.get_by_id(case_id)
                 if not (current.channel_metadata or {}).get(
                     "conversation_admission_pending"
                 ):
-                    await self._run_conversation(case_id, channel)
-                    return
+                    return True
+
+        return False
 
     async def _run_conversation(self, case_id: int, channel: Any) -> None:
         coordinator = self._conversation_coordinator()
@@ -685,8 +725,14 @@ class MatrixContextRuntime:
                 case = await coordinator.service.repository.get_by_id(case_id)
                 metadata = case.channel_metadata or {}
                 if metadata.get("conversation_admission_pending"):
-                    await self._run_request_admission(case_id, channel)
-                    return
+                    resume_request = await self._run_request_admission(case_id, channel)
+                    if not resume_request:
+                        return
+                    current = await coordinator.service.repository.get_by_id(case_id)
+                    current_meta = current.channel_metadata or {}
+                    if current_meta.get("conversation_admission_pending"):
+                        return
+                    continue
                 if (
                     case.status.value not in {"pending", "in_review"}
                     or metadata.get("conversation_resolved")
@@ -710,7 +756,24 @@ class MatrixContextRuntime:
                 snapshot = await coordinator.snapshot(
                     case_id, now_ms=int(utc_now().timestamp() * 1000)
                 )
+                if snapshot.kind == "admission":
+                    continue
+                if (
+                    snapshot.last_requester_at_ms + coordinator.delay_ms
+                    > snapshot.observed_at_ms
+                ):
+                    continue
                 if not await coordinator.claim(snapshot):
+                    latest = await coordinator.service.repository.get_by_id(case_id)
+                    latest_meta = latest.channel_metadata or {}
+                    if latest_meta.get("conversation_running_revision") is None and (
+                        latest_meta.get("conversation_revision") != snapshot.revision
+                        or latest_meta.get("conversation_last_requester_at_ms", 0)
+                        + coordinator.delay_ms
+                        > snapshot.observed_at_ms
+                        or latest_meta.get("conversation_admission_pending")
+                    ):
+                        continue
                     return
                 claimed = snapshot
                 reason = (
@@ -743,7 +806,13 @@ class MatrixContextRuntime:
                         "review_or_policy_changed"
                         if self._closed
                         or not is_staff_context_enabled(policy, "matrix")
-                        else None
+                        else coordinator.request_call_guard(snapshot)
+                    ),
+                    before_provider=lambda: (
+                        "review_or_policy_changed"
+                        if self._closed
+                        or not is_staff_context_enabled(policy, "matrix")
+                        else coordinator.request_call_guard(snapshot)
                     ),
                 )
                 gate = RequestGateService(gate_llm)
@@ -771,6 +840,11 @@ class MatrixContextRuntime:
                     )
                     await coordinator.finish(snapshot)
                     claimed = None
+                    if (
+                        not gate_llm.started
+                        and gate_llm.reason == "conversation_changed"
+                    ):
+                        continue
                     return
                 if not await coordinator.record_gate(snapshot, decision):
                     await coordinator.finish(snapshot)
@@ -836,7 +910,8 @@ class MatrixContextRuntime:
                 ) == "delivery_uncertain"
                 await coordinator.finish(snapshot, uncertain=uncertain)
                 claimed = None
-                self._request_snapshots.pop(case_id, None)
+                if self._request_snapshots.get(case_id) is snapshot:
+                    self._request_snapshots.pop(case_id, None)
         except asyncio.CancelledError:
             if claimed is not None:
                 await coordinator.finish(claimed, uncertain=True)
@@ -854,8 +929,11 @@ class MatrixContextRuntime:
                 case_id, status="needs_human", reason="conversation_processing_failed"
             )
         finally:
-            self._request_snapshots.pop(case_id, None)
-            self._active_cases.discard(case_id)
+            if claimed is not None and self._request_snapshots.get(case_id) is claimed:
+                self._request_snapshots.pop(case_id, None)
+            if self._conversation_workers.get(case_id) is asyncio.current_task():
+                self._conversation_workers.pop(case_id, None)
+                self._active_cases.discard(case_id)
 
     async def _publish_conversation_update(
         self,
@@ -908,7 +986,12 @@ class MatrixContextRuntime:
                 (latest.channel_metadata or {}).get("staff_note_history", [])
             )
             history.append(
-                {"event_id": event_id, "reply": preview.decision.reply, "version": 1}
+                {
+                    "event_id": event_id,
+                    "reply": preview.decision.reply,
+                    "version": 1,
+                    "acknowledged_at_ms": int(utc_now().timestamp() * 1000),
+                }
             )
             await store.update(
                 case_id,
@@ -1547,7 +1630,25 @@ class MatrixContextRuntime:
                     "review_or_policy_changed"
                     if self._closed
                     or not is_staff_context_enabled(policy_service, "matrix")
-                    else None
+                    else (
+                        self._conversation_coordinator().request_call_guard(
+                            conversation_snapshot
+                        )
+                        if conversation_snapshot is not None
+                        else None
+                    )
+                ),
+                before_provider=lambda: (
+                    "review_or_policy_changed"
+                    if self._closed
+                    or not is_staff_context_enabled(policy_service, "matrix")
+                    else (
+                        self._conversation_coordinator().request_call_guard(
+                            conversation_snapshot
+                        )
+                        if conversation_snapshot is not None
+                        else None
+                    )
                 ),
             )
             if spend_bounded
@@ -1643,7 +1744,7 @@ class MatrixContextRuntime:
         note = preview.rendered_note + "\n\n" + STAFF_CONTEXT_VERDICT_HINT
         if PIIDetector().contains_pii(
             preview.decision.reply + "\n" + preview.decision.staff_note
-        ):
+        ) or PIIDetector().contains_pii(note):
             await store.update(
                 case_id,
                 status="needs_human",
@@ -1832,17 +1933,26 @@ class MatrixContextRuntime:
             note_id = getattr(result, "external_message_id", None)
             if not result or not note_id:
                 raise RuntimeError("Staff context outcome unavailable")
-            history_fields: dict[str, Any] = {}
-            if incoming.channel_metadata.get("conversation_snapshot"):
-                history_fields["staff_note_history"] = [
-                    {"event_id": note_id, "reply": preview.decision.reply, "version": 0}
-                ]
+            latest = await self.runtime.resolve_optional(
+                "escalation_service"
+            ).repository.get_by_id(case_id)
+            history = list(
+                (latest.channel_metadata or {}).get("staff_note_history", [])
+            )
+            history.append(
+                {
+                    "event_id": note_id,
+                    "reply": preview.decision.reply,
+                    "version": 0,
+                    "acknowledged_at_ms": int(utc_now().timestamp() * 1000),
+                }
+            )
             await store.update(
                 case_id,
                 status="delivered",
                 reason="staff_context_delivered",
                 staff_note_event_id=note_id,
-                **history_fields,
+                staff_note_history=history,
             )
             if incoming.channel_metadata.get("conversation_snapshot"):
                 await self._conversation_coordinator().record_delivery(

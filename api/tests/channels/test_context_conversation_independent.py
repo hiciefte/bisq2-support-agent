@@ -346,11 +346,14 @@ async def test_stale_gate_result_cannot_resolve_new_requester_facts(coordinator)
     await coordinator.ingest(
         turn("$new", "Now it shows an error after login", 12000), now_ms=12000
     )
-    await coordinator.record_gate(
-        snapshot, decision(["$one"], category="already_answered")
+    stale = decision(["$one"], category="already_answered", resolved=True).model_copy(
+        update={"resolution_event_id": "$one"}
     )
+    assert not await coordinator.record_gate(snapshot, stale)
     await coordinator.finish(snapshot)
     assert not await coordinator.is_current(snapshot)
+    current = await coordinator.service.repository.get_by_id(first.case_id)
+    assert not current.channel_metadata.get("conversation_resolved")
     due = await coordinator.due(now_ms=22000)
     assert len(due) == 1 and due[0].case_id == first.case_id
 

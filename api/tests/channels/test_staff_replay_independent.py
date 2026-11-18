@@ -6,6 +6,7 @@ from contextlib import closing
 from types import SimpleNamespace as NS
 
 import pytest
+from app.channels.staff_assist.staff_context import StaffExamplesSnapshot
 from app.scripts.replay_staff_context import replay
 
 pytestmark = pytest.mark.unit
@@ -39,6 +40,9 @@ def inputs():
         message("$follow", "The startup error still happens", 40000),
     ]
     return {
+        "examples_snapshot": StaffExamplesSnapshot(
+            ("Which version is installed?",), "private_file"
+        ),
         "cases": {
             101: {"id": 101, "channel_metadata": {}},
             102: {"id": 102, "channel_metadata": {}},

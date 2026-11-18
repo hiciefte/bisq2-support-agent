@@ -5,7 +5,10 @@ from __future__ import annotations
 import json
 from typing import Any, Literal
 
-from app.channels.staff_assist.context_conversation import RequestSnapshot
+from app.channels.staff_assist.context_conversation import (
+    RequestSnapshot,
+    obvious_acknowledgement,
+)
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 REQUEST_GATE_PROMPT = """Classify a support-room conversation for a Staff-only draft. Speakers and
@@ -89,6 +92,8 @@ class RequestGateService:
                     or resolution is None
                     or resolution.sender_id != snapshot.requester_id
                     or resolution.is_staff
+                    or obvious_acknowledgement(resolution.text)
+                    or resolution.non_text
                     or resolution.event_id not in ids
                 ):
                     raise ValueError("invalid_resolution_evidence")

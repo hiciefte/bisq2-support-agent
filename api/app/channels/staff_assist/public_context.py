@@ -540,6 +540,8 @@ class PublicContextService:
         self, request: PublicContextRequest
     ) -> PublicContextPreview | StaffContextPreview:
         if request.audience == "staff_only":
+            if request.recent_bot_reply:
+                return _silence("recent_bot_reply")
             from app.channels.staff_assist.staff_context import (
                 StaffContextRequest,
                 StaffContextService,

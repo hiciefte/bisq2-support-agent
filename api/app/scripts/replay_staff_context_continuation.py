@@ -53,14 +53,38 @@ PARENT_FILES = (
 )
 
 
-def file_pin(path: Path) -> dict[str, str]:
-    return {"path": str(path.resolve()), "sha256": digest_bytes(path.read_bytes())}
+OPTIONAL_EMPTY_LOGS = {"gates.jsonl", "drafts.jsonl"}
+
+
+def file_pin(path: Path) -> dict[str, Any]:
+    missing = path.name in OPTIONAL_EMPTY_LOGS and not path.exists()
+    return {
+        "path": str(path.resolve()),
+        "sha256": None if missing else digest_bytes(path.read_bytes()),
+    }
+
+
+def pinned_bytes(pin: dict[str, Any]) -> bytes | None:
+    path = Path(pin["path"])
+    if pin["sha256"] is None:
+        if path.exists():
+            raise ValueError("Continuation input changed")
+        return None
+    data = path.read_bytes()
+    if digest_bytes(data) != pin["sha256"]:
+        raise ValueError("Continuation input changed")
+    return data
+
+
+def optional_rows(path: Path) -> list[dict[str, Any]]:
+    if path.name in OPTIONAL_EMPTY_LOGS and not path.exists():
+        return []
+    return read_jsonl(path)
 
 
 def verify_pins(pins: dict[str, dict[str, str]]) -> None:
     for pin in pins.values():
-        if digest_bytes(Path(pin["path"]).read_bytes()) != pin["sha256"]:
-            raise ValueError("Continuation input changed")
+        pinned_bytes(pin)
 
 
 def continuation_code_hashes() -> dict[str, str]:
@@ -136,8 +160,8 @@ def validate_parent(
 
     if len(set(keys(calls))) != len(calls) or set(keys(calls)) != set(keys(rows)):
         raise ValueError("Parent call intents and settled receipts do not reconcile")
-    gate_rows = read_jsonl(parent_execution / "gates.jsonl")
-    draft_rows = read_jsonl(parent_execution / "drafts.jsonl")
+    gate_rows = optional_rows(parent_execution / "gates.jsonl")
+    draft_rows = optional_rows(parent_execution / "drafts.jsonl")
     completed_keys = {
         (row["case_id"], "gate", row["snapshot_version"]) for row in gate_rows
     }
@@ -191,7 +215,7 @@ def validate_parent(
     ):
         raise ValueError("Invalid parent chronological boundary")
     if (
-        ordered[cursor - 1].timestamp_ms != coverage["last_processed_virtual_time_ms"]
+        failure["virtual_time_ms"] != coverage["last_processed_virtual_time_ms"]
         or not ordered[cursor - 1].timestamp_ms
         < failure["virtual_time_ms"]
         < ordered[cursor].timestamp_ms
@@ -298,6 +322,8 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
     args.output.mkdir(parents=True, exist_ok=False, mode=0o700)
     database = args.output / "prepared-state.db"
     shutil.copyfile(args.parent_execution / "replay.db", database)
+    if digest_bytes(database.read_bytes()) != parent["pins"]["replay.db"]["sha256"]:
+        raise ValueError("Copied parent ledger changed")
     os.chmod(database, 0o600)
     linkage = asyncio.run(reconcile_saved_gate(database, parent))
     if receipts(database) != parent["receipts"]:
@@ -308,8 +334,8 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
             "last_processed_virtual_time_ms"
         ],
         "formed_cases": parent["result"]["formed_cases"],
-        "drafts": read_jsonl(args.parent_execution / "drafts.jsonl"),
-        "gates": [*read_jsonl(args.parent_execution / "gates.jsonl"), linkage],
+        "drafts": optional_rows(args.parent_execution / "drafts.jsonl"),
+        "gates": [*optional_rows(args.parent_execution / "gates.jsonl"), linkage],
         "capacity_limited_snapshots": parent["result"].get(
             "capacity_limited_snapshots", []
         ),
@@ -394,9 +420,10 @@ class ContinuationCalls(ReplayCalls):
 def approved_manifest(
     path: Path, expected: str
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    if digest_bytes(path.read_bytes()) != expected:
+    data = path.read_bytes()
+    if digest_bytes(data) != expected:
         raise ValueError("New continuation approval hash does not match")
-    manifest = json.loads(path.read_text())
+    manifest = json.loads(data)
     if continuation_code_hashes() != manifest["code_sha256"]:
         raise ValueError("Continuation source changed")
     verify_pins(manifest["parent_pins"])
@@ -434,7 +461,7 @@ def approved_manifest(
     ):
         raise ValueError("Prepared continuation changed parent spend ledger")
     state = json.loads(
-        Path(manifest["prepared_pins"]["continuation-state.json"]["path"]).read_text()
+        pinned_bytes(manifest["prepared_pins"]["continuation-state.json"])
     )
     if (
         state["processed_event_count"] != parent["cursor"]
@@ -456,6 +483,18 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("Original replay window has ended or is not active")
     if not os.environ.get("OPENAI_API_KEY"):
         raise ValueError("Existing secret environment must provide OPENAI_API_KEY")
+    # Parent-scoped claim survives copied manifests and all uncertain failures.
+    parent_directory = Path(manifest["parent_execution"]).resolve()
+    claim = parent_directory.parent / (
+        parent_directory.name + ".continuation-claim.json"
+    )
+    write_private(
+        claim,
+        {
+            "manifest_sha256": args.approve_manifest_sha256,
+            "parent_result_sha256": parent["pins"]["result.json"]["sha256"],
+        },
+    )
     output = args.manifest.parent / "execution"
     output.mkdir(exist_ok=False, mode=0o700)
     write_private(
@@ -472,15 +511,23 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
         manifest["prepared_pins"]["prepared-state.db"]["path"], output / "replay.db"
     )
     os.chmod(output / "replay.db", 0o600)
+    if (
+        digest_bytes((output / "replay.db").read_bytes())
+        != manifest["prepared_pins"]["prepared-state.db"]["sha256"]
+    ):
+        raise ValueError("Copied continuation ledger changed")
     for name in ("gates.jsonl", "drafts.jsonl", "call-intents.jsonl"):
-        shutil.copyfile(parent["pins"][name]["path"], output / name)
-        os.chmod(output / name, 0o600)
+        data = pinned_bytes(parent["pins"][name])
+        with os.fdopen(
+            os.open(output / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb"
+        ) as stream:
+            stream.write(data or b"")
     linkage = json.loads(
-        Path(manifest["prepared_pins"]["reconciled-gate.json"]["path"]).read_text()
+        pinned_bytes(manifest["prepared_pins"]["reconciled-gate.json"])
     )
     append_private(output / "gates.jsonl", linkage)
     state = json.loads(
-        Path(manifest["prepared_pins"]["continuation-state.json"]["path"]).read_text()
+        pinned_bytes(manifest["prepared_pins"]["continuation-state.json"])
     )
     from app.services.rag.openai_responses import OpenAIResponsesLLMWrapper
     from openai import OpenAI

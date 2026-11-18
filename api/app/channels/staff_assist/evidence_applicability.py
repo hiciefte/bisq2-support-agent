@@ -41,10 +41,13 @@ def staff_requester_product(question: str) -> str | None:
         text,
         re.I,
     ):
-        prefix = re.split(r"[.!?;,\n]", text[: mention.start()])[-1]
+        # Attribution and hypothetical scope survive commas in the same sentence.
+        prefix = re.split(r"[.!?;\n]", text[: mention.start()])[-1]
         if re.search(
             r"\b(?:not|never|no longer|don['’]t|isn['’]t|wasn['’]t|"
-            r"if|whether|maybe|perhaps|assuming|suppose|could|would|might|unlike|versus|vs|"
+            r"if|whether|maybe|perhaps|assuming|suppose|could|would|might|should|"
+            r"switch(?:ing)?|migrat(?:e|ing)|consider(?:ing)?|plan(?:ning)?|"
+            r"intend(?:ing)?|thinking about|want to|unlike|versus|vs|"
             r"instead of|rather than|compared (?:to|with)|someone|somebody|"
             r"another (?:user|person)|they|says?|said|wrote|suggested)\b",
             prefix,
@@ -90,8 +93,9 @@ def source_applicability(
         )
         if label:
             scoped_product = staff_requester_product(label.group(1))
-    # A comparison page naming both products is ambiguous, not contradictory.
-    single_named = scoped_product if len(named) == 1 else None
+    # Incidental body mentions cannot erase an explicit title/heading scope.
+    # A genuine comparison title already yields no single scoped product.
+    single_named = scoped_product
     reasons = []
     if declared and single_named and declared != single_named:
         reasons.append("source_product_metadata_conflict")

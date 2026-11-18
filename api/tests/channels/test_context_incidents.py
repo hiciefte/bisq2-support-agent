@@ -496,7 +496,19 @@ async def test_missing_or_changed_original_defers_whole_incident(runtime_case):
 
 
 @pytest.mark.asyncio
-async def test_high_risk_linked_followup_does_not_lower_original_risk(runtime_case):
+async def test_high_risk_linked_followup_does_not_lower_original_risk(
+    runtime_case, monkeypatch
+):
+    from app.channels.staff_assist.staff_context import StaffContextService
+
+    requests = []
+    original_preview = StaffContextService.preview
+
+    def preview(service, request):
+        requests.append(request)
+        return original_preview(service, request)
+
+    monkeypatch.setattr(StaffContextService, "preview", preview)
     bundle = runtime_case
     release = hold_worker(bundle)
     root = incoming(bundle, "$root", ROOT)
@@ -512,6 +524,7 @@ async def test_high_risk_linked_followup_does_not_lower_original_risk(runtime_ca
     case = await saved_case(bundle)
     assert case.channel_metadata["money_at_risk"] is True
     assert "money at risk" in case.ai_draft_answer
+    assert len(requests) == 1 and requests[0].high_risk_action is True
     bundle.llm.invoke.assert_called_once()
 
 

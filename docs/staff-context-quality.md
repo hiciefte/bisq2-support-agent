@@ -175,7 +175,9 @@ reports.
 
 Replay uses the same event conversion, request coordinator, gate and Staff draft
 service. A chronological virtual clock exposes only messages observed by each
-quiet deadline. Later Staff answers are comparison evidence only. Saved document
+quiet deadline. Saved Staff messages enter the conversation only when virtual
+time reaches them and may affect later gates. Separate comparison references
+remain report-only and never enter prompts. Saved document
 excerpts from an already-arrived anchor substitute for retrieval; their exact
 historical capture times can be unknown. Live observations with unproved or future
 timestamps are excluded. Sanitized excerpts without usable URLs are explicitly

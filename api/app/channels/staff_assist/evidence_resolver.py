@@ -196,6 +196,7 @@ class StaffEvidenceResolver:
                     self.grounding_service.build,
                     question=scope_question,
                     product=product,
+                    infer_product=False,
                     user_version=user_version,
                     knowledge_sources=[
                         {

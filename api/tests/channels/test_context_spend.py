@@ -1,10 +1,9 @@
 """Atomic, fail-closed spend accounting without provider or Matrix calls."""
 
 import asyncio
-import json
 import sqlite3
 from contextlib import closing
-from dataclasses import asdict, replace
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace as NS
 from unittest.mock import Mock
@@ -71,13 +70,20 @@ def wrapper(store, case_id=1, **kwargs):
 
 
 def test_30_days_and_legacy_descriptor_bytes():
-    legacy = ContextTrial.from_settings(trial_settings())
-    expected = {
-        key: value for key, value in asdict(legacy).items() if value is not None
-    }
-    assert legacy.descriptor() == json.dumps(
-        expected, sort_keys=True, default=lambda value: value.isoformat()
+    legacy = ContextTrial.from_settings(
+        trial_settings(
+            MATRIX_CONTEXT_TRIAL_START_AT="2026-01-01T00:00:00+00:00",
+            MATRIX_CONTEXT_TRIAL_END_AT="2026-01-02T00:00:00+00:00",
+        )
     )
+    # Literal historical shape, independent of the dataclass field collection.
+    expected = (
+        '{"end_at": "2026-01-02T00:00:00+00:00", "max_cases": 10, '
+        '"source_rooms": ["!support:example.org"], '
+        '"staff_room": "!staff:example.org", '
+        '"start_at": "2026-01-01T00:00:00+00:00", "trial_id": "staff-trial-1"}'
+    )
+    assert legacy.descriptor() == expected
     start = datetime.now(timezone.utc)
     assert spend_trial(
         MATRIX_CONTEXT_TRIAL_START_AT=start.isoformat(),
@@ -119,8 +125,14 @@ async def test_new_legacy_descriptor_cannot_enable_count_only_pilot(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_atomic_daily_bound_and_restart(tmp_path):
-    store = ContextTrialStore(str(tmp_path / "trial.db"), spend_trial())
+async def test_atomic_daily_bound_and_restart(tmp_path, monkeypatch):
+    now = datetime(2026, 11, 18, 12, tzinfo=timezone.utc)
+    monkeypatch.setattr(context_trial, "utc_now", lambda: now)
+    trial = spend_trial(
+        MATRIX_CONTEXT_TRIAL_START_AT=(now - timedelta(hours=1)).isoformat(),
+        MATRIX_CONTEXT_TRIAL_END_AT=(now + timedelta(days=1)).isoformat(),
+    )
+    store = ContextTrialStore(str(tmp_path / "trial.db"), trial)
     results = await asyncio.gather(
         *(asyncio.to_thread(call, store, index) for index in range(20))
     )

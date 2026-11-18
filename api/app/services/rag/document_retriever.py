@@ -709,8 +709,9 @@ class DocumentRetriever:
                              Maps to protocols: Bisq 1 -> multisig_v1, Bisq 2 -> bisq_easy
             detect_from_query: False preserves caller-established uncertainty;
                                helper/query keywords cannot select a product.
-            require_reranker_success: Staff retains full retrieval candidates
-                                      when the configured reranker cannot rank.
+            require_reranker_success: Staff requires proven ranking and retains
+                                      unranked candidates for later eligibility
+                                      filtering and evidence backfill.
 
         Returns:
             Tuple of (documents, scores) where scores are similarity values (0-1)
@@ -934,6 +935,20 @@ class DocumentRetriever:
                     lc_doc.metadata = metadata
                     reranked_docs.append(lc_doc)
 
+                if require_reranker_success:
+                    # Staff applies product/source eligibility after retrieval.
+                    # Keep omitted candidates for backfill without pretending
+                    # that the model ranked them; other callers keep top-N.
+                    ranked_keys = {
+                        self._dedupe_key_from_metadata(doc.metadata)
+                        for doc in reranked_docs
+                    }
+                    reranked_docs.extend(
+                        doc
+                        for doc in unique_docs
+                        if self._dedupe_key_from_metadata(doc.metadata)
+                        not in ranked_keys
+                    )
                 unique_docs = reranked_docs
                 retrieval_scores = []
                 for doc in unique_docs:

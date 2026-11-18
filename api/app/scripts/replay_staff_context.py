@@ -40,9 +40,13 @@ from app.channels.staff_assist.context_trial import (
     BudgetedContextLLM,
     ContextTrial,
     ContextTrialStore,
+    _money,
 )
 from app.channels.staff_assist.public_context import PublicEvidence, StaffEvidence
-from app.channels.staff_assist.staff_context import StaffContextService
+from app.channels.staff_assist.staff_context import (
+    StaffContextService,
+    StaffExamplesSnapshot,
+)
 from app.channels.staff_assist.staff_prompt import STAFF_CONTEXT_PROMPT
 from app.services.escalation.escalation_repository import EscalationRepository
 from app.services.escalation.escalation_service import EscalationService
@@ -78,7 +82,15 @@ def json_bytes(value: Any) -> bytes:
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
-    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    with path.open(encoding="utf-8") as stream:
+        return [json.loads(line) for line in stream if line.strip()]
+
+
+def _jsonl_bytes(data: bytes) -> list[dict[str, Any]]:
+    # Only physical LF separates records; U+2028 is legal JSON string content.
+    return [
+        json.loads(line) for line in data.decode("utf-8").split("\n") if line.strip()
+    ]
 
 
 def write_private(path: Path, value: Any) -> None:
@@ -134,14 +146,15 @@ def _event_core(message: dict[str, Any]) -> dict[str, Any]:
 
 
 def load_inputs(plan_sources: dict[str, dict[str, str]]) -> dict[str, Any]:
-    for source in plan_sources.values():
-        if digest_bytes(Path(source["path"]).read_bytes()) != source["sha256"]:
+    buffers = {}
+    for name, source in plan_sources.items():
+        data = Path(source["path"]).read_bytes()
+        if digest_bytes(data) != source["sha256"]:
             raise ValueError("Frozen replay input changed")
-    cases = {row["id"]: row for row in read_jsonl(Path(plan_sources["cases"]["path"]))}
-    threads = {
-        row["case_id"]: row for row in read_jsonl(Path(plan_sources["threads"]["path"]))
-    }
-    index = json.loads(Path(plan_sources["sessions"]["path"]).read_text())
+        buffers[name] = data
+    cases = {row["id"]: row for row in _jsonl_bytes(buffers["cases"])}
+    threads = {row["case_id"]: row for row in _jsonl_bytes(buffers["threads"])}
+    index = json.loads(buffers["sessions"])
     for name, key in (("cases.jsonl", "cases"), ("threads.jsonl", "threads")):
         if index.get("source_hashes", {}).get(name) != plan_sources[key]["sha256"]:
             raise ValueError("Session partition does not match frozen source files")
@@ -157,7 +170,11 @@ def load_inputs(plan_sources: dict[str, dict[str, str]]) -> dict[str, Any]:
                 conflicts.add(key)
             else:
                 events[key] = message
-    references = json.loads(Path(plan_sources["comparisons"]["path"]).read_text())
+    references = json.loads(buffers["comparisons"])
+    examples = StaffExamplesSnapshot(
+        replies=tuple(row["reply"] for row in json.loads(buffers["examples"])),
+        source="private_file",
+    )
     return {
         "cases": cases,
         "threads": threads,
@@ -165,6 +182,7 @@ def load_inputs(plan_sources: dict[str, dict[str, str]]) -> dict[str, Any]:
         "events": events,
         "conflicts": conflicts,
         "comparisons": references,
+        "examples_snapshot": examples,
     }
 
 
@@ -330,6 +348,7 @@ def model_code_hashes() -> dict[str, str]:
     ]
     paths.extend(
         [
+            "prompts/runtime_policy.py",
             "scripts/replay_staff_context.py",
             "scripts/summarize_staff_context.py",
             "services/rag/openai_responses.py",
@@ -355,6 +374,7 @@ def validate_limits(args: argparse.Namespace) -> None:
             raise ValueError(
                 "Replay prices and budgets must be explicit positive decimals"
             ) from None
+        _money(str(value), 1000 if "per_million" in field else 10**9)
         if not value.is_finite() or value <= 0:
             raise ValueError(
                 "Replay prices and budgets must be explicit positive decimals"
@@ -431,7 +451,7 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
     inputs = load_inputs(sources)
     if not inputs["index"].get("sessions"):
         raise ValueError("Replay requires at least one retained input cohort")
-    examples = StaffContextService(None, data_dir=args.data_dir)
+    examples = StaffContextService(None, verified_examples=inputs["examples_snapshot"])
     if examples.examples_source != "private_file":
         raise ValueError("Replay requires the reviewed private example file")
     estimates = []
@@ -495,6 +515,7 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
         default=Decimal(0),
     )
     plan = {
+        "execution_claim": str((args.output / "execution-claim.json").resolve()),
         "schema_version": 1,
         "mode": "pending_owner_approval",
         "sources": sources,
@@ -828,7 +849,31 @@ class ReplayCalls:
     ) -> BudgetedContextLLM:
         call_id = snapshot.version
 
+        intent_written = False
+
+        def before_provider() -> str | None:
+            if time.monotonic() - self.started >= self.plan["maximum_elapsed_seconds"]:
+                return "replay_elapsed_limit_reached"
+            return None
+
+        def on_not_started(reason: str) -> None:
+            nonlocal intent_written
+            if intent_written:
+                self.calls -= 1
+                append_private(
+                    self.output / "calls-not-started.jsonl",
+                    {
+                        "case_id": snapshot.case_id,
+                        "kind": kind,
+                        "call_id": call_id,
+                        "status": "not_started",
+                        "reason": reason,
+                    },
+                )
+                intent_written = False
+
         def before_call() -> str | None:
+            nonlocal intent_written
             if self.calls >= self.plan["max_model_calls"]:
                 return "replay_model_call_cap_reached"
             if time.monotonic() - self.started >= self.plan["maximum_elapsed_seconds"]:
@@ -845,6 +890,7 @@ class ReplayCalls:
                 },
             )
             self.calls += 1
+            intent_written = True
             return None
 
         return BudgetedContextLLM(
@@ -854,6 +900,8 @@ class ReplayCalls:
             kind=kind,
             call_id=call_id,
             before_call=before_call,
+            before_provider=before_provider,
+            on_not_started=on_not_started,
         )
 
 
@@ -1036,6 +1084,8 @@ async def replay(
                                 "admitted_from_case_id": snapshot.case_id,
                             }
                         )
+                    if admission.changed:
+                        break
                     continue
                 await coordinator.record_gate(snapshot, gate)
                 if not snapshot.should_draft(gate):
@@ -1056,7 +1106,9 @@ async def replay(
                     snapshot, kind=snapshot.kind, virtual_time_ms=virtual
                 )
                 preview = await asyncio.to_thread(
-                    StaffContextService(note_llm, data_dir=plan["data_dir"]).preview,
+                    StaffContextService(
+                        note_llm, verified_examples=inputs["examples_snapshot"]
+                    ).preview,
                     request,
                 )
                 if note_llm.reason:
@@ -1214,7 +1266,9 @@ def approved_plan(
         raise ValueError("Reviewed replay code changed; prepare and approve a new plan")
     inputs = load_inputs(plan["sources"])
     if (
-        StaffContextService(None, data_dir=plan["data_dir"]).examples_sha256
+        StaffContextService(
+            None, verified_examples=inputs["examples_snapshot"]
+        ).examples_sha256
         != plan["examples_sha256"]
     ):
         raise ValueError("Private style examples changed")
@@ -1257,6 +1311,9 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
             OPENAI_MODEL=plan["model"],
             MAX_TOKENS=plan["max_output_tokens"],
         )
+    )
+    write_private(
+        Path(plan["execution_claim"]), {"plan_sha256": args.approve_plan_sha256}
     )
     output.mkdir(mode=0o700, exist_ok=False)
     write_private(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import quote
@@ -36,6 +37,31 @@ PublicCitationReadiness = Literal[
     "partial_public_links",
     "internal_evidence_only",
 ]
+
+
+@dataclass(frozen=True)
+class StaffExamplesSnapshot:
+    """Immutable corpus already read and verified by an execution owner."""
+
+    replies: tuple[str, ...]
+    source: str
+
+    def __post_init__(self) -> None:
+        if type(self.replies) is not tuple or not 1 <= len(self.replies) <= 20:
+            raise ValueError("invalid example snapshot")
+        if self.source not in {
+            "private_file",
+            "synthetic_fallback",
+            "synthetic_fallback_invalid_file",
+        }:
+            raise ValueError("invalid example source")
+        for reply in self.replies:
+            if not isinstance(reply, str) or not reply.strip() or len(reply) > 1000:
+                raise ValueError("invalid example reply")
+            reply.encode("utf-8")
+
+    def examples(self) -> list[dict[str, str]]:
+        return [{"reply": reply} for reply in self.replies]
 
 
 class StaffConversationCoverage(BaseModel):
@@ -121,6 +147,7 @@ def load_staff_examples(
             reply = row["reply"]
             if not isinstance(reply, str) or not reply.strip() or len(reply) > 1000:
                 raise ValueError("invalid example reply")
+            reply.encode("utf-8")
             if re.search(
                 r"@[\w.-]+(?::|\b)|\b[0-9a-f]{16,}\b|\b(?:bc1|tb1)[a-z0-9]{20,}\b",
                 reply,
@@ -165,7 +192,8 @@ def _unsafe_reply(text: str) -> bool:
                 return True
     return bool(
         re.search(
-            r"\b(?:staff|(?:the |your )?mediator|we|I) (?:has|have|already) (?:already )?"
+            r"\b(?:staff|(?:the |your )?mediator|we|I) "
+            r"(?:(?:has|have|already) (?:already )?)?"
             r"(?:acted|released|approved|processed|refunded|paid|contacted|resolved)\b",
             text,
             re.I,
@@ -175,7 +203,18 @@ def _unsafe_reply(text: str) -> bool:
 
 def _money_at_risk_label(*texts: str) -> bool:
     """Conservative Staff display label, never a routing or safety decision."""
-    text = "\n".join(texts)
+    return any(
+        _monetary_clause(clause)
+        for text in texts
+        for clause in re.split(
+            r"[!?;,:\n]|(?<!\d)\.|\.(?!\d)|\b(?:but|while|whereas|and)\b",
+            text,
+            flags=re.I,
+        )
+    )
+
+
+def _monetary_clause(text: str) -> bool:
     if re.search(
         r"\b(?:deposit(?:s|ed|ing)?|refund(?:s|ed|ing)?|payments?|pay-?outs?|escrow|"
         r"funds?|balances?|utxos?|unspent (?:transaction )?outputs?|withdrawals?|"
@@ -199,6 +238,29 @@ def _money_at_risk_label(*texts: str) -> bool:
     return bool(
         (asset and movement)
         or (wallet_operation and re.search(r"\bwallets?\b", text, re.I))
+    )
+
+
+def _diagnostic_question(text: str) -> bool:
+    """Keep state/history questions, reject procedures dressed as questions."""
+    if not _question_only(text) or sum(text.count(mark) for mark in "?？؟") != 1:
+        return False
+    action = (
+        r"(?:try|run|restart|reset|restore|delete|remove|replace|disable|enable|"
+        r"install|update|reinstall|re-?pair|send|pay|"
+        r"transfer|move|contact|message|dm|consolidate|sweep)"
+    )
+    return not re.search(
+        rf"^(?:please\s+)?{action}\b|"
+        rf"\b(?:have you tried|why don['’]t you|what happens if you)\b|"
+        rf"\b(?:(?:how\s+)?(?:can|could|would|will|should)|how do) "
+        rf"(?:you|i|we)\s+(?:(?:please|first|now|just)\s+)*{action}\b|"
+        r"\b(?:would|could|will|should|can|is)\s+(?:a |an |the )?"
+        r"(?:reset(?:ting)?|restor(?:e|ing)|delet(?:e|ing)|remov(?:e|ing)|"
+        r"reinstall(?:ing)?|send(?:ing)?|pay(?:ing)?|transfer(?:ring)?|"
+        r"consolidat(?:e|ing)|sweep(?:ing)?)\b",
+        text,
+        re.I,
     )
 
 
@@ -244,9 +306,19 @@ def _citations(source_ids: list[str], evidence: list[ContextEvidence]) -> str:
 class StaffContextService:
     """Generate and validate a human-reviewed reply; never send or train."""
 
-    def __init__(self, llm: Any, *, data_dir: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        llm: Any,
+        *,
+        data_dir: str | Path | None = None,
+        verified_examples: StaffExamplesSnapshot | None = None,
+    ) -> None:
         self.llm = llm
-        self.examples, self.examples_source = load_staff_examples(data_dir)
+        if verified_examples is None:
+            self.examples, self.examples_source = load_staff_examples(data_dir)
+        else:
+            self.examples = verified_examples.examples()
+            self.examples_source = verified_examples.source
         self.examples_sha256 = hashlib.sha256(
             json.dumps(self.examples, ensure_ascii=False, sort_keys=True).encode()
         ).hexdigest()
@@ -351,10 +423,7 @@ class StaffContextService:
                 raise ValueError("protected invariant violated")
             if decision.action == "question":
                 diagnostic = "invalid_question"
-                if (
-                    not _question_only(decision.reply)
-                    or sum(decision.reply.count(mark) for mark in "?？؟") != 1
-                ):
+                if not _diagnostic_question(decision.reply):
                     raise ValueError("ask one focused non-sensitive question")
             else:
                 diagnostic = "invalid_question"

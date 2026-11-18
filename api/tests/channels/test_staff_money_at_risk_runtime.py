@@ -5,6 +5,7 @@ import json
 import pytest
 
 from tests.channels.test_context_runtime_integration import (
+    context,
     no_public_delivery,
     run,
 )
@@ -18,6 +19,9 @@ pytestmark = pytest.mark.unit
 
 async def test_generated_monetary_procedure_persists_staff_only_label(runtime_case):
     bundle = runtime_case
+    question = "Where can I find the relevant application settings?"
+    bundle.incoming.question = question
+    bundle.client.room_context.side_effect = lambda *a, **kw: context(body=question)
     bundle.llm.invoke.return_value.content = json.dumps(
         {
             "action": "reply",

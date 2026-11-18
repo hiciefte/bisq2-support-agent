@@ -325,3 +325,33 @@ test.each([
     render(<StaffContextDetails context={context} />);
     expect(screen.queryByText(/triggering Staff turn is included/)).not.toBeInTheDocument();
 });
+
+
+test("shows a Staff proposal separately without claiming an assignment or sent response", () => {
+    const context = staffContextMetadata({
+        response_kind: "public_context",
+        staff_reply: "AI draft",
+        staff_context_proposed_answer: {
+            answer: "<script>proposal()</script>",
+            reviewer: "Reviewer",
+            timestamp_ms: 1000,
+            draft_version_known: false,
+            edit_distance: 0,
+        },
+    });
+    const { container } = render(<StaffContextDetails context={context!} />);
+    expect(screen.getByRole("region", { name: "Staff-proposed answer" })).toHaveTextContent("<script>proposal()</script>");
+    expect(screen.getByText(/does not change the case assignment/)).toBeInTheDocument();
+    expect(screen.getByText(/draft version being compared is unknown/)).toBeInTheDocument();
+    expect(container.querySelector("script")).toBeNull();
+    expect(context?.staff_proposed_answer?.edit_distance).toBeNull();
+});
+
+test("refuses malformed Staff proposals and invalid edit-distance values", () => {
+    const base = { response_kind: "public_context" };
+    for (const proposal of [[], "text", { answer: {}, reviewer: "Reviewer", timestamp_ms: 1 }, { answer: "text", reviewer: "Reviewer", timestamp_ms: -1 }]) {
+        expect(staffContextMetadata({ ...base, staff_context_proposed_answer: proposal })?.staff_proposed_answer).toBeUndefined();
+    }
+    const context = staffContextMetadata({ ...base, staff_context_proposed_answer: { answer: "text", reviewer: "Reviewer", timestamp_ms: 1, draft_version_known: true, edit_distance: NaN } });
+    expect(context?.staff_proposed_answer?.edit_distance).toBeNull();
+});
