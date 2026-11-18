@@ -97,7 +97,12 @@ async def test_captured_same_author_reply_keeps_referent_for_retrieval_and_promp
     case = await saved_case(bundle)
     combined = root.question + "\n---\n" + followup.question
     assert case.channel_metadata["incident_generation_question"] == combined
-    bundle.retrieve.assert_called_once_with(combined)
+    bundle.retrieve.assert_called_once_with(
+        combined,
+        detected_version=None,
+        detect_from_query=False,
+        require_reranker_success=True,
+    )
     prompt = json.loads(bundle.llm.invoke.call_args.args[0])
     assert prompt["question"] == combined
     assert prompt["recent_messages"] == [
@@ -225,7 +230,12 @@ async def test_explicit_new_issue_preserves_existing_standalone_contract(runtime
     case = await saved_case(bundle)
     assert case.channel_metadata["context_status"] == "delivered"
     assert "incident_unresolved_relation" not in case.channel_metadata
-    bundle.retrieve.assert_called_once_with(question.question)
+    bundle.retrieve.assert_called_once_with(
+        question.question,
+        detected_version=None,
+        detect_from_query=False,
+        require_reranker_success=True,
+    )
     bundle.llm.invoke.assert_called_once()
 
 
