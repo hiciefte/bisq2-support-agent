@@ -36,6 +36,7 @@ def reaction_runtime():
     handler._is_staff_sender = Mock(return_value=True)
     handler._reaction_to_message["$reaction"] = "$original"
     handler._reaction_to_sender["$reaction"] = STAFF
+    handler._reaction_to_key["$reaction"] = "👍"
     return client, store, observer, handler, processor
 
 
@@ -83,7 +84,12 @@ async def test_room_v11_content_redaction_reaches_callback_through_real_sync_par
         await handler.stop_listening()
         await client.close()
     store.redact_verdict.assert_awaited_once_with(ROOM, "$reaction")
-    processor.revoke_reaction.assert_awaited_once()
+    processor.revoke_reaction.assert_awaited_once_with(
+        channel_id="matrix",
+        external_message_id="$original",
+        reactor_id=STAFF,
+        raw_reaction="👍",
+    )
     observer.observe_source_event.assert_awaited_once()
     assert "$reaction" not in handler._reaction_to_message
 
@@ -102,7 +108,13 @@ async def test_context_redaction_failure_does_not_block_ordinary_revocation(
     await handler._on_redaction_event(
         NS(room_id=ROOM), NS(redacts="$reaction", sender=STAFF)
     )
-    processor.revoke_reaction.assert_awaited_once()
+    failing.assert_awaited_once()
+    processor.revoke_reaction.assert_awaited_once_with(
+        channel_id="matrix",
+        external_message_id="$original",
+        reactor_id=STAFF,
+        raw_reaction="👍",
+    )
     await client.close()
 
 
@@ -145,34 +157,40 @@ async def test_failed_internal_answer_capture_does_not_escape_or_fall_through(
     bundle = runtime_case
     bundle.runtime.settings.MATRIX_STAFF_ROOM = ROOM
     bundle.runtime.settings.MATRIX_RESPONDER_ROOMS = [ROOM]
-    capture = AsyncMock(side_effect=RuntimeError("database busy"))
+    capture = AsyncMock(side_effect=[RuntimeError("database busy"), True])
     bundle.services["matrix_reaction_handler"] = NS(
         handle_context_thread_answer=capture
     )
     handler = message_handler(bundle)
-    body = "A proposed reply"
-    event = NS(
-        event_id="$answer",
-        sender=STAFF,
-        body=body,
-        server_timestamp=1000,
-        source={
+    client = AsyncClient("https://offline.invalid", "@bot:example.org")
+    from nio import RoomMessageText
+
+    client.add_event_callback(handler._on_message, RoomMessageText)
+    events = [
+        {
+            "type": "m.room.message",
+            "event_id": event_id,
+            "sender": STAFF,
+            "origin_server_ts": 1000 + index,
             "content": {
-                "body": body,
+                "msgtype": "m.text",
+                "body": "A proposed reply",
                 "m.relates_to": {"rel_type": "m.thread", "event_id": "$root"},
-            }
-        },
-    )
-    await handler._on_message(NS(room_id=ROOM), event)
-    capture.assert_awaited_once()
+            },
+        }
+        for index, event_id in enumerate(["$answer-first", "$answer-second"])
+    ]
+    try:
+        await client.receive_response(sync_response(events))
+    finally:
+        await client.close()
+    assert [call.kwargs["event"].event_id for call in capture.await_args_list] == [
+        "$answer-first",
+        "$answer-second",
+    ]
     handler._record_staff_activity.assert_not_awaited()
     handler._maybe_handle_staff_command.assert_not_awaited()
     handler._get_orchestrator.assert_not_called()
-    # A later event still reaches this callback; one failure cannot abort sync.
-    capture.side_effect = None
-    capture.return_value = True
-    await handler._on_message(NS(room_id=ROOM), event)
-    assert capture.await_count == 2
 
 
 async def test_rejected_context_observation_preserves_staff_activity_and_commands(
@@ -182,6 +200,13 @@ async def test_rejected_context_observation_preserves_staff_activity_and_command
     observation = AsyncMock(side_effect=ValueError("Future event"))
     bundle.services["matrix_context_runtime"] = NS(observe_source_event=observation)
     handler = message_handler(bundle)
+    # Exercise the real command adapter after a failed source observation.
+    handler._maybe_handle_staff_command = (
+        MatrixMessageHandler._maybe_handle_staff_command.__get__(handler)
+    )
+    handler.staff_command_room_ids = frozenset({SOURCE_ROOM})
+    adapter = NS(handle_event=AsyncMock(return_value=True))
+    bundle.services["matrix_chatops_adapter"] = adapter
     body = "/status"
     event = NS(
         event_id="$future",
@@ -193,4 +218,6 @@ async def test_rejected_context_observation_preserves_staff_activity_and_command
     await handler._on_message(NS(room_id=SOURCE_ROOM), event)
     observation.assert_awaited_once()
     handler._record_staff_activity.assert_awaited_once()
-    handler._maybe_handle_staff_command.assert_awaited_once()
+    adapter.handle_event.assert_awaited_once_with(
+        room_id=SOURCE_ROOM, event_id="$future", sender=STAFF, text="/status"
+    )

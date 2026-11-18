@@ -212,9 +212,11 @@ staff sends. A local expiry task turns Matrix generation off and cancels pending
 context workers. Already-started network/model
 operations may finish after cancellation and remain uncertain until reconciled;
 they are never automatically retried. A process that is down at expiration still
-rejects expired work after restart. Reaching a daily budget ceiling denies further
-model admission for that UTC day; it does not turn the policy off, and admission
-can resume the next UTC day within the unchanged total budget and cutoff. A total
+rejects expired work after restart. A daily budget limit denies a call while its
+reservation would exceed the remaining allowance; it does not turn the policy off.
+Settlement can release enough reserved capacity for another call on the same UTC
+day. Admission can also resume the next UTC day within the unchanged total budget
+and cutoff. A total
 budget ceiling denies further model admission; the watchdog can then reconcile
 the admitted calls and stop the trial under its separately bound authority.
 

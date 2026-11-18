@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Literal
 
 from app.channels.staff_assist.context_conversation import (
@@ -32,6 +33,33 @@ with previous_generated_request when supplied: material_change means new facts t
 change the useful reply, not thanks, repetition or unrelated chatter. Do not invent
 resolution, relationships or facts. request_summary is a short description, not a reply.
 """
+
+
+def explicit_resolution(text: str) -> bool:
+    """A durable resolved flag needs affirmative evidence, not an arbitrary quote."""
+    text = text.casefold().replace("’", "'")
+    if any(marker in text for marker in ('"', "“", "”", ">")):
+        return False
+    if re.search(
+        r"\?|\b(?:still|but|however|maybe|perhaps|unsure|not sure|if|hope|wish|would|should|says|said|claims|reportedly|according)\b",
+        text,
+    ):
+        return False
+    if re.search(
+        r"\b(?:not|never|cannot|can't|isn't|isnt|wasn't|wasnt|hasn't|hasnt|doesn't|didn't)\b",
+        text,
+    ):
+        return False
+    return bool(
+        re.search(
+            r"\b(?:problem|issue)\s+(?:is\s+)?(?:fixed|resolved|solved|gone)\b"
+            r"|\b(?:it(?:'s| is)|that(?:'s| is)|this is)\s+(?:fixed|resolved|solved)\b"
+            r"|\b(?:works|working)\s+(?:again|now)\b"
+            r"|\b(?:all good|no longer (?:fails|failing)|that fixed it|i fixed it)\b"
+            r"|^(?:fixed|resolved|solved)[.! ]*$",
+            text,
+        )
+    )
 
 
 class RequestGateDecision(BaseModel):
@@ -82,6 +110,9 @@ class RequestGateService:
             if decision.category == "unanswered_support_request" and not any(
                 known[key].sender_id == snapshot.requester_id
                 and not known[key].is_staff
+                and not known[key].non_text
+                and bool(known[key].text.strip())
+                and not obvious_acknowledgement(known[key].text)
                 for key in ids
             ):
                 raise ValueError("requester_evidence_missing")
@@ -94,6 +125,7 @@ class RequestGateService:
                     or resolution.is_staff
                     or obvious_acknowledgement(resolution.text)
                     or resolution.non_text
+                    or not explicit_resolution(resolution.text)
                     or resolution.event_id not in ids
                 ):
                     raise ValueError("invalid_resolution_evidence")

@@ -10,7 +10,7 @@ import re
 from typing import Any
 
 from app.channels.staff_assist.public_context import ContextEvidence
-from app.services.rag.code_evidence import explicit_product
+from app.services.rag.code_evidence import explicit_product, explicit_user_version
 
 _PRODUCTS = {
     "bisq1": "bisq1",
@@ -42,7 +42,11 @@ def staff_requester_product(question: str) -> str | None:
         re.I,
     ):
         # Attribution and hypothetical scope survive commas in the same sentence.
-        prefix = re.split(r"[.!?;\n]", text[: mention.start()])[-1]
+        prefix = re.split(
+            r"[!?;\n]|\.(?:\s|$)|\b(?:but|however)\b",
+            text[: mention.start()],
+            flags=re.I,
+        )[-1]
         if re.search(
             r"\b(?:not|never|no longer|don['’]t|isn['’]t|wasn['’]t|"
             r"if|whether|maybe|perhaps|assuming|suppose|could|would|might|should|"
@@ -61,10 +65,61 @@ def staff_requester_product(question: str) -> str | None:
             re.I,
         ):
             continue
+        # Positive requester attribution, or a direct product-scoped question.
+        # A third-party report is not a declaration of the requester's app.
+        if not re.search(
+            r"(?:^\s*(?:in\s+|using\s+|on\s+)?$|\b(?:I|I'm|I’m|my|we|our)\b)",
+            prefix,
+            re.I,
+        ) or re.search(
+            r"\b(?:friend|helper|peer|someone|another|they|he|she)\b", prefix, re.I
+        ):
+            continue
         product = explicit_product(mention.group())
         if product:
             products.add(product)
     return products.pop() if len(products) == 1 else None
+
+
+def staff_requester_version(question: str) -> str | None:
+    """Only affirmative current-version declarations become release filters."""
+    text = re.sub(r'"[^"\n]*"|“[^”\n]*”|`[^`\n]*`|(?m:^\s*>.*$)', "", question)
+    versions = set()
+    for clause in re.split(r"[!?;\n]|\.(?:\s|$)|\b(?:but|however)\b", text, flags=re.I):
+        if re.search(
+            r"\b(?:friend|helper|peer|someone|another|they|he|she|said|"
+            r"not|never|no longer|don['’]t|doesn['’]t|isn['’]t|wasn['’]t|"
+            r"aren['’]t|weren['’]t|haven['’]t|hasn['’]t|didn['’]t|"
+            r"if|whether|maybe|perhaps|assuming|suppose|could|would|might|should|"
+            r"can I|can we|am I|are we|do I|do we|"
+            r"plan(?:ning)?|intend(?:ing)?|want|hope|consider(?:ing)?|"
+            r"thinking about|will|going to|used to|previously|formerly|"
+            r"upgrad(?:e|ing)|downgrad(?:e|ing)|switch(?:ing)?|migrat(?:e|ing))\b",
+            clause,
+            re.I,
+        ):
+            continue
+        if not (
+            re.search(
+                r"\b(?:I|we)(?:['’]m|['’]re| am| are| have)?\s+"
+                r"(?:(?:currently|still|now|already|just)\s+)?"
+                r"(?:use|using|run|running|installed|updated to|upgraded to)\b|"
+                r"\b(?:my|our)\s+(?:installed |current )?(?:bisq|version)\b|"
+                r"^\s*(?:(?:using|running|on)\s+)?bisq[ _-]?(?:1|2|easy)\b",
+                clause,
+                re.I,
+            )
+        ):
+            continue
+        version = explicit_user_version(clause)
+        if version:
+            versions.add(version)
+    return versions.pop() if len(versions) == 1 else None
+
+
+def _source_title_product(title: str) -> str | None:
+    named = _named_products(title)
+    return named[0] if len(named) == 1 else None
 
 
 def _named_products(text: str) -> list[str]:
@@ -86,18 +141,18 @@ def source_applicability(
     named = _named_products(text)
     # A product mention in prose may be an exclusion or comparison. Only a
     # product-specific title or a leading explicit scope label supplies scope.
-    scoped_product = staff_requester_product(source.title)
-    if not scoped_product:
-        label = re.match(
-            r"^\s*(?:#+\s*)?(Bisq[ _-]?(?:1|2|easy))\s*:", source.content, re.I
-        )
-        if label:
-            scoped_product = staff_requester_product(label.group(1))
-    # Incidental body mentions cannot erase an explicit title/heading scope.
-    # A genuine comparison title already yields no single scoped product.
-    single_named = scoped_product
+    title_scope = _source_title_product(source.title)
+    label = re.match(
+        r"^\s*(?:#+\s*)?(Bisq[ _-]?(?:1|2|easy))\s*:", source.content, re.I
+    )
+    body_scope = _source_title_product(label.group(1)) if label else None
+    single_named = title_scope or body_scope
     reasons = []
-    if declared and single_named and declared != single_named:
+    if title_scope and body_scope and title_scope != body_scope:
+        reasons.append("source_explicit_scope_conflict")
+    if declared and any(
+        scope and scope != declared for scope in (title_scope, body_scope)
+    ):
         reasons.append("source_product_metadata_conflict")
     scope = declared or single_named
     if product in {"bisq1", "bisq2"} and scope and product != scope:

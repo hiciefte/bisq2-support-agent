@@ -292,7 +292,23 @@ async def test_acknowledged_root_is_reused_after_facts_arrive_before_note(
             content=json.dumps(body), usage={"input_tokens": 100, "output_tokens": 30}
         )
 
-    bundle.llm.invoke = Mock(side_effect=generate)
+    ordinary_generate = generate
+
+    def generate_with_admission(prompt, system_content):
+        if "Decide whether a later requester exchange" in system_content:
+            return NS(
+                content=json.dumps(
+                    {
+                        "relation": "same_request",
+                        "new_request_event_ids": [],
+                        "reason": "The new payment confirmation continues this trade.",
+                    }
+                ),
+                usage={"input_tokens": 100, "output_tokens": 30},
+            )
+        return ordinary_generate(prompt, system_content)
+
+    bundle.llm.invoke = Mock(side_effect=generate_with_admission)
     case = await incoming(bundle, event(bundle, "$facts", "The trade period expired"))
     assert injected
     assert case.channel_metadata["context_status"] == "delivered"

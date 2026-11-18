@@ -4,8 +4,10 @@ Listens for m.reaction events via nio callbacks and converts them
 into normalized ReactionEvents for processing.
 """
 
+import asyncio
 import logging
 import re
+import sqlite3
 from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -85,6 +87,8 @@ class MatrixReactionHandler(ReactionHandlerBase):
 
     async def start_listening(self) -> None:
         """Register nio callbacks for m.reaction and m.room.redaction events."""
+        if self._callback_registered:
+            return
         client = self.runtime.resolve("matrix_client")
         client.add_event_callback(self._on_reaction_event, NioReactionEvent)
         client.add_event_callback(self._on_redaction_event, NioRedactionEvent)
@@ -96,15 +100,21 @@ class MatrixReactionHandler(ReactionHandlerBase):
     async def stop_listening(self) -> None:
         """Remove nio callbacks."""
         client = self.runtime.resolve_optional("matrix_client")
-        if (
-            client
-            and self._callback_registered
-            and hasattr(client, "remove_event_callback")
-        ):
-            client.remove_event_callback(self._on_reaction_event)
-            client.remove_event_callback(self._on_redaction_event)
-            if NioBadEventType is not None:
-                client.remove_event_callback(self._on_content_redaction_event)
+        if client is not None and self._callback_registered:
+            callbacks = [
+                self._on_reaction_event,
+                self._on_redaction_event,
+                self._on_content_redaction_event,
+            ]
+            if hasattr(client, "remove_event_callback"):
+                for callback in callbacks:
+                    client.remove_event_callback(callback)
+            elif isinstance(getattr(client, "event_callbacks", None), list):
+                client.event_callbacks[:] = [
+                    entry
+                    for entry in client.event_callbacks
+                    if entry.func not in callbacks
+                ]
             self._callback_registered = False
             self._reaction_to_message.clear()
             self._reaction_to_sender.clear()
@@ -215,6 +225,10 @@ class MatrixReactionHandler(ReactionHandlerBase):
         target = relation.get("event_id")
         if not isinstance(target, str) or not target:
             return False
+        # A tracked ordinary escalation is independently identified; its
+        # established approval path must not depend on the Staff-note ledger.
+        if self._lookup_staff_escalation_record(target) is not None:
+            return False
         store = self._context_feedback_store()
         if store is None or not await store.has_note(room_id, target):
             return False
@@ -289,7 +303,10 @@ class MatrixReactionHandler(ReactionHandlerBase):
             answer=answer,
             timestamp_ms=timestamp,
             reply_to_event_id=(
-                reply_to.get("event_id", "") if isinstance(reply_to, dict) else ""
+                reply_to.get("event_id", "")
+                if isinstance(reply_to, dict)
+                and relation.get("is_falling_back", False) is False
+                else ""
             ),
             replaces_event_id=replaces,
         )
@@ -750,7 +767,16 @@ class MatrixReactionHandler(ReactionHandlerBase):
                 str(getattr(event, "sender", "") or "")
             ):
                 try:
-                    await store.redact_verdict(room_id, redacts)
+                    # Idempotent local projection only: no Matrix read/send or
+                    # delivery retry. Bound transient SQLite retries to three.
+                    for attempt in range(3):
+                        try:
+                            await store.redact_verdict(room_id, redacts)
+                            break
+                        except sqlite3.OperationalError:
+                            if attempt == 2:
+                                raise
+                            await asyncio.sleep(0.05 * (attempt + 1))
                 except Exception:
                     self._logger.exception("Staff verdict redaction failed")
         if not is_responder_room_allowed(

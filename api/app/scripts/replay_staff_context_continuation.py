@@ -28,13 +28,13 @@ from app.channels.staff_assist.context_gate import RequestGateService
 from app.channels.staff_assist.context_trial import ContextTrial, ContextTrialStore
 from app.scripts.replay_staff_context import (
     ReplayCalls,
+    _jsonl_bytes,
     append_private,
     digest_bytes,
     json_bytes,
     load_inputs,
     model_code_hashes,
     ordered_turns,
-    read_jsonl,
     render_report,
     replay,
     write_private,
@@ -76,12 +76,6 @@ def pinned_bytes(pin: dict[str, Any]) -> bytes | None:
     return data
 
 
-def optional_rows(path: Path) -> list[dict[str, Any]]:
-    if path.name in OPTIONAL_EMPTY_LOGS and not path.exists():
-        return []
-    return read_jsonl(path)
-
-
 def verify_pins(pins: dict[str, dict[str, str]]) -> None:
     for pin in pins.values():
         pinned_bytes(pin)
@@ -110,43 +104,108 @@ def restore_trial(descriptor: dict[str, Any]) -> ContextTrial:
     return trial
 
 
+def _receipt_rows(db: sqlite3.Connection) -> list[dict[str, Any]]:
+    db.row_factory = sqlite3.Row
+    return [
+        dict(row)
+        for row in db.execute(
+            "SELECT * FROM matrix_context_trial_spend ORDER BY started_at,escalation_id,kind,call_id"
+        )
+    ]
+
+
 def receipts(database: Path) -> list[dict[str, Any]]:
     with closing(
         sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True)
     ) as db:
-        db.row_factory = sqlite3.Row
-        return [
-            dict(row)
-            for row in db.execute(
-                "SELECT * FROM matrix_context_trial_spend ORDER BY started_at,escalation_id,kind,call_id"
+        return _receipt_rows(db)
+
+
+def parent_buffers(
+    parent_plan: Path,
+    parent_execution: Path,
+    expected_pins: dict[str, dict[str, Any]] | None,
+) -> tuple[dict[str, dict[str, Any]], dict[str, bytes]]:
+    paths = {name: parent_execution / name for name in PARENT_FILES}
+    paths["parent_plan"] = parent_plan
+    if expected_pins is not None and set(expected_pins) != set(paths):
+        raise ValueError("Approved parent file set changed")
+    pins, buffers = {}, {}
+    for name, path in paths.items():
+        if expected_pins is not None:
+            pin = expected_pins[name]
+            if str(path.resolve()) != pin["path"]:
+                raise ValueError("Approved parent path changed")
+            data = pinned_bytes(pin)
+            if data is None and name not in OPTIONAL_EMPTY_LOGS:
+                raise ValueError("Required parent record is absent")
+        else:
+            data = (
+                None
+                if name in OPTIONAL_EMPTY_LOGS and not path.exists()
+                else path.read_bytes()
             )
-        ]
+            pin = {
+                "path": str(path.resolve()),
+                "sha256": None if data is None else digest_bytes(data),
+            }
+        pins[name], buffers[name] = pin, data or b""
+    return pins, buffers
+
+
+def original_execution_identity(parent: dict[str, Any]) -> str:
+    return digest_bytes(
+        json_bytes(
+            {
+                "approved_plan_sha256": parent["pins"]["parent_plan"]["sha256"],
+                "execution_intent_sha256": parent["pins"]["execution-intent.json"][
+                    "sha256"
+                ],
+            }
+        )
+    )
+
+
+def continuation_claim(parent: dict[str, Any]) -> Path:
+    value = parent["plan"].get("execution_claim")
+    if not isinstance(value, str) or not Path(value).is_absolute():
+        raise ValueError("Original plan lacks a canonical execution claim")
+    path = Path(value)
+    if path.name != "execution-claim.json" or str(path.resolve()) != value:
+        raise ValueError("Original execution claim is not canonical")
+    return path.with_name("execution-claim.continuation.json")
 
 
 def validate_parent(
-    parent_plan: Path, parent_execution: Path, original_code_root: Path
+    parent_plan: Path,
+    parent_execution: Path,
+    original_code_root: Path,
+    *,
+    expected_pins: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    plan = json.loads(parent_plan.read_text())
+    pins, buffers = parent_buffers(parent_plan, parent_execution, expected_pins)
+    plan = json.loads(buffers["parent_plan"])
     inputs = load_inputs(plan["sources"])
     for relative, expected in plan["code_sha256"].items():
         if digest_bytes((original_code_root / relative).read_bytes()) != expected:
             raise ValueError("Original approved source no longer matches its plan")
-    pins = {name: file_pin(parent_execution / name) for name in PARENT_FILES}
-    pins["parent_plan"] = file_pin(parent_plan)
     for suffix in ("-wal", "-journal"):
         path = Path(str(parent_execution / "replay.db") + suffix)
         if path.exists() and path.stat().st_size:
             raise ValueError("Parent database has an active or unreconciled journal")
-    intent = json.loads((parent_execution / "execution-intent.json").read_text())
+    intent = json.loads(buffers["execution-intent.json"])
     if intent["approved_plan_sha256"] != pins["parent_plan"]["sha256"]:
         raise ValueError("Parent approval receipt does not match plan")
     trial = restore_trial(intent["trial_descriptor"])
-    rows = receipts(parent_execution / "replay.db")
+    with closing(sqlite3.connect(":memory:")) as db:
+        db.deserialize(buffers["replay.db"])
+        db.execute("PRAGMA query_only=ON")
+        rows = _receipt_rows(db)
     if not rows or any(
         row["status"] != "settled" or row["trial_id"] != trial.trial_id for row in rows
     ):
         raise ValueError("Parent has uncertain, overrun or unrelated model receipts")
-    calls = read_jsonl(parent_execution / "call-intents.jsonl")
+    calls = _jsonl_bytes(buffers["call-intents.jsonl"])
 
     def keys(values: list[dict[str, Any]]) -> list[tuple[int, str, str]]:
         return [
@@ -160,8 +219,8 @@ def validate_parent(
 
     if len(set(keys(calls))) != len(calls) or set(keys(calls)) != set(keys(rows)):
         raise ValueError("Parent call intents and settled receipts do not reconcile")
-    gate_rows = optional_rows(parent_execution / "gates.jsonl")
-    draft_rows = optional_rows(parent_execution / "drafts.jsonl")
+    gate_rows = _jsonl_bytes(buffers["gates.jsonl"] or b"")
+    draft_rows = _jsonl_bytes(buffers["drafts.jsonl"] or b"")
     completed_keys = {
         (row["case_id"], "gate", row["snapshot_version"]) for row in gate_rows
     }
@@ -174,7 +233,7 @@ def validate_parent(
         raise ValueError(
             "Parent completed-output records do not reconcile with receipts"
         )
-    result = json.loads((parent_execution / "result.json").read_text())
+    result = json.loads(buffers["result.json"])
     if (
         result.get("status") != "stopped"
         or result.get("stopped_reason") != "invalid_conversation_gate"
@@ -184,7 +243,7 @@ def validate_parent(
         )
     if result["provider_invocations_started_or_uncertain"] != len(rows):
         raise ValueError("Parent call count does not reconcile")
-    failures = read_jsonl(parent_execution / "failures.jsonl")
+    failures = _jsonl_bytes(buffers["failures.jsonl"])
     if len(failures) != 1 or failures[0]["reason"] != "invalid_conversation_gate":
         raise ValueError("Only one known completed gate-validation stop is supported")
     failure = failures[0]
@@ -221,11 +280,9 @@ def validate_parent(
         < ordered[cursor].timestamp_ms
     ):
         raise ValueError("Parent did not stop between the verified event groups")
-    with closing(
-        sqlite3.connect(
-            (parent_execution / "replay.db").resolve().as_uri() + "?mode=ro", uri=True
-        )
-    ) as db:
+    with closing(sqlite3.connect(":memory:")) as db:
+        db.deserialize(buffers["replay.db"])
+        db.execute("PRAGMA query_only=ON")
         descriptor = db.execute(
             "SELECT descriptor FROM matrix_context_trials WHERE trial_id=?",
             (trial.trial_id,),
@@ -246,6 +303,9 @@ def validate_parent(
         "plan": plan,
         "inputs": inputs,
         "pins": pins,
+        "buffers": buffers,
+        "gates": gate_rows,
+        "drafts": draft_rows,
         "trial": trial,
         "receipts": rows,
         "calls": calls,
@@ -319,12 +379,13 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
     parent = validate_parent(
         args.parent_plan, args.parent_execution, args.original_code_root
     )
+    claim = continuation_claim(parent)
     args.output.mkdir(parents=True, exist_ok=False, mode=0o700)
     database = args.output / "prepared-state.db"
-    shutil.copyfile(args.parent_execution / "replay.db", database)
-    if digest_bytes(database.read_bytes()) != parent["pins"]["replay.db"]["sha256"]:
-        raise ValueError("Copied parent ledger changed")
-    os.chmod(database, 0o600)
+    with os.fdopen(
+        os.open(database, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb"
+    ) as stream:
+        stream.write(parent["buffers"]["replay.db"])
     linkage = asyncio.run(reconcile_saved_gate(database, parent))
     if receipts(database) != parent["receipts"]:
         raise ValueError("Offline reconciliation altered spend receipts")
@@ -334,8 +395,8 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
             "last_processed_virtual_time_ms"
         ],
         "formed_cases": parent["result"]["formed_cases"],
-        "drafts": optional_rows(args.parent_execution / "drafts.jsonl"),
-        "gates": [*optional_rows(args.parent_execution / "gates.jsonl"), linkage],
+        "drafts": parent["drafts"],
+        "gates": [*parent["gates"], linkage],
         "capacity_limited_snapshots": parent["result"].get(
             "capacity_limited_snapshots", []
         ),
@@ -358,6 +419,8 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
         "parent_execution": str(args.parent_execution.resolve()),
         "original_code_root": str(args.original_code_root.resolve()),
         "parent_pins": parent["pins"],
+        "original_execution_identity": original_execution_identity(parent),
+        "continuation_claim": str(claim),
         "prepared_pins": {
             name: file_pin(args.output / name)
             for name in (
@@ -432,6 +495,7 @@ def approved_manifest(
         Path(manifest["parent_plan"]),
         Path(manifest["parent_execution"]),
         Path(manifest["original_code_root"]),
+        expected_pins=manifest["parent_pins"],
     )
     for field in ("prefix_sha256", "remaining_stream_sha256"):
         if manifest[field] != parent[field]:
@@ -441,6 +505,8 @@ def approved_manifest(
     ) or manifest["parent_call_count"] != len(parent["receipts"]):
         raise ValueError("Cumulative continuation limits changed")
     derived = {
+        "original_execution_identity": original_execution_identity(parent),
+        "continuation_claim": str(continuation_claim(parent)),
         "parent_call_ids": sorted({row["call_id"] for row in parent["receipts"]}),
         "cumulative_call_cap": parent["plan"]["max_model_calls"],
         "processed_event_count": parent["cursor"],
@@ -483,16 +549,15 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("Original replay window has ended or is not active")
     if not os.environ.get("OPENAI_API_KEY"):
         raise ValueError("Existing secret environment must provide OPENAI_API_KEY")
-    # Parent-scoped claim survives copied manifests and all uncertain failures.
-    parent_directory = Path(manifest["parent_execution"]).resolve()
-    claim = parent_directory.parent / (
-        parent_directory.name + ".continuation-claim.json"
-    )
+    # The original approved plan fixes this location. Copies of parent records
+    # cannot fork the same remaining allowance into different directory claims.
+    claim = continuation_claim(parent)
     write_private(
         claim,
         {
             "manifest_sha256": args.approve_manifest_sha256,
             "parent_result_sha256": parent["pins"]["result.json"]["sha256"],
+            "original_execution_identity": original_execution_identity(parent),
         },
     )
     output = args.manifest.parent / "execution"
@@ -517,7 +582,7 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
     ):
         raise ValueError("Copied continuation ledger changed")
     for name in ("gates.jsonl", "drafts.jsonl", "call-intents.jsonl"):
-        data = pinned_bytes(parent["pins"][name])
+        data = parent["buffers"][name]
         with os.fdopen(
             os.open(output / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb"
         ) as stream:

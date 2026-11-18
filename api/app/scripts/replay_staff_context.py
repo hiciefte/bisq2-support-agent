@@ -104,7 +104,9 @@ def write_private(path: Path, value: Any) -> None:
 
 def append_private(path: Path, value: Any) -> None:
     with os.fdopen(
-        os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600), "a"
+        os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600),
+        "a",
+        encoding="utf-8",
     ) as stream:
         stream.write(json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n")
         stream.flush()
@@ -866,8 +868,13 @@ class ReplayCalls:
                         "case_id": snapshot.case_id,
                         "kind": kind,
                         "call_id": call_id,
-                        "status": "not_started",
+                        "status": (
+                            "provider_not_started_ledger_uncertain"
+                            if adapter.unstarted_cleanup_error
+                            else "not_started"
+                        ),
                         "reason": reason,
+                        "cleanup_error_class": adapter.unstarted_cleanup_error,
                     },
                 )
                 intent_written = False
@@ -893,7 +900,7 @@ class ReplayCalls:
             intent_written = True
             return None
 
-        return BudgetedContextLLM(
+        adapter = BudgetedContextLLM(
             self.store,
             self.llm,
             snapshot.case_id,
@@ -903,6 +910,7 @@ class ReplayCalls:
             before_provider=before_provider,
             on_not_started=on_not_started,
         )
+        return adapter
 
 
 def _source_cases(
@@ -1013,188 +1021,194 @@ async def replay(
 
     async def run_due(until: int) -> None:
         nonlocal last_time, stopped
-        admission_settled = False
-        pending = await coordinator.due(now_ms=until)
-        for initial in sorted(
-            pending, key=lambda row: (row.last_requester_at_ms + delay_ms, row.case_id)
-        ):
-            virtual = max(last_time, initial.last_requester_at_ms + delay_ms)
-            if virtual > until:
-                continue
-            snapshot = await coordinator.snapshot(initial.case_id, now_ms=virtual)
-            if (
-                snapshot.case_id,
-                snapshot.version,
-            ) in skipped_versions or not await coordinator.claim(snapshot):
-                continue
-            gate_llm = calls.adapter(snapshot, kind="gate", virtual_time_ms=virtual)
-            if snapshot.kind == "admission":
-                prior_guard = gate_llm.before_call
-                gate_llm.before_call = (
-                    lambda bound_snapshot=snapshot, bound_guard=prior_guard: (
-                        coordinator.admission_call_guard(bound_snapshot)
-                        or (bound_guard() if bound_guard else None)
-                    )
-                )
-            gate_service = (
-                RequestAdmissionService(gate_llm)
-                if snapshot.kind == "admission"
-                else RequestGateService(gate_llm)
-            )
-            failed = False
-            note_llm = None
-            try:
-                gate = await asyncio.to_thread(gate_service.classify, snapshot)
-                gate_row = {
-                    "case_id": snapshot.case_id,
-                    "snapshot_version": snapshot.version,
-                    "virtual_time_ms": virtual,
-                    "input_event_ids": [turn.event_id for turn in snapshot.turns],
-                    "omitted_optional_event_ids": list(
-                        getattr(snapshot, "omitted_event_ids", ())
-                    ),
-                    "decision": gate.model_dump(),
-                    "usage": gate_service.usage,
-                }
-                append_private(output / "gates.jsonl", gate_row)
-                gates.append(gate_row)
-                if snapshot.kind == "admission":
-                    if calls.store.trial.reason():
-                        await coordinator.record_admission(
-                            snapshot,
-                            failure={
-                                "reason": calls.store.trial.reason(),
-                                "completed_decision": gate.model_dump(),
-                                "usage": gate_service.usage,
-                            },
-                        )
-                        raise ValueError("context_trial_expired_before_admission")
-                    admission = await coordinator.record_admission(
-                        snapshot, gate, usage=gate_service.usage
-                    )
-                    admission_settled = admission.changed or admission_settled
-                    if admission.created:
-                        formed.append(
-                            {
-                                "case_id": admission.case_id,
-                                "source_event_id": gate.new_request_event_ids[0],
-                                "room_id": snapshot.room_id,
-                                "requester_id": snapshot.requester_id,
-                                "created_virtual_time_ms": virtual,
-                                "admitted_from_case_id": snapshot.case_id,
-                            }
-                        )
-                    if admission.changed:
-                        break
+        while True:
+            admission_settled = False
+            pending = await coordinator.due(now_ms=until)
+            for initial in sorted(
+                pending,
+                key=lambda row: (row.last_requester_at_ms + delay_ms, row.case_id),
+            ):
+                virtual = max(last_time, initial.last_requester_at_ms + delay_ms)
+                if virtual > until:
                     continue
-                await coordinator.record_gate(snapshot, gate)
-                if not snapshot.should_draft(gate):
+                snapshot = await coordinator.snapshot(initial.case_id, now_ms=virtual)
+                if (
+                    snapshot.case_id,
+                    snapshot.version,
+                ) in skipped_versions or not await coordinator.claim(snapshot):
                     continue
-                matching = [
-                    session
-                    for session in sessions
-                    if session["room_id"] == snapshot.room_id
-                    and session["requester_id"] == snapshot.requester_id
-                    and session["first_anchor_ms"] <= virtual
-                ]
-                if not matching:
-                    raise ValueError("Replay request has no input cohort")
-                cohort = max(matching, key=lambda session: session["first_anchor_ms"])
-                evidence, evidence_coverage = evidence_at(cohort, virtual, inputs)
-                request = selected_staff_request(snapshot, gate, evidence)
-                note_llm = calls.adapter(
-                    snapshot, kind=snapshot.kind, virtual_time_ms=virtual
-                )
-                preview = await asyncio.to_thread(
-                    StaffContextService(
-                        note_llm, verified_examples=inputs["examples_snapshot"]
-                    ).preview,
-                    request,
-                )
-                if note_llm.reason:
-                    raise ValueError(note_llm.reason)
-                source_cases = _source_cases(snapshot, gate.selected_event_ids, inputs)
-                row = {
-                    "case_id": snapshot.case_id,
-                    "kind": snapshot.kind,
-                    "virtual_time_ms": virtual,
-                    "snapshot_version": snapshot.version,
-                    "input_event_ids": gate.selected_event_ids,
-                    "omitted_optional_event_ids": list(
-                        getattr(snapshot, "omitted_event_ids", ())
-                    ),
-                    "source_case_ids": source_cases,
-                    "reference_category": _reference_category(
-                        source_cases, inputs["comparisons"]
-                    ),
-                    "evidence_coverage": evidence_coverage,
-                    "model_called": preview.model_called,
-                    "rendered": bool(preview.rendered_note),
-                    "reply": preview.decision.reply,
-                    "preview": preview.model_dump(),
-                }
-                generations.append(row)
-                append_private(output / "drafts.jsonl", row)
-                await coordinator.record_draft(
-                    snapshot, preview, selected_event_ids=gate.selected_event_ids
-                )
-                if preview.decision.reason == "generation_unavailable":
-                    raise ValueError("provider_outcome_unknown")
-            except Exception as exc:
-                reason = getattr(note_llm, "reason", None) or gate_llm.reason
-                if reason is None:
-                    reason = (
-                        str(exc)
-                        if type(exc).__name__ == "RequestGateError"
-                        else type(exc).__name__
-                    )
+                gate_llm = calls.adapter(snapshot, kind="gate", virtual_time_ms=virtual)
                 if snapshot.kind == "admission":
-                    await coordinator.record_admission(
-                        snapshot,
-                        failure={
-                            "reason": reason,
-                            "raw_output": getattr(exc, "raw", None),
-                            "usage": gate_service.usage,
-                            "model_called": gate_llm.started,
-                        },
+                    prior_guard = gate_llm.before_call
+                    gate_llm.before_call = (
+                        lambda bound_snapshot=snapshot, bound_guard=prior_guard: (
+                            coordinator.admission_call_guard(bound_snapshot)
+                            or (bound_guard() if bound_guard else None)
+                        )
                     )
-                capacity = reason in {
-                    "conversation_input_capacity_reached",
-                    "context_trial_invalid_call_bound",
-                }
-                failed = not capacity
-                if capacity:
-                    item = {
+                gate_service = (
+                    RequestAdmissionService(gate_llm)
+                    if snapshot.kind == "admission"
+                    else RequestGateService(gate_llm)
+                )
+                failed = False
+                note_llm = None
+                try:
+                    gate = await asyncio.to_thread(gate_service.classify, snapshot)
+                    gate_row = {
                         "case_id": snapshot.case_id,
                         "snapshot_version": snapshot.version,
                         "virtual_time_ms": virtual,
-                        "reason": reason,
-                        "assessment": "unassessed_capacity_limited",
+                        "input_event_ids": [turn.event_id for turn in snapshot.turns],
+                        "omitted_optional_event_ids": list(
+                            getattr(snapshot, "omitted_event_ids", ())
+                        ),
+                        "decision": gate.model_dump(),
+                        "usage": gate_service.usage,
                     }
-                    capacity_limited.append(item)
-                    append_private(output / "capacity-limited.jsonl", item)
-                    skipped_versions.add((snapshot.case_id, snapshot.version))
-                    continue
-                stopped = reason
-                append_private(
-                    output / "failures.jsonl",
-                    {
+                    append_private(output / "gates.jsonl", gate_row)
+                    gates.append(gate_row)
+                    if snapshot.kind == "admission":
+                        if calls.store.trial.reason():
+                            await coordinator.record_admission(
+                                snapshot,
+                                failure={
+                                    "reason": calls.store.trial.reason(),
+                                    "completed_decision": gate.model_dump(),
+                                    "usage": gate_service.usage,
+                                },
+                            )
+                            raise ValueError("context_trial_expired_before_admission")
+                        admission = await coordinator.record_admission(
+                            snapshot, gate, usage=gate_service.usage
+                        )
+                        admission_settled = admission.changed or admission_settled
+                        if admission.created:
+                            formed.append(
+                                {
+                                    "case_id": admission.case_id,
+                                    "source_event_id": gate.new_request_event_ids[0],
+                                    "room_id": snapshot.room_id,
+                                    "requester_id": snapshot.requester_id,
+                                    "created_virtual_time_ms": virtual,
+                                    "admitted_from_case_id": snapshot.case_id,
+                                }
+                            )
+                        if admission.changed:
+                            break
+                        continue
+                    await coordinator.record_gate(snapshot, gate)
+                    if not snapshot.should_draft(gate):
+                        continue
+                    matching = [
+                        session
+                        for session in sessions
+                        if session["room_id"] == snapshot.room_id
+                        and session["requester_id"] == snapshot.requester_id
+                        and session["first_anchor_ms"] <= virtual
+                    ]
+                    if not matching:
+                        raise ValueError("Replay request has no input cohort")
+                    cohort = max(
+                        matching, key=lambda session: session["first_anchor_ms"]
+                    )
+                    evidence, evidence_coverage = evidence_at(cohort, virtual, inputs)
+                    request = selected_staff_request(snapshot, gate, evidence)
+                    note_llm = calls.adapter(
+                        snapshot, kind=snapshot.kind, virtual_time_ms=virtual
+                    )
+                    preview = await asyncio.to_thread(
+                        StaffContextService(
+                            note_llm, verified_examples=inputs["examples_snapshot"]
+                        ).preview,
+                        request,
+                    )
+                    if note_llm.reason:
+                        raise ValueError(note_llm.reason)
+                    source_cases = _source_cases(
+                        snapshot, gate.selected_event_ids, inputs
+                    )
+                    row = {
                         "case_id": snapshot.case_id,
+                        "kind": snapshot.kind,
                         "virtual_time_ms": virtual,
-                        "kind": "gate_or_draft",
-                        "reason": reason,
-                        "raw_output": getattr(exc, "raw", None),
-                        "usage": getattr(exc, "usage", None),
-                    },
-                )
-                raise
-            finally:
-                # A failed run is never resumed, regardless of whether transport
-                # was proved absent; its durable call ledger remains intact.
-                await coordinator.finish(snapshot, uncertain=failed)
-                last_time = virtual
-        if admission_settled:
-            await run_due(until)
+                        "snapshot_version": snapshot.version,
+                        "input_event_ids": gate.selected_event_ids,
+                        "omitted_optional_event_ids": list(
+                            getattr(snapshot, "omitted_event_ids", ())
+                        ),
+                        "source_case_ids": source_cases,
+                        "reference_category": _reference_category(
+                            source_cases, inputs["comparisons"]
+                        ),
+                        "evidence_coverage": evidence_coverage,
+                        "model_called": preview.model_called,
+                        "rendered": bool(preview.rendered_note),
+                        "reply": preview.decision.reply,
+                        "preview": preview.model_dump(),
+                    }
+                    generations.append(row)
+                    append_private(output / "drafts.jsonl", row)
+                    await coordinator.record_draft(
+                        snapshot, preview, selected_event_ids=gate.selected_event_ids
+                    )
+                    if preview.decision.reason == "generation_unavailable":
+                        raise ValueError("provider_outcome_unknown")
+                except Exception as exc:
+                    reason = getattr(note_llm, "reason", None) or gate_llm.reason
+                    if reason is None:
+                        reason = (
+                            str(exc)
+                            if type(exc).__name__ == "RequestGateError"
+                            else type(exc).__name__
+                        )
+                    if snapshot.kind == "admission":
+                        await coordinator.record_admission(
+                            snapshot,
+                            failure={
+                                "reason": reason,
+                                "raw_output": getattr(exc, "raw", None),
+                                "usage": gate_service.usage,
+                                "model_called": gate_llm.started,
+                            },
+                        )
+                    capacity = reason in {
+                        "conversation_input_capacity_reached",
+                        "context_trial_invalid_call_bound",
+                    }
+                    failed = not capacity
+                    if capacity:
+                        item = {
+                            "case_id": snapshot.case_id,
+                            "snapshot_version": snapshot.version,
+                            "virtual_time_ms": virtual,
+                            "reason": reason,
+                            "assessment": "unassessed_capacity_limited",
+                        }
+                        capacity_limited.append(item)
+                        append_private(output / "capacity-limited.jsonl", item)
+                        skipped_versions.add((snapshot.case_id, snapshot.version))
+                        continue
+                    stopped = reason
+                    append_private(
+                        output / "failures.jsonl",
+                        {
+                            "case_id": snapshot.case_id,
+                            "virtual_time_ms": virtual,
+                            "kind": "gate_or_draft",
+                            "reason": reason,
+                            "raw_output": getattr(exc, "raw", None),
+                            "usage": getattr(exc, "usage", None),
+                        },
+                    )
+                    raise
+                finally:
+                    # A failed run is never resumed, regardless of whether transport
+                    # was proved absent; its durable call ledger remains intact.
+                    await coordinator.finish(snapshot, uncertain=failed)
+                    last_time = virtual
+            if not admission_settled:
+                return
 
     try:
         position = processed_event_count

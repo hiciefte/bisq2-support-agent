@@ -37,6 +37,10 @@ AttachmentEventTypes: tuple[type, ...] = ()
 try:
     from nio import MegolmEvent as _NioMegolmEvent
     from nio import (
+        RoomEncryptedAudio,
+        RoomEncryptedFile,
+        RoomEncryptedImage,
+        RoomEncryptedVideo,
         RoomMessageAudio,
         RoomMessageFile,
         RoomMessageImage,
@@ -51,6 +55,10 @@ else:
     RoomMessageTextType = _NioRoomMessageText
     MegolmEventType = _NioMegolmEvent
     AttachmentEventTypes = (
+        RoomEncryptedAudio,
+        RoomEncryptedFile,
+        RoomEncryptedImage,
+        RoomEncryptedVideo,
         RoomMessageAudio,
         RoomMessageFile,
         RoomMessageImage,
@@ -137,13 +145,19 @@ class MatrixMessageHandler:
             # A failed bootstrap task must remain visible to the caller, but
             # must not leave its callback or failed task attached after stop.
             self._sync_task = None
-            if self._callback_registered and hasattr(
-                self.client, "remove_event_callback"
-            ):
-                self.client.remove_event_callback(self._on_message)
-                if self._attachment_callback_registered:
-                    self.client.remove_event_callback(self._on_context_attachment)
-                    self._attachment_callback_registered = False
+            if self._callback_registered:
+                callbacks = [self._on_message, self._on_context_attachment]
+                if hasattr(self.client, "remove_event_callback"):
+                    for callback in callbacks:
+                        self.client.remove_event_callback(callback)
+                elif isinstance(getattr(self.client, "event_callbacks", None), list):
+                    # nio 0.25 has no removal method. Preserve other handlers.
+                    self.client.event_callbacks[:] = [
+                        entry
+                        for entry in self.client.event_callbacks
+                        if entry.func not in callbacks
+                    ]
+                self._attachment_callback_registered = False
                 self._callback_registered = False
             logger.info("Matrix message handler stopped")
 
@@ -170,12 +184,15 @@ class MatrixMessageHandler:
         engine = channel.runtime.resolve_optional("matrix_context_runtime")
         observe = getattr(engine, "observe_source_event", None)
         if callable(observe):
-            await observe(
-                room_id,
-                event,
-                channel,
-                is_staff=self._is_context_staff_sender(sender),
-            )
+            try:
+                await observe(
+                    room_id,
+                    event,
+                    channel,
+                    is_staff=self._is_context_staff_sender(sender),
+                )
+            except Exception:
+                logger.exception("Context attachment observation failed")
 
     async def _on_message(self, room: Any, event: Any) -> None:
         """Process Matrix message events through the standard channel pipeline."""

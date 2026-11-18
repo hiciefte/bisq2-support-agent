@@ -362,7 +362,11 @@ async def test_staff_answer_edit_and_redaction_reproject_without_network(feedbac
         reviewer="@staff:example.org",
     )
     assert await feedback.store.record_answer(
-        **args, event_id="$answer", answer="Original answer", timestamp_ms=1000
+        **args,
+        event_id="$answer",
+        answer="Original answer",
+        timestamp_ms=1000,
+        reply_to_event_id="$note",
     )
     event = SimpleNamespace(
         event_id="$edit",
@@ -476,6 +480,14 @@ async def test_matrix_proposal_preserves_admin_claim_and_completed_response(
     )
     case = await feedback.repository.get_by_id(feedback.case.id)
     assert proposal(case)["reviewer"] == "bob"
+    async with aiosqlite.connect(feedback.repository.db_path) as db:
+        active = await (
+            await db.execute(
+                "SELECT status,staff_id,claimed_at,staff_answer,responded_at,edit_distance,delivery_status FROM escalations WHERE id=?",
+                (feedback.case.id,),
+            )
+        ).fetchone()
+    assert active == before
     await feedback.store.redact_verdict("!staff:example.org", "$bob")
     async with aiosqlite.connect(feedback.repository.db_path) as db:
         after = await (
@@ -497,7 +509,7 @@ async def test_matrix_proposal_preserves_admin_claim_and_completed_response(
                 {"event_id": "$a", "reply": "Published A", "acknowledged_at_ms": 100},
                 {"event_id": "$b", "reply": "Published B", "acknowledged_at_ms": 3000},
             ],
-            0,
+            None,
         ),
         ([{"event_id": "$a", "reply": "Published A"}], None),
         (
@@ -539,3 +551,25 @@ async def test_general_thread_answer_compares_only_identified_published_version(
         proposal(await feedback.repository.get_by_id(feedback.case.id))["edit_distance"]
         == expected
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "target,expected", [("$oldnote", 0), ("$unresolved", None), ("", None)]
+)
+@pytest.mark.parametrize("timestamp_ms", [50, 5000])
+async def test_explicit_note_identity_wins_over_local_ack_clock(
+    feedback, target, expected, timestamp_ms
+):
+    assert await feedback.store.record_answer(
+        room_id="!staff:example.org",
+        root_event_id="$root",
+        event_id="$answer",
+        reviewer="bob",
+        answer="Check your network.",
+        timestamp_ms=timestamp_ms,
+        reply_to_event_id=target,
+    )
+    saved = proposal(await feedback.repository.get_by_id(feedback.case.id))
+    assert saved["edit_distance"] == expected
+    assert saved["draft_version_known"] is (expected is not None)

@@ -155,15 +155,25 @@ def effective_turns(turns: list[ConversationTurn]) -> list[ConversationTurn]:
 def native_request_ids(
     turns: list[ConversationTurn] | tuple[ConversationTurn, ...],
     requester_ids: set[str],
+    *,
+    projected: bool = False,
 ) -> set[str]:
-    """Follow observed native links from this request, never room proximity."""
+    """Follow native links and author-valid edit aliases, never room proximity."""
+    turns = tuple(turns) if projected else tuple(effective_turns(list(turns)))
     linked = set(requester_ids)
     while True:
         added = {
             turn.event_id
             for turn in turns
-            if turn.reply_to_event_id in linked or turn.thread_root_event_id in linked
+            if turn.reply_to_event_id in linked
+            or turn.thread_root_event_id in linked
+            or turn.replaces_event_id in linked
         }
+        added.update(
+            turn.replaces_event_id
+            for turn in turns
+            if turn.replaces_event_id and turn.event_id in linked | added
+        )
         if added <= linked:
             return linked
         linked.update(added)
@@ -222,6 +232,8 @@ class RequestSnapshot:
         return any(
             turn.sender_id == self.requester_id
             and not turn.is_staff
+            and not turn.non_text
+            and bool(turn.text.strip())
             and turn.event_id not in previous_ids
             and not obvious_acknowledgement(turn.text)
             for turn in self.turns
@@ -268,7 +280,7 @@ class RequestSnapshot:
             for event_id in (turn.event_id, turn.replaces_event_id)
             if event_id
         }
-        linked_ids = native_request_ids(self.turns, own_ids)
+        linked_ids = native_request_ids(self.turns, own_ids, projected=True)
         selected = set(selected_event_ids or [])
         return tuple(
             turn.event_id
@@ -344,11 +356,28 @@ def selected_staff_request(
 ) -> StaffContextRequest:
     """One conversion shared by live drafting and replay; never add future turns."""
     selected = set(decision.selected_event_ids)
+    parent_ids = {
+        target
+        for turn in snapshot.turns
+        if turn.event_id in selected
+        for target in (turn.reply_to_event_id, turn.thread_root_event_id)
+        if target
+    }
+    selected.update(
+        turn.event_id
+        for turn in snapshot.turns
+        if turn.non_text
+        and turn.sender_id == snapshot.requester_id
+        and (turn.event_id in parent_ids or turn.replaces_event_id in parent_ids)
+    )
     turns = [turn for turn in snapshot.turns if turn.event_id in selected]
     own = [
         turn.text
         for turn in turns
-        if turn.sender_id == snapshot.requester_id and not turn.is_staff
+        if turn.sender_id == snapshot.requester_id
+        and not turn.is_staff
+        and not turn.non_text
+        and bool(turn.text.strip())
     ]
     speakers = {**snapshot.speaker_aliases, snapshot.requester_id: "requester"}
     messages = []
@@ -741,6 +770,11 @@ class StaffConversationCoordinator:
         if metadata.get("conversation_admission_pending"):
             return self._admission_snapshot(case, metadata, now_ms=now_ms)
         invalidated = set(metadata.get("conversation_invalidated_event_ids", []))
+        invalidated.update(
+            item["event_id"]
+            for item in metadata.get("conversation_exchange", [])
+            if item.get("replaces_event_id") in invalidated
+        )
         raw = [
             ConversationTurn.from_dict(item)
             for item in metadata.get("conversation_exchange", [])
@@ -756,6 +790,19 @@ class StaffConversationCoordinator:
             if turn.sender_id == case.user_id
             and (turn.event_id in required or turn.replaces_event_id in required)
         ]
+        parent_ids = {
+            target
+            for turn in own
+            for target in (turn.reply_to_event_id, turn.thread_root_event_id)
+            if target
+        }
+        parents = [
+            turn
+            for turn in turns
+            if turn.sender_id == case.user_id
+            and (turn.event_id in parent_ids or turn.replaces_event_id in parent_ids)
+            and turn not in own
+        ]
         others = [turn for turn in turns if turn.sender_id != case.user_id]
         # Native members are required; neighbors are optional, explicitly bounded.
         linked = [
@@ -766,7 +813,7 @@ class StaffConversationCoordinator:
             or turn.reply_to_event_id in required
             or turn.thread_root_event_id in required
         ]
-        selected = [*own, *linked]
+        selected = [*own, *parents, *linked]
         aliases = metadata.get("conversation_speaker_aliases", {})
 
         def fits(items):
@@ -797,6 +844,17 @@ class StaffConversationCoordinator:
             else:
                 omitted.append(turn.event_id)
         selected.sort(key=lambda turn: (turn.timestamp_ms, turn.event_id))
+        previous = metadata.get("conversation_generated_snapshot")
+        if previous is not None:
+            previous = {
+                **previous,
+                "messages": [
+                    item
+                    for item in previous.get("messages", [])
+                    if item["event_id"] not in invalidated
+                    and item.get("replaces_event_id") not in invalidated
+                ],
+            }
         return RequestSnapshot(
             case_id,
             metadata["room_id"],
@@ -805,7 +863,7 @@ class StaffConversationCoordinator:
             tuple(selected),
             metadata.get("conversation_last_requester_at_ms", 0),
             "update" if metadata.get("conversation_generation_count", 0) else "note",
-            metadata.get("conversation_generated_snapshot"),
+            previous,
             overflow,
             tuple(omitted),
             now_ms,
@@ -874,6 +932,9 @@ class StaffConversationCoordinator:
             if any(item["event_id"] == turn.event_id for item in observed):
                 return
             metadata["conversation_admission_pending"] = [*pending, asdict(turn)]
+            metadata["conversation_revision"] = (
+                metadata.get("conversation_revision", 0) + 1
+            )
             metadata["conversation_admission_revision"] = (
                 metadata.get("conversation_admission_revision", 0) + 1
             )
@@ -960,12 +1021,36 @@ class StaffConversationCoordinator:
             default=now_ms,
         )
         pending_ids = {turn.event_id for turn in effective}
+        parent_ids = {
+            target
+            for turn in own
+            for target in (turn.reply_to_event_id, turn.thread_root_event_id)
+            if target
+        }
         neighbors = effective_turns(
             [
                 ConversationTurn.from_dict(item)
                 for item in metadata.get("conversation_exchange", [])
-                if start <= item["timestamp_ms"] <= now_ms
-                and item["sender_id"] != case.user_id
+                if item["timestamp_ms"] <= now_ms
+                and (
+                    (
+                        start <= item["timestamp_ms"]
+                        and item["sender_id"] != case.user_id
+                    )
+                    or (
+                        (
+                            item["sender_id"] == case.user_id
+                            and item.get("non_text")
+                            and item["event_id"] in parent_ids
+                        )
+                        or item.get("replaces_event_id") in parent_ids
+                        or item.get("redacts_event_id") in parent_ids
+                    )
+                )
+                and item["event_id"]
+                not in metadata.get("conversation_invalidated_event_ids", [])
+                and item.get("replaces_event_id")
+                not in metadata.get("conversation_invalidated_event_ids", [])
             ]
         )
         selected = [
@@ -977,6 +1062,10 @@ class StaffConversationCoordinator:
             ConversationTurn.from_dict(item)
             for item in metadata.get("incident_messages", [])
             if item["timestamp_ms"] <= now_ms
+            and item["event_id"]
+            not in metadata.get("conversation_invalidated_event_ids", [])
+            and item.get("replaces_event_id")
+            not in metadata.get("conversation_invalidated_event_ids", [])
         ]
         prior_payload = {
             "case_id": case.id,
@@ -1123,6 +1212,15 @@ class StaffConversationCoordinator:
                         or item.get("redacts_event_id") in selected_ids
                     ]
                     own = [known[key] for key in decision.new_request_event_ids]
+                    parent_ids = {
+                        target
+                        for turn in own
+                        for target in (
+                            turn.reply_to_event_id,
+                            turn.thread_root_event_id,
+                        )
+                        if target
+                    }
                     anchor = min(
                         own, key=lambda turn: (turn.timestamp_ms, turn.event_id)
                     )
@@ -1147,6 +1245,13 @@ class StaffConversationCoordinator:
                             for turn in snapshot.turns
                             if turn.sender_id != snapshot.requester_id
                             or turn.event_id in selected_ids
+                            or (
+                                turn.non_text
+                                and (
+                                    turn.event_id in parent_ids
+                                    or turn.replaces_event_id in parent_ids
+                                )
+                            )
                         ]
                         + [item for item in members if item["event_id"] not in known],
                         "incident_messages": members,
@@ -1158,7 +1263,9 @@ class StaffConversationCoordinator:
                         "model_called": False,
                         "model_call_status": "not_started",
                     }
-                    native_ids = native_request_ids(snapshot.turns, selected_ids)
+                    native_ids = native_request_ids(
+                        snapshot.turns, selected_ids, projected=True
+                    )
                     native_staff_ids = [
                         turn.event_id
                         for turn in snapshot.turns
@@ -1194,7 +1301,8 @@ class StaffConversationCoordinator:
                     receipt["unassigned_candidate_event_ids"] = [
                         item["event_id"]
                         for item in pending
-                        if item["event_id"] not in selected_ids
+                        if item["event_id"]
+                        not in {member["event_id"] for member in members}
                     ]
                     if receipt["unassigned_candidate_event_ids"]:
                         metadata["conversation_unassigned_candidates"] = list(
@@ -1314,6 +1422,7 @@ class StaffConversationCoordinator:
                 or metadata.get("conversation_last_gate_revision", -1)
                 >= snapshot.revision
                 or metadata.get("conversation_revision") != snapshot.revision
+                or metadata.get("conversation_admission_pending")
                 or metadata.get("conversation_running_revision") is not None
                 or metadata.get("conversation_delivery_uncertain")
                 or metadata.get("conversation_staff_replied_after_draft")
@@ -1344,6 +1453,7 @@ class StaffConversationCoordinator:
                 not row
                 or row[1] not in {"pending", "in_review"}
                 or metadata.get("conversation_revision") != snapshot.revision
+                or metadata.get("conversation_admission_pending")
                 or metadata.get("conversation_staff_replied")
                 or metadata.get("conversation_staff_replied_after_draft")
             ):
@@ -1460,6 +1570,7 @@ class StaffConversationCoordinator:
             and case.status.value in {"pending", "in_review"}
             and metadata.get("conversation_revision") == snapshot.revision
             and not metadata.get("conversation_resolved")
+            and not metadata.get("conversation_admission_pending")
             and not metadata.get("conversation_delivery_uncertain")
             and not metadata.get("conversation_staff_replied")
             and not metadata.get("conversation_staff_replied_after_draft")

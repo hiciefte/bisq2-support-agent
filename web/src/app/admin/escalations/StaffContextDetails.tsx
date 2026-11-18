@@ -59,7 +59,7 @@ export function StaffContextDetails({ context }: { context: StaffContextMetadata
                     <p className="whitespace-pre-wrap break-words">{context.staff_proposed_answer.answer}</p>
                     <p className="text-muted-foreground">Proposed by {context.staff_proposed_answer.reviewer} in the Staff thread. This does not change the case assignment or record a sent response.</p>
                     {context.staff_proposed_answer.edit_distance === null && (
-                        <p className="text-muted-foreground">The draft version being compared is unknown.</p>
+                        <p className="text-muted-foreground">No edit comparison is available for this proposal.</p>
                     )}
                 </section>
             )}

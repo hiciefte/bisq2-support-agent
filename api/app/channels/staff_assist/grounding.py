@@ -36,6 +36,7 @@ class GroundingBriefService:
         user_version: str | None = None,
         product: str | None = None,
         infer_product: bool = True,
+        infer_user_version: bool = True,
     ) -> dict[str, Any] | None:
         query = str(question or "").strip()
         if not query:
@@ -53,7 +54,8 @@ class GroundingBriefService:
         if protocol is None and infer_product:
             protocol = self._infer_protocol(knowledge_sources)
         repo = code_repo_for_context(product, protocol)
-        user_version = user_version or explicit_user_version(query)
+        if infer_user_version:
+            user_version = user_version or explicit_user_version(query)
         version_kwargs = {"user_version": user_version} if user_version else {}
         if product:
             version_kwargs["product"] = product

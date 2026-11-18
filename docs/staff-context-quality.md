@@ -167,8 +167,10 @@ whose after-values remain unmeasured.
 
 `execute` requires the owner's explicit paid-call approval and the exact prepared
 plan digest. It checks the inputs and implementation against that plan, reserves
-model spend through the same ledger as live work, and stops at the agreed dollar,
-call or elapsed-time limit. Each attempted run has its own intent and receipts;
+model spend through the same ledger as live work, and refuses new calls at the agreed
+dollar, call or elapsed-time limit. A call admitted before the cutoff can finish
+or fail after it; the command waits to account for that outcome. Each attempted
+run has its own intent and receipts;
 an interrupted or uncertain run is not resumed. Keep all input, plan, database and
 output files private and outside Git. Do not put credentials in command lines or
 reports.
@@ -189,3 +191,9 @@ alongside non-request rates: a gate prediction is not independent ground truth.
 Action agreement and limitation-opening counts are descriptive mechanics; they
 are not Staff verdicts, actual reuse, measured time saved or public-readiness
 claims. Partial source windows and unknown comparison outcomes remain visible.
+
+A separately approved continuation preserves its original plan, settled calls and
+absolute cutoff. Its exclusive continuation claim is stored beside the original
+plan’s pinned execution claim, so copying parent artifacts cannot reopen the
+remaining allowance. Legacy plans without that stable claim need separate reviewed
+reconciliation; there is no path-based fallback or automatic retry.

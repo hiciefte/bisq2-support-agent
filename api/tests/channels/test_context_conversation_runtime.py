@@ -1,6 +1,8 @@
 """Exercise the live v3 adapter with the real coordinator/gate/draft services."""
 
 import json
+import sqlite3
+from contextlib import closing
 from dataclasses import asdict
 from types import SimpleNamespace as NS
 from unittest.mock import Mock
@@ -292,6 +294,22 @@ async def test_live_budget_refusal_spends_no_note_slot(runtime_case):
     prompt = json.loads(bundle.llm.invoke.call_args.args[0])
     assert "$facts" in {row["event_id"] for row in prompt["messages"]}
     assert case.channel_metadata["context_reason"] == "context_trial_unbounded_model"
+    with closing(sqlite3.connect(bundle.repository.db_path)) as db:
+        note_rows = db.execute(
+            "SELECT status, COALESCE(actual_nanodollars, reserved_nanodollars) "
+            "FROM matrix_context_trial_spend WHERE escalation_id=? AND kind='note'",
+            (case.id,),
+        ).fetchall()
+        assert all(
+            status == "not_started" and charge == 0 for status, charge in note_rows
+        )
+        assert (
+            db.execute(
+                "SELECT COUNT(*) FROM matrix_context_trial_cases WHERE escalation_id=?",
+                (case.id,),
+            ).fetchone()[0]
+            == 0
+        )
     assert case.channel_metadata.get("conversation_generation_count", 0) == 0
     assert case.channel_metadata["model_called"] is False
     bundle.sender.assert_not_awaited()

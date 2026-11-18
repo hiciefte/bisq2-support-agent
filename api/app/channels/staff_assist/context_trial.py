@@ -472,6 +472,7 @@ class BudgetedContextLLM:
         self.on_not_started = on_not_started
         self.started = False
         self.reason: str | None = None
+        self.unstarted_cleanup_error: str | None = None
 
     def invoke(self, prompt: str, system_content: str | None = None):
         from app.services.rag.openai_responses import (
@@ -536,15 +537,35 @@ class BudgetedContextLLM:
             )
             if not self.reason and self.before_provider:
                 self.reason = self.before_provider()
+            # The last hook can itself cross the trial cutoff or UTC midnight.
+            # Use one observation for both checks immediately before invocation.
+            current = utc_now()
+            self.reason = (
+                self.reason
+                or trial.reason(current)
+                or (
+                    "context_trial_day_changed"
+                    if current.date() != admission_day
+                    else None
+                )
+            )
             if self.reason:
                 raise RuntimeError(self.reason)
-        except Exception:
-            self.store.cancel_unstarted_call(
-                self.case_id, kind=self.kind, call_id=self.call_id
-            )
+        except Exception as original:
+            try:
+                self.store.cancel_unstarted_call(
+                    self.case_id, kind=self.kind, call_id=self.call_id
+                )
+            except Exception as cleanup:
+                # Keep the reservation held if cancellation did not commit. A
+                # storage error must not hide the refusal or skip its audit hook.
+                self.unstarted_cleanup_error = type(cleanup).__name__
+                original.add_note(
+                    "Unstarted reservation cleanup requires reconciliation: "
+                    + self.unstarted_cleanup_error
+                )
             if self.on_not_started:
-                # Keep the original pre-call error even if the audit disk also
-                # fails. The zero-cost ledger row remains the canonical outcome.
+                # Keep the original pre-call error even if the audit disk fails.
                 try:
                     self.on_not_started(self.reason or "pre_call_hook_failed")
                 except Exception:

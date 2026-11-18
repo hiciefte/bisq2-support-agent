@@ -216,6 +216,9 @@ async def test_quiet_deadline_rechecked_inside_claim_even_when_revision_unchange
     )
     snapshot = await coordinator.snapshot(first.case_id, now_ms=11000)
     await coordinator.ingest(turn("$ack", "Thanks!", 10999), now_ms=10999)
+    after_ack = await coordinator.snapshot(first.case_id, now_ms=11000)
+    assert after_ack.revision == snapshot.revision
+    assert after_ack.last_requester_at_ms == 10999 > snapshot.last_requester_at_ms
     assert not await coordinator.claim(snapshot)
     fresh = await coordinator.snapshot(first.case_id, now_ms=20999)
     assert await coordinator.claim(fresh)

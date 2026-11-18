@@ -440,11 +440,17 @@ class MatrixContextRuntime:
         if channel is None:
             return
         for case_id in result.affected_case_ids:
-            self._start_conversation_worker(case_id, channel)
+            await self._start_conversation_worker(case_id, channel)
         self._schedule_expiry()
 
-    def _start_conversation_worker(self, case_id: int, channel: Any) -> None:
+    async def _start_conversation_worker(self, case_id: int, channel: Any) -> None:
         if case_id in self._active_cases or self._closed:
+            return
+        if len(self._tasks) >= 100:
+            coordinator = self._conversation_coordinator()
+            await ContextReviewStore(coordinator.db_path).update(
+                case_id, status="needs_human", reason="context_capacity_reached"
+            )
             return
         self._active_cases.add(case_id)
         task = asyncio.create_task(self._run_conversation(case_id, channel))
@@ -541,20 +547,23 @@ class MatrixContextRuntime:
         event = getattr(response, "event", None)
         if event is None or getattr(event, "event_id", None) != anchor.event_id:
             return "source_unavailable"
+        coordinator = self._conversation_coordinator()
         try:
             current_anchor = conversation_turn(snapshot.room_id, event, is_staff=False)
         except ValueError:
+            await coordinator.invalidate_visible_event(snapshot, anchor.event_id)
             return "source_changed_or_redacted"
         if (
             current_anchor.sender_id != anchor.sender_id
             or current_anchor.text != anchor.text
             or current_anchor.non_text != anchor.non_text
         ):
+            await coordinator.invalidate_visible_event(snapshot, anchor.event_id)
             return "source_changed_or_redacted"
         observed = getattr(event, "server_timestamp", None)
         if type(observed) is not int or observed != anchor.timestamp_ms:
+            await coordinator.invalidate_visible_event(snapshot, anchor.event_id)
             return "source_changed_or_redacted"
-        coordinator = self._conversation_coordinator()
         timeline = [
             *list(reversed(getattr(response, "events_before", []) or [])),
             event,
@@ -623,6 +632,19 @@ class MatrixContextRuntime:
                 await asyncio.sleep(wait)
                 continue
             if not await coordinator.claim(snapshot):
+                latest = await coordinator.service.repository.get_by_id(case_id)
+                metadata = latest.channel_metadata or {} if latest else {}
+                if (
+                    metadata.get("conversation_admission_pending")
+                    and metadata.get("conversation_admission_revision")
+                    != snapshot.revision
+                    and metadata.get("conversation_admission_running_revision") is None
+                    and not metadata.get("conversation_admission_uncertain")
+                    and not metadata.get("conversation_delivery_uncertain")
+                    and metadata.get("conversation_admission_last_gate_revision", -1)
+                    < metadata.get("conversation_admission_revision", 0)
+                ):
+                    continue
                 return False
             uncertain = False
             classification_dispatched = False
@@ -705,7 +727,7 @@ class MatrixContextRuntime:
             finally:
                 await coordinator.finish(snapshot, uncertain=uncertain)
             if result and result.created:
-                self._start_conversation_worker(result.case_id, channel)
+                await self._start_conversation_worker(result.case_id, channel)
                 return False
             if result and not result.created:
                 current = await coordinator.service.repository.get_by_id(case_id)

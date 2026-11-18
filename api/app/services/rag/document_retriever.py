@@ -512,7 +512,7 @@ class DocumentRetriever:
 
                     # Stage 2: Add 'all' content if we don't have enough bisq_easy content
                     # Threshold of 4 ensures we have sufficient bisq_easy context before adding general docs
-                    if len(all_docs) < 4:
+                    if not detect_from_query or len(all_docs) < 4:
                         logger.info("Stage 2: Searching for 'all' protocol content...")
                         all_protocol_docs = self.retriever.retrieve(
                             query, k=4, filter_dict={"protocol": "all"}
@@ -848,7 +848,7 @@ class DocumentRetriever:
                 )
 
                 # Stage 2: 'all' content
-                if len(all_docs_with_scores) < 4:
+                if not detect_from_query or len(all_docs_with_scores) < 4:
                     _append_stage(k=4, filter_dict={"protocol": "all"})
 
                 # Stage 3: multisig_v1 fallback
@@ -949,6 +949,8 @@ class DocumentRetriever:
                         if self._dedupe_key_from_metadata(doc.metadata)
                         not in ranked_keys
                     )
+                    for index, doc in enumerate(reranked_docs):
+                        doc.metadata = {**doc.metadata, "_retrieval_rank": index}
                 unique_docs = reranked_docs
                 retrieval_scores = []
                 for doc in unique_docs:

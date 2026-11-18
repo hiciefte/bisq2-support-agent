@@ -342,7 +342,7 @@ test("shows a Staff proposal separately without claiming an assignment or sent r
     const { container } = render(<StaffContextDetails context={context!} />);
     expect(screen.getByRole("region", { name: "Staff-proposed answer" })).toHaveTextContent("<script>proposal()</script>");
     expect(screen.getByText(/does not change the case assignment/)).toBeInTheDocument();
-    expect(screen.getByText(/draft version being compared is unknown/)).toBeInTheDocument();
+    expect(screen.getByText(/No edit comparison is available/)).toBeInTheDocument();
     expect(container.querySelector("script")).toBeNull();
     expect(context?.staff_proposed_answer?.edit_distance).toBeNull();
 });
@@ -354,4 +354,7 @@ test("refuses malformed Staff proposals and invalid edit-distance values", () =>
     }
     const context = staffContextMetadata({ ...base, staff_context_proposed_answer: { answer: "text", reviewer: "Reviewer", timestamp_ms: 1, draft_version_known: true, edit_distance: NaN } });
     expect(context?.staff_proposed_answer?.edit_distance).toBeNull();
+    render(<StaffContextDetails context={context!} />);
+    expect(screen.getByText(/No edit comparison is available/)).toBeInTheDocument();
+    expect(screen.queryByText(/draft version.*unknown/)).not.toBeInTheDocument();
 });

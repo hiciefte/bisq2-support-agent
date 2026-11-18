@@ -62,10 +62,12 @@ def event_timestamp_ms(event: Any) -> int | None:
     return value
 
 
-def _published_draft(
-    metadata: dict[str, Any], reply_to_event_id: str, timestamp_ms: int
-) -> str | None:
-    """Use an acknowledged version, never an unpublished or newer draft."""
+def _published_draft(metadata: dict[str, Any], reply_to_event_id: str) -> str | None:
+    """Compare only the exact published event explicitly answered by Staff.
+
+    Local send-acknowledgement clocks cannot establish which version existed at
+    a Matrix server timestamp. A root reply or unresolved target stays unknown.
+    """
     saved_history = metadata.get("staff_note_history")
     if not isinstance(saved_history, list):
         return None
@@ -78,19 +80,7 @@ def _published_draft(
         and isinstance(item.get("reply"), str)
     ]
     explicit = [item for item in history if item["event_id"] == reply_to_event_id]
-    if explicit:
-        replies = {item["reply"] for item in explicit}
-        return replies.pop() if len(replies) == 1 else None
-    prior = [
-        item
-        for item in history
-        if type(item.get("acknowledged_at_ms")) is int
-        and 0 <= item["acknowledged_at_ms"] <= timestamp_ms
-    ]
-    if not prior:
-        return None
-    latest = max(item["acknowledged_at_ms"] for item in prior)
-    replies = {item["reply"] for item in prior if item["acknowledged_at_ms"] == latest}
+    replies = {item["reply"] for item in explicit}
     return replies.pop() if len(replies) == 1 else None
 
 
@@ -338,7 +328,7 @@ class ContextFeedbackStore:
                 if case is None:
                     return False
                 metadata = json.loads(case["channel_metadata"])
-                draft = _published_draft(metadata, reply_to_event_id, timestamp_ms)
+                draft = _published_draft(metadata, reply_to_event_id)
                 case_id, original_event_id = case["id"], event_id
             await db.execute(
                 "INSERT OR IGNORE INTO matrix_context_answer_events "

@@ -2,7 +2,7 @@
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 from app.channels.plugins.matrix import message_handler as matrix_message_handler_module
@@ -146,7 +146,11 @@ async def test_stop_removes_callback_and_stops_sync_loop() -> None:
     await handler.start()
     await handler.stop()
 
-    client.remove_event_callback.assert_called_once_with(handler._on_message)
+    assert client.remove_event_callback.call_args_list == [
+        call(handler._on_message),
+        call(handler._on_context_attachment),
+    ]
+    assert handler._attachment_callback_registered is False
     connection_manager.stop_sync.assert_called_once()
 
 
@@ -175,12 +179,17 @@ async def test_stop_cleans_up_failed_bootstrap_and_preserves_error() -> None:
     assert raised.value is error
     assert handler._sync_task is None
     assert handler._callback_registered is False
-    client.remove_event_callback.assert_called_once_with(handler._on_message)
+    expected_removals = [
+        call(handler._on_message),
+        call(handler._on_context_attachment),
+    ]
+    assert client.remove_event_callback.call_args_list == expected_removals
+    assert handler._attachment_callback_registered is False
     connection_manager.stop_sync.assert_called_once()
     # Cleanup is complete; a second local stop neither reconnects nor replays.
     await handler.stop()
     connection_manager.sync_forever.assert_awaited_once()
-    client.remove_event_callback.assert_called_once()
+    assert client.remove_event_callback.call_args_list == expected_removals
 
 
 @pytest.mark.asyncio

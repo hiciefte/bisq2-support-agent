@@ -105,6 +105,15 @@ def test_manifest_is_parsed_from_the_single_approved_read(tmp_path, monkeypatch)
     result = recovery.prepare(args)
     manifest_path = args.output / "manifest.json"
     original = Path.read_text
+    original_bytes = Path.read_bytes
+    reads = 0
+
+    def read_bytes_once(path):
+        nonlocal reads
+        if path == manifest_path:
+            reads += 1
+            assert reads == 1, "manifest bytes were read again after approval check"
+        return original_bytes(path)
 
     def refuse_second_parse(path, *a, **k):
         if path == manifest_path:
@@ -112,7 +121,9 @@ def test_manifest_is_parsed_from_the_single_approved_read(tmp_path, monkeypatch)
         return original(path, *a, **k)
 
     monkeypatch.setattr(Path, "read_text", refuse_second_parse)
+    monkeypatch.setattr(Path, "read_bytes", read_bytes_once)
     recovery.approved_manifest(manifest_path, result["manifest_sha256"])
+    assert reads == 1
 
 
 def test_execution_copy_is_verified_and_claim_survives_copied_manifest(
@@ -257,3 +268,174 @@ def test_copied_original_plan_cannot_reset_its_execution_claim(tmp_path, monkeyp
             )
         )
     assert not (copied / "execution").exists()
+
+
+def test_private_jsonl_writer_explicitly_uses_utf8(tmp_path, monkeypatch):
+    original = replay.os.fdopen
+    seen = []
+
+    def check_encoding(*args, **kwargs):
+        seen.append(kwargs.get("encoding"))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(replay.os, "fdopen", check_encoding)
+    record = {"reason": "café\u2028next"}
+    replay.append_private(tmp_path / "unicode.jsonl", record)
+    assert seen == ["utf-8"]
+    assert replay.read_jsonl(tmp_path / "unicode.jsonl") == [record]
+
+
+def test_preparation_state_uses_validated_parent_rows_not_second_path_read(
+    tmp_path, monkeypatch
+):
+    args, _, _ = asyncio.run(make_parent(tmp_path))
+    original_validate = recovery.validate_parent
+    original_verify = recovery.verify_pins
+    path = args.parent_execution / "gates.jsonl"
+    original = path.read_bytes()
+
+    def swap_after_validation(*a, **k):
+        parent = original_validate(*a, **k)
+        path.write_text('{"reply":"UNAPPROVED REPLACEMENT"}\n')
+        return parent
+
+    def restore_before_final_verification(pins):
+        path.write_bytes(original)
+        return original_verify(pins)
+
+    monkeypatch.setattr(recovery, "validate_parent", swap_after_validation)
+    monkeypatch.setattr(recovery, "verify_pins", restore_before_final_verification)
+    recovery.prepare(args)
+    state = json.loads((args.output / "continuation-state.json").read_bytes())
+    assert len(state["gates"]) == 1  # only the saved-response reconciliation
+    assert "UNAPPROVED" not in json.dumps(state)
+
+
+def test_parent_drift_between_manifest_check_and_validation_refuses(
+    tmp_path, monkeypatch
+):
+    args, _, _ = asyncio.run(make_parent(tmp_path))
+    result = recovery.prepare(args)
+    original = recovery.validate_parent
+
+    def replace_after_manifest_check(*a, **kwargs):
+        assert kwargs["expected_pins"]
+        (args.parent_execution / "gates.jsonl").write_bytes(b"\n")
+        return original(*a, **kwargs)
+
+    monkeypatch.setattr(recovery, "validate_parent", replace_after_manifest_check)
+    with pytest.raises(ValueError, match="Continuation input changed"):
+        recovery.approved_manifest(
+            args.output / "manifest.json", result["manifest_sha256"]
+        )
+
+
+def test_copied_parent_directories_share_original_execution_claim(
+    tmp_path, monkeypatch
+):
+    args, _, _ = asyncio.run(make_parent(tmp_path))
+    first = recovery.prepare(args)
+    copied_parent = tmp_path / "copied-parent"
+    shutil.copytree(args.parent_execution, copied_parent)
+    copied_args = NS(**vars(args))
+    copied_args.parent_execution = copied_parent
+    copied_args.output = tmp_path / "second-preparation"
+    second = recovery.prepare(copied_args)
+    first_manifest = json.loads((args.output / "manifest.json").read_bytes())
+    second_manifest = json.loads((copied_args.output / "manifest.json").read_bytes())
+    assert (
+        first_manifest["original_execution_identity"]
+        == second_manifest["original_execution_identity"]
+    )
+    assert first_manifest["continuation_claim"] == second_manifest["continuation_claim"]
+    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-never-used")
+    import openai
+
+    monkeypatch.setattr(
+        openai, "OpenAI", lambda **kw: pytest.fail("provider was constructed")
+    )
+    original_copy = shutil.copyfile
+
+    def corrupt_ledger(src, dst, *a, **k):
+        result = original_copy(src, dst, *a, **k)
+        if Path(dst).name == "replay.db":
+            with Path(dst).open("ab") as stream:
+                stream.write(b"changed")
+        return result
+
+    monkeypatch.setattr(shutil, "copyfile", corrupt_ledger)
+    with pytest.raises(ValueError, match="Copied continuation ledger changed"):
+        recovery.execute(
+            NS(
+                owner_approved=True,
+                approve_manifest_sha256=first["manifest_sha256"],
+                manifest=args.output / "manifest.json",
+            )
+        )
+    with pytest.raises(FileExistsError):
+        recovery.execute(
+            NS(
+                owner_approved=True,
+                approve_manifest_sha256=second["manifest_sha256"],
+                manifest=copied_args.output / "manifest.json",
+            )
+        )
+    assert not (copied_args.output / "execution").exists()
+
+
+@pytest.mark.asyncio
+async def test_many_changed_admissions_drain_iteratively_without_stack_growth(
+    tmp_path, monkeypatch
+):
+    total = 1100
+    state = {"count": 0, "finished": 0}
+    snapshot = NS(
+        case_id=1,
+        version="v",
+        kind="admission",
+        turns=[],
+        room_id=ROOM,
+        requester_id="requester",
+        last_requester_at_ms=0,
+    )
+
+    class Coordinator:
+        def __init__(self, *a, **k):
+            pass
+
+        async def due(self, **k):
+            assert state["finished"] == state["count"]
+            return [snapshot] if state["count"] < total else []
+
+        async def snapshot(self, *a, **k):
+            return snapshot
+
+        async def claim(self, *a):
+            return True
+
+        def admission_call_guard(self, *a):
+            return None
+
+        async def record_admission(self, *a, **k):
+            state["count"] += 1
+            return NS(changed=True, created=False)
+
+        async def finish(self, *a, **k):
+            state["finished"] += 1
+
+    class Gate:
+        def __init__(self, *a):
+            self.usage = {}
+
+        def classify(self, *a):
+            return NS(model_dump=lambda: {"relation": "same_request"})
+
+    monkeypatch.setattr(replay, "StaffConversationCoordinator", Coordinator)
+    monkeypatch.setattr(replay, "RequestAdmissionService", Gate)
+    monkeypatch.setattr(replay, "ordered_turns", lambda *a: ([], 1000000, []))
+    monkeypatch.setattr(replay, "append_private", lambda *a: None)
+    calls = FakeCalls(tmp_path / "many.db")
+    result = await replay.replay(plan(tmp_path), inputs(), tmp_path, calls)
+    assert result["stopped_reason"] is None
+    assert result["gate_calls_recorded"] == total
+    assert state == {"count": total, "finished": total}
