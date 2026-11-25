@@ -31,7 +31,7 @@ def summarize(database: Path) -> list[dict[str, Any]]:
             else "'[]' AS staff_context_verdicts"
         )
         rows = db.execute(
-            "SELECT channel_metadata,routing_reason,"
+            "SELECT id,channel_metadata,routing_reason,"
             + verdict_column
             + " FROM escalations WHERE channel='matrix' ORDER BY id"
         )
@@ -56,41 +56,90 @@ def summarize(database: Path) -> list[dict[str, Any]]:
                 metadata.get("context_reason") or row["routing_reason"] or "unknown"
             )
             trial["outcome_counts_by_reason"][reason] += 1
-            posted_ids = {
+            history = [
                 entry["event_id"]
                 for entry in metadata.get("staff_note_history", [])
-                if isinstance(entry, dict) and isinstance(entry.get("event_id"), str)
-            }
+                if isinstance(entry, dict)
+                and isinstance(entry.get("event_id"), str)
+                and entry["event_id"]
+            ]
+            current = metadata.get("staff_note_event_id")
             diagnostic = metadata.get("staff_note_delivery") or {}
-            acknowledged = (
-                diagnostic.get("reason_category") == "acknowledged"
-                and diagnostic.get("response_received") is True
-                and diagnostic.get("response_event_id")
-                == metadata.get("staff_note_event_id")
-            )
             if (
-                metadata.get("context_status") == "delivered" or acknowledged
-            ) and metadata.get("staff_note_event_id"):
-                posted_ids.add(metadata["staff_note_event_id"])
-            trial["notes_posted"] += len(posted_ids)
-            if metadata.get("context_status") == "delivery_uncertain":
-                trial["notes_delivery_uncertain"] += 1
-            records = (
-                json.loads(row["staff_context_verdicts"] or "[]")
-                if "staff_context_verdicts" in row.keys()
-                else []
+                isinstance(current, str)
+                and current
+                and (
+                    metadata.get("context_status") == "delivered"
+                    or (
+                        diagnostic.get("reason_category") == "acknowledged"
+                        and diagnostic.get("response_received") is True
+                        and diagnostic.get("response_event_id") == current
+                    )
+                )
+            ):
+                history.append(current)
+            safety_reason = reason == "context_pii_detected" or (
+                reason == "invalid_model_output"
+                and metadata.get("validation_diagnostic") == "unsafe_reply"
             )
-            if records:
-                trial["cases_with_verdict"] += 1
-                covered = {record.get("target_event_id") for record in records}
-                trial["posted_notes_with_verdict"] += len(posted_ids & covered)
-                for record in records:
-                    verdict = record.get("verdict")
-                    if verdict in VERDICTS:
-                        trial["verdict_counts"][verdict] += 1
-            proposal = metadata.get("staff_context_proposed_answer")
-            if isinstance(proposal, dict) and proposal.get("answer"):
-                trial["cases_with_proposed_staff_answer"] += 1
+            uncertain = metadata.get("context_status") == "delivery_uncertain" or bool(
+                metadata.get("conversation_delivery_uncertain")
+            )
+            records = json.loads(row["staff_context_verdicts"] or "[]")
+            latest_note = history[-1] if history else None
+            votes = sorted(
+                (
+                    r
+                    for r in records
+                    if latest_note
+                    and r.get("target_event_id") == latest_note
+                    and r.get("verdict") in VERDICTS
+                    and r.get("reviewer")
+                ),
+                key=lambda r: (r.get("at", ""), r.get("event_id", "")),
+            )
+            by_reviewer = {r["reviewer"]: r["verdict"] for r in votes}
+            drafted = bool(
+                history or metadata.get("conversation_last_preview_renderable")
+            )
+            eligible = bool(latest_note and not safety_reason and not uncertain)
+            trial["requests"].append(
+                {
+                    "request_id": row["id"],
+                    "drafted": drafted,
+                    "eligible_for_verdict_rate": eligible,
+                    "reviewer_verdicts": {
+                        f"reviewer-{i}": by_reviewer[name]
+                        for i, name in enumerate(sorted(by_reviewer), 1)
+                    },
+                    "withheld_by_safety_check": safety_reason,
+                    "delivery_uncertain": uncertain,
+                }
+            )
+            trial["requests_drafted"] += int(drafted)
+            trial["requests_with_safety_withhold"] += int(safety_reason)
+            trial["requests_with_delivery_uncertain"] += int(uncertain)
+            trial["drafts_eligible_for_verdict"] += int(eligible)
+            if eligible and votes:
+                trial["drafts_with_verdict"] += 1
+                trial["headline_verdict_counts"][votes[-1]["verdict"]] += 1
+                for verdict in set(by_reviewer.values()):
+                    trial["drafts_with_any_reviewer_verdict"][verdict] += 1
+            # Historical per-version coverage is diagnostic, separate from request outcomes.
+            versions = trial["version_diagnostics"]
+            posted_ids = set(history)
+            versions["notes_posted"] += len(posted_ids)
+            versions["posted_notes_with_verdict"] += len(
+                posted_ids & {record.get("target_event_id") for record in records}
+            )
+            for record in records:
+                if record.get("verdict") in VERDICTS:
+                    versions["verdict_counts"][record["verdict"]] += 1
+            activity = metadata.get("staff_context_thread_activity") or metadata.get(
+                "staff_context_proposed_answer"
+            )
+            if isinstance(activity, dict) and activity.get("answer"):
+                trial["requests_with_thread_activity"] += 1
         spend_table = db.execute(
             "SELECT 1 FROM sqlite_master WHERE name='matrix_context_trial_spend' AND type='table'"
         ).fetchone()
@@ -124,9 +173,15 @@ def summarize(database: Path) -> list[dict[str, Any]]:
                 usage["accounted_nanodollars"] += charged
         result = []
         for trial in trials.values():
-            total = trial["notes_posted"]
-            trial["share_of_posted_notes_with_verdict"] = (
-                trial["posted_notes_with_verdict"] / total if total else None
+            eligible = trial["drafts_eligible_for_verdict"]
+            trial["draft_verdict_coverage"] = (
+                trial["drafts_with_verdict"] / eligible if eligible else None
+            )
+            versions = trial["version_diagnostics"]
+            versions["share_of_posted_notes_with_verdict"] = (
+                versions["posted_notes_with_verdict"] / versions["notes_posted"]
+                if versions["notes_posted"]
+                else None
             )
             trial["outcome_counts_by_reason"] = dict(
                 sorted(trial["outcome_counts_by_reason"].items())
@@ -139,12 +194,20 @@ def _empty(trial_id: str) -> dict[str, Any]:
     return {
         "trial_id": trial_id,
         "cases": 0,
-        "notes_posted": 0,
-        "notes_delivery_uncertain": 0,
-        "posted_notes_with_verdict": 0,
-        "cases_with_verdict": 0,
-        "verdict_counts": dict.fromkeys(VERDICTS, 0),
-        "cases_with_proposed_staff_answer": 0,
+        "requests": [],
+        "requests_drafted": 0,
+        "drafts_eligible_for_verdict": 0,
+        "drafts_with_verdict": 0,
+        "headline_verdict_counts": dict.fromkeys(VERDICTS, 0),
+        "drafts_with_any_reviewer_verdict": dict.fromkeys(VERDICTS, 0),
+        "requests_with_thread_activity": 0,
+        "requests_with_safety_withhold": 0,
+        "requests_with_delivery_uncertain": 0,
+        "version_diagnostics": {
+            "notes_posted": 0,
+            "posted_notes_with_verdict": 0,
+            "verdict_counts": dict.fromkeys(VERDICTS, 0),
+        },
         "outcome_counts_by_reason": Counter(),
         "model_usage_by_kind": None,
     }
@@ -172,7 +235,7 @@ def main() -> None:
     print(
         json.dumps(
             {
-                "counting": "Notes posted means a durable delivered outcome with a note event ID. Verdict counts are latest active verdict per reviewer per note; disagreements remain separate. Neither proves actual reuse, delivery verification, or measured quality.",
+                "counting": "One row per request. Verdict coverage uses requests with a posted note, excluding current safety withholds and uncertain deliveries. Only each reviewer's latest active reaction on the latest posted version counts. Any-reviewer counts overlap on disagreement. The exclusive headline uses the most recent active verdict, breaking timestamp ties by event ID. Thread activity does not imply an answer was proposed or reused. Version diagnostics are separate from request totals.",
                 "model_spend_scope": "Gate, note and update calls only. Accounted nanodollars use approved conservative prices and include uncertain reservations; one USD is 1000000000 nanodollars. Missing token usage is unknown, not zero-cost. Retrieval embeddings and other auxiliary costs are excluded.",
                 "trials": summarize(args.database),
             },

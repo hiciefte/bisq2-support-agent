@@ -1,7 +1,6 @@
 # Staff-context review and model budgets
 
-This workflow prepares drafts in the configured Staff room. Reactions and thread
-replies record judgments; they cannot send an answer to the source room. A human
+This workflow prepares drafts in the configured Staff room. Reactions record judgments and native thread replies record activity; they cannot send an answer to the source room. A human
 must send any public reply. Web chat and direct answers use their existing paths.
 
 ## Reviewing a draft
@@ -12,11 +11,12 @@ The latest active reaction by each reviewer on each note wins. Different
 reviewers' judgments remain separate. Removing a reaction restores that person's
 previous active judgment, if any.
 
-A trusted Staff member can reply in the native Staff thread with proposed answer
-text. The case stores that text, its reviewer/time and its normalized character
-edit distance from the proposed reply. This records a proposed answer, not actual
-reuse. Neither reactions nor proposed answers feed learning, FAQ creation or
-auto-send threshold calibration.
+A trusted Staff member's thread message can be a question to colleagues, an
+answer or a correction. The case retains the latest such message as **thread activity**,
+including reviewer, time and, when its note target is known, text edit distance.
+Old records labelled proposed answers are interpreted the same way. The report
+counts requests with thread activity and makes no inference about proposed or sent
+answers. Neither reactions nor thread activity feed learning or FAQ creation.
 
 To count an authorized local database copy without starting the application:
 
@@ -25,10 +25,21 @@ cd api
 python -m app.scripts.summarize_staff_context --database /path/to/escalations.db
 ```
 
-The report separates posted notes, uncertain deliveries, reviewed-note coverage,
-per-reviewer verdicts and routing reasons. Transport receipts do not establish
-semantic correctness, independent delivery verification, public reuse or time
-saved.
+The report emits one row per request. A draft is evidenced by a posted note or
+a saved renderable preview. Verdict coverage divides reviewed requests by requests
+with a posted note, excluding currently withheld and uncertain outcomes. Each
+reviewer's latest active reaction counts on the latest posted version only.
+Request-local reviewer labels omit participant identities. Any-reviewer counts
+show how many requests received each verdict and can overlap. For an exclusive
+four-way breakdown, the most recent active reaction represents the request
+(timestamp, then event ID for ties). This is an accounting convention, not
+reviewer consensus. Version-level diagnostic counts are reported separately.
+
+Safety withholds use the stored reason `context_pii_detected`, or
+`invalid_model_output` with the specific diagnostic `unsafe_reply`. Count
+requests whose current stored outcome is a safety withhold or uncertain delivery
+separately. These snapshot counts do not measure historical transitions, actual
+reuse, independent delivery verification or time saved.
 
 ## New trial admission
 

@@ -16,7 +16,7 @@ pytestmark = pytest.mark.unit
 
 
 def proposal(case):
-    return case.channel_metadata.get("staff_context_proposed_answer")
+    return case.channel_metadata.get("staff_context_thread_activity")
 
 
 @pytest.fixture
@@ -250,10 +250,10 @@ async def test_summary_counts_reviewers_and_unique_covered_notes(feedback):
         room, reaction("$c", "❌", 2000, sender="@second:example.org")
     )
     report = summarize(Path(feedback.repository.db_path))[0]
-    assert report["notes_posted"] == 2
-    assert report["posted_notes_with_verdict"] == 1
-    assert report["share_of_posted_notes_with_verdict"] == 0.5
-    assert report["verdict_counts"] == {
+    assert report["version_diagnostics"]["notes_posted"] == 2
+    assert report["version_diagnostics"]["posted_notes_with_verdict"] == 1
+    assert report["version_diagnostics"]["share_of_posted_notes_with_verdict"] == 0.5
+    assert report["version_diagnostics"]["verdict_counts"] == {
         "would_send_as_is": 0,
         "would_send_after_edit": 1,
         "wrong": 1,
@@ -321,8 +321,12 @@ async def test_different_note_versions_retain_independent_latest_verdict(feedbac
         ("$note", "would_send_as_is"),
     }
     report = summarize(Path(feedback.repository.db_path))[0]
-    assert report["notes_posted"] == report["posted_notes_with_verdict"] == 2
-    assert report["share_of_posted_notes_with_verdict"] == 1
+    assert (
+        report["version_diagnostics"]["notes_posted"]
+        == report["version_diagnostics"]["posted_notes_with_verdict"]
+        == 2
+    )
+    assert report["version_diagnostics"]["share_of_posted_notes_with_verdict"] == 1
 
 
 @pytest.mark.asyncio
@@ -439,7 +443,12 @@ async def test_summary_keeps_acknowledged_note_after_later_deferral(feedback):
             (json.dumps(metadata), case.id),
         )
         await db.commit()
-    assert summarize(Path(feedback.repository.db_path))[0]["notes_posted"] == 1
+    assert (
+        summarize(Path(feedback.repository.db_path))[0]["version_diagnostics"][
+            "notes_posted"
+        ]
+        == 1
+    )
     metadata["context_status"] = "delivery_uncertain"
     async with aiosqlite.connect(feedback.repository.db_path) as db:
         await db.execute(
@@ -448,7 +457,10 @@ async def test_summary_keeps_acknowledged_note_after_later_deferral(feedback):
         )
         await db.commit()
     report = summarize(Path(feedback.repository.db_path))[0]
-    assert report["notes_posted"] == 1 and report["notes_delivery_uncertain"] == 1
+    assert (
+        report["version_diagnostics"]["notes_posted"] == 1
+        and report["requests_with_delivery_uncertain"] == 1
+    )
 
 
 @pytest.mark.asyncio
@@ -663,3 +675,66 @@ async def test_answer_target_migration_preserves_legacy_unknown_comparisons(tmp_
             )
         ).fetchone()
     assert row == ("$legacy", "Preserved", None, None)
+
+
+@pytest.mark.asyncio
+async def test_chatter_is_thread_activity_only(feedback):
+    await feedback.store.record_answer(
+        room_id="!staff:example.org",
+        root_event_id="$root",
+        event_id="$chat",
+        reviewer="reviewer-a",
+        answer="Who is handling this?",
+        timestamp_ms=123,
+    )
+    case = await feedback.repository.get_by_id(feedback.case.id)
+    assert "staff_context_proposed_answer" not in case.channel_metadata
+    assert case.staff_answer is None
+    assert case.channel_metadata["staff_context_thread_activity"]["event_id"] == "$chat"
+
+
+async def test_chatter_preserves_existing_legacy_proposal_until_redaction(feedback):
+    import json
+
+    import aiosqlite
+
+    room = "!staff:example.org"
+    await feedback.store.record_answer(
+        room_id=room,
+        root_event_id="$root",
+        event_id="$proposal",
+        reviewer="first",
+        answer="Proposed response",
+        timestamp_ms=100,
+    )
+    legacy = {
+        "event_id": "$proposal",
+        "original_event_id": "$proposal",
+        "answer": "Proposed response",
+    }
+    async with aiosqlite.connect(feedback.repository.db_path) as db:
+        await db.execute(
+            "UPDATE escalations SET channel_metadata=json_set(channel_metadata, '$.staff_context_proposed_answer',json(?)) WHERE id=?",
+            (json.dumps(legacy), feedback.case.id),
+        )
+        await db.commit()
+    await feedback.store.record_answer(
+        room_id=room,
+        root_event_id="$root",
+        event_id="$chatter",
+        reviewer="second",
+        answer="Who handles this?",
+        timestamp_ms=200,
+    )
+    case = await feedback.repository.get_by_id(feedback.case.id)
+    assert case.channel_metadata["staff_context_proposed_answer"] == legacy
+    assert (
+        case.channel_metadata["staff_context_thread_activity"]["event_id"] == "$chatter"
+    )
+    await feedback.store.redact_verdict(room, "$chatter")
+    case = await feedback.repository.get_by_id(feedback.case.id)
+    assert case.channel_metadata["staff_context_proposed_answer"] == legacy
+    await feedback.store.redact_verdict(room, "$proposal")
+    case = await feedback.repository.get_by_id(feedback.case.id)
+    assert "staff_context_proposed_answer" not in case.channel_metadata
+    assert "staff_context_thread_activity" not in case.channel_metadata

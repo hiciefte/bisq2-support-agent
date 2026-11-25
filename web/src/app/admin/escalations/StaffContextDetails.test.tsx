@@ -327,7 +327,7 @@ test.each([
 });
 
 
-test("shows a Staff proposal separately without claiming an assignment or sent response", () => {
+test("shows a legacy Staff thread message as activity without claiming an assignment or sent response", () => {
     const context = staffContextMetadata({
         response_kind: "public_context",
         staff_reply: "AI draft",
@@ -340,20 +340,20 @@ test("shows a Staff proposal separately without claiming an assignment or sent r
         },
     });
     const { container } = render(<StaffContextDetails context={context!} />);
-    expect(screen.getByRole("region", { name: "Staff-proposed answer" })).toHaveTextContent("<script>proposal()</script>");
+    expect(screen.getByRole("region", { name: "Latest Staff thread activity" })).toHaveTextContent("<script>proposal()</script>");
     expect(screen.getByText(/does not change the case assignment/)).toBeInTheDocument();
     expect(screen.getByText(/No edit comparison is available/)).toBeInTheDocument();
     expect(container.querySelector("script")).toBeNull();
-    expect(context?.staff_proposed_answer?.edit_distance).toBeNull();
+    expect(context?.staff_thread_activity?.edit_distance).toBeNull();
 });
 
-test("refuses malformed Staff proposals and invalid edit-distance values", () => {
+test("refuses malformed Staff thread activity and invalid edit-distance values", () => {
     const base = { response_kind: "public_context" };
     for (const proposal of [[], "text", { answer: {}, reviewer: "Reviewer", timestamp_ms: 1 }, { answer: "text", reviewer: "Reviewer", timestamp_ms: -1 }]) {
-        expect(staffContextMetadata({ ...base, staff_context_proposed_answer: proposal })?.staff_proposed_answer).toBeUndefined();
+        expect(staffContextMetadata({ ...base, staff_context_thread_activity: proposal })?.staff_thread_activity).toBeUndefined();
     }
-    const context = staffContextMetadata({ ...base, staff_context_proposed_answer: { answer: "text", reviewer: "Reviewer", timestamp_ms: 1, draft_version_known: true, edit_distance: NaN } });
-    expect(context?.staff_proposed_answer?.edit_distance).toBeNull();
+    const context = staffContextMetadata({ ...base, staff_context_thread_activity: { answer: "text", reviewer: "Reviewer", timestamp_ms: 1, draft_version_known: true, edit_distance: NaN } });
+    expect(context?.staff_thread_activity?.edit_distance).toBeNull();
     render(<StaffContextDetails context={context!} />);
     expect(screen.getByText(/No edit comparison is available/)).toBeInTheDocument();
     expect(screen.queryByText(/draft version.*unknown/)).not.toBeInTheDocument();

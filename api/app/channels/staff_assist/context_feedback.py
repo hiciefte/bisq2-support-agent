@@ -243,7 +243,9 @@ class ContextFeedbackStore:
                 (room_id, event_id),
             )
             if answer_row and answer_row["escalation_id"] is not None:
-                await self._project_answers(db, answer_row["escalation_id"])
+                await self._project_answers(
+                    db, answer_row["escalation_id"], redacted_event_id=event_id
+                )
             await db.commit()
 
     async def reconcile_answers(self, case_id: int) -> None:
@@ -255,7 +257,9 @@ class ContextFeedbackStore:
             await db.commit()
 
     @staticmethod
-    async def _project_answers(db: aiosqlite.Connection, case_id: int) -> None:
+    async def _project_answers(
+        db: aiosqlite.Connection, case_id: int, *, redacted_event_id: str | None = None
+    ) -> None:
         cursor = await db.execute(
             "SELECT channel_metadata FROM escalations WHERE id=?", (case_id,)
         )
@@ -285,7 +289,7 @@ class ContextFeedbackStore:
         )
         answer = await cursor.fetchone()
         if answer:
-            metadata["staff_context_proposed_answer"] = {
+            metadata["staff_context_thread_activity"] = {
                 "event_id": answer["event_id"],
                 "original_event_id": answer["original_event_id"],
                 "timestamp_ms": answer["timestamp_ms"],
@@ -299,6 +303,19 @@ class ContextFeedbackStore:
                 "draft_version_known": isinstance(answer["draft"], str),
             }
         else:
+            metadata.pop("staff_context_thread_activity", None)
+        # Older versions called this projection a proposal. Preserve it on new
+        # thread activity, but honor redaction of either the edit or its original.
+        legacy = metadata.get("staff_context_proposed_answer")
+        if (
+            redacted_event_id
+            and isinstance(legacy, dict)
+            and redacted_event_id
+            in (
+                legacy.get("event_id"),
+                legacy.get("original_event_id"),
+            )
+        ):
             metadata.pop("staff_context_proposed_answer", None)
         metadata.pop("staff_context_answer_event", None)
         # Matrix proposals are not Admin claims, completed responses or proof of

@@ -10,7 +10,7 @@ export interface StaffContextMetadata {
     rejected_draft?: string;
     knowledge_gap?: string;
     money_at_risk?: boolean;
-    staff_proposed_answer?: {
+    staff_thread_activity?: {
         answer: string;
         reviewer: string;
         timestamp_ms: number;
@@ -144,7 +144,7 @@ export function staffContextMetadata(metadata?: Record<string, unknown> | null):
     if (!isStaffContextCase(metadata) || !metadata) return null;
     const text = (key: string) => typeof metadata[key] === "string" ? metadata[key] as string : "";
     const staffMessages = reviewContextMessages(metadata.staff_activity_snapshot);
-    const rawProposal = metadata.staff_context_proposed_answer;
+    const rawProposal = metadata.staff_context_thread_activity ?? metadata.staff_context_proposed_answer;
     const proposal = rawProposal && typeof rawProposal === "object" && !Array.isArray(rawProposal)
         ? rawProposal as Record<string, unknown> : null;
     const staffProposal = proposal && typeof proposal.answer === "string" && proposal.answer.length <= 10000
@@ -170,7 +170,7 @@ export function staffContextMetadata(metadata?: Record<string, unknown> | null):
         rejected_draft: text("rejected_draft"),
         knowledge_gap: text("knowledge_gap"),
         money_at_risk: metadata.money_at_risk === true,
-        staff_proposed_answer: staffProposal,
+        staff_thread_activity: staffProposal,
         late_update_requires_review: metadata.incident_late_update_status === "needs_review_no_additional_generation",
         generation_question: text("incident_generation_question"),
         candidate_conversation_ids: caseIds(metadata.candidate_conversation_ids),

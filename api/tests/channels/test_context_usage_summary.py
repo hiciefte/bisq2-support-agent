@@ -56,8 +56,8 @@ async def test_summary_separates_gate_unknown_note_and_unstarted_update(tmp_path
     assert update["started_or_uncertain"] == 0
     assert update["cancelled_before_start"] == 1
     assert update["accounted_nanodollars"] == 0
-    assert result["notes_posted"] == 0
-    assert result["share_of_posted_notes_with_verdict"] is None
+    assert result["version_diagnostics"]["notes_posted"] == 0
+    assert result["version_diagnostics"]["share_of_posted_notes_with_verdict"] is None
 
 
 async def test_no_spend_receipts_does_not_invent_zero_measured_cost(tmp_path):
@@ -72,7 +72,7 @@ async def test_no_spend_receipts_does_not_invent_zero_measured_cost(tmp_path):
         db.execute("INSERT INTO matrix_context_trials VALUES ('legacy', '{}')")
     result = summarize(path)[0]
     assert result["model_usage_by_kind"] is None
-    assert result["share_of_posted_notes_with_verdict"] is None
+    assert result["version_diagnostics"]["share_of_posted_notes_with_verdict"] is None
 
 
 def test_legacy_summary_reads_only_report_columns_and_separates_proposals(
@@ -126,6 +126,91 @@ def test_legacy_summary_reads_only_report_columns_and_separates_proposals(
     monkeypatch.setattr(sqlite3, "connect", report_connection)
     result = summarize(path)[0]
     assert result["cases"] == 2
-    assert result["cases_with_proposed_staff_answer"] == 1
-    assert result["cases_with_verdict"] == 0
-    assert result["notes_posted"] == 0
+    assert result["requests_with_thread_activity"] == 1
+    assert result["drafts_with_verdict"] == 0
+    assert result["version_diagnostics"]["notes_posted"] == 0
+
+
+def test_request_results_keep_latest_version_disagreement_and_exclusions(tmp_path):
+    import json
+    import sqlite3
+
+    path = tmp_path / "requests.db"
+    metadata = {
+        "context_trial_id": "synthetic",
+        "delivery_audience": "staff_room",
+        "response_kind": "public_context",
+    }
+    votes = [
+        {
+            "reviewer": "a",
+            "target_event_id": "$old",
+            "event_id": "$v3",
+            "at": "2026-01-03T00:00:00+00:00",
+            "verdict": "not_needed",
+        },
+        {
+            "reviewer": "a",
+            "target_event_id": "$new",
+            "event_id": "$v1",
+            "at": "2026-01-01T00:00:00+00:00",
+            "verdict": "wrong",
+        },
+        {
+            "reviewer": "b",
+            "target_event_id": "$new",
+            "event_id": "$v2",
+            "at": "2026-01-02T00:00:00+00:00",
+            "verdict": "would_send_after_edit",
+        },
+    ]
+    with closing(sqlite3.connect(path)) as db, db:
+        db.execute(
+            "CREATE TABLE escalations (id INTEGER, channel TEXT, channel_metadata TEXT, routing_reason TEXT, staff_context_verdicts TEXT)"
+        )
+        for case_id, (extra, records) in enumerate(
+            [
+                (
+                    {
+                        "context_status": "delivered",
+                        "staff_note_event_id": "$new",
+                        "staff_note_history": [
+                            {"event_id": "$old"},
+                            {"event_id": "$new"},
+                        ],
+                    },
+                    votes,
+                ),
+                ({"context_status": "delivery_uncertain"}, []),
+                (
+                    {
+                        "context_reason": "invalid_model_output",
+                        "validation_diagnostic": "unsafe_reply",
+                    },
+                    [],
+                ),
+            ],
+            1,
+        ):
+            db.execute(
+                "INSERT INTO escalations VALUES (?, 'matrix', ?, '', ?)",
+                (case_id, json.dumps({**metadata, **extra}), json.dumps(records)),
+            )
+    trial = summarize(path)[0]
+    assert [r["request_id"] for r in trial["requests"]] == [1, 2, 3]
+    assert trial["requests_drafted"] == trial["drafts_with_verdict"] == 1
+    assert sum(trial["headline_verdict_counts"].values()) == 1
+    assert trial["headline_verdict_counts"]["would_send_after_edit"] == 1
+    assert trial["drafts_with_any_reviewer_verdict"]["wrong"] == 1
+    assert trial["drafts_with_any_reviewer_verdict"]["would_send_after_edit"] == 1
+    assert trial["drafts_with_any_reviewer_verdict"]["not_needed"] == 0
+    assert list(trial["requests"][0]["reviewer_verdicts"].values()) == [
+        "wrong",
+        "would_send_after_edit",
+    ]
+    assert (
+        trial["requests_with_delivery_uncertain"]
+        == trial["requests_with_safety_withhold"]
+        == 1
+    )
+    assert trial["draft_verdict_coverage"] == 1.0
