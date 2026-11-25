@@ -25,6 +25,7 @@ from app.channels.models import (
     UserContext,
 )
 from app.channels.plugins.matrix.context_text import context_relationships, context_text
+from app.channels.plugins.matrix.room_filter import resolve_allowed_context_source_rooms
 from app.channels.policy import (
     get_first_response_delay_seconds,
     get_staff_active_cooldown_seconds,
@@ -277,6 +278,7 @@ class MatrixContextRuntime:
     """Generate one cited note, persist it, and publish only a staff thread."""
 
     CONTEXT_READ_TIMEOUT_SECONDS = 30.0
+    RECOVERY_INTERVAL_SECONDS = 30.0
     PRETRANSPORT_REFUSALS = frozenset(
         {
             "matrix_channel_inactive",
@@ -302,6 +304,7 @@ class MatrixContextRuntime:
         self._closed = False
         self._trial = ContextTrial.from_settings(runtime.settings)
         self._expiry_task: asyncio.Task | None = None
+        self._recovery_task: asyncio.Task | None = None
         self._conversations: StaffConversationCoordinator | None = None
         self._request_snapshots: dict[int, RequestSnapshot] = {}
         self._conversation_workers: dict[int, asyncio.Task[Any]] = {}
@@ -313,6 +316,42 @@ class MatrixContextRuntime:
             raise RuntimeError("Context workers have not finished stopping")
         self._closed = False
         self._schedule_expiry()
+        if (
+            self._trial
+            and self._trial.spend_bounded
+            and (self._recovery_task is None or self._recovery_task.done())
+        ):
+            self._recovery_task = asyncio.create_task(self._recover_waiting_requests())
+
+    async def _recover_waiting_requests(self) -> None:
+        while not self._closed:
+            try:
+                await self._recover_due_conversations()
+            except Exception:
+                logger.exception("Could not recover waiting Matrix requests")
+            await asyncio.sleep(self.RECOVERY_INTERVAL_SECONDS)
+
+    async def _recover_due_conversations(self) -> None:
+        # The live subscription owns the channel, even before its first message.
+        handler = self.runtime.resolve_optional("matrix_message_handler")
+        channel = getattr(handler, "channel", None)
+        policy = self.runtime.resolve_optional("channel_autoresponse_policy_service")
+        if (
+            self._closed
+            or not getattr(channel, "is_connected", False)
+            or not getattr(self.runtime.settings, "MATRIX_SYNC_ENABLED", False)
+            or not is_staff_context_enabled(policy, "matrix")
+            or not self._trial
+            or self._trial.reason()
+        ):
+            return
+        rooms = resolve_allowed_context_source_rooms(self.runtime.settings)
+        coordinator = self._conversation_coordinator()
+        for snapshot in await coordinator.due(now_ms=int(utc_now().timestamp() * 1000)):
+            if len(self._tasks) >= 100:
+                break  # Leave excess work eligible for the next scan.
+            if snapshot.room_id in rooms:
+                await self._start_conversation_worker(snapshot.case_id, channel)
 
     def _schedule_expiry(self) -> None:
         if self._trial and (self._expiry_task is None or self._expiry_task.done()):
@@ -373,6 +412,9 @@ class MatrixContextRuntime:
         if expiry is not None and expiry is not asyncio.current_task():
             expiry.cancel()
             await asyncio.gather(expiry, return_exceptions=True)
+        if self._recovery_task is not None:
+            self._recovery_task.cancel()
+            await asyncio.gather(self._recovery_task, return_exceptions=True)
         tasks = list(self._tasks)
         for task in tasks:
             task.cancel()
@@ -408,10 +450,6 @@ class MatrixContextRuntime:
         """Retain real subscription turns; never fetch history on a timer."""
         if not self._trial or not self._trial.spend_bounded or self._closed:
             return
-        from app.channels.plugins.matrix.room_filter import (
-            resolve_allowed_context_source_rooms,
-        )
-
         policy = self.runtime.resolve_optional("channel_autoresponse_policy_service")
         if not is_staff_context_enabled(
             policy, "matrix"
@@ -480,10 +518,6 @@ class MatrixContextRuntime:
                     await service._release_delivery_lock(case_id, lock)
 
     async def _process_conversation(self, incoming: Any, channel: Any) -> bool:
-        from app.channels.plugins.matrix.room_filter import (
-            resolve_allowed_context_source_rooms,
-        )
-
         policy = self.runtime.resolve_optional("channel_autoresponse_policy_service")
         room_id = incoming.channel_metadata.get("room_id", "")
         if not is_staff_context_enabled(
@@ -704,6 +738,13 @@ class MatrixContextRuntime:
                     await coordinator.record_admission(
                         snapshot, failure={"reason": reason, "model_called": False}
                     )
+                    if (
+                        reason == "source_changed_or_redacted"
+                        and not await coordinator.is_current(snapshot)
+                    ):
+                        # The bounded source check removed evidence and advanced
+                        # this candidate. Release the old claim in finally.
+                        continue
                     return reason == "conversation_no_text_anchor"
                 classification_dispatched = True
                 decision = await asyncio.to_thread(service.classify, snapshot)
@@ -1106,10 +1147,6 @@ class MatrixContextRuntime:
         )
         if not is_staff_context_enabled(policy_service, "matrix"):
             return False
-        from app.channels.plugins.matrix.room_filter import (
-            resolve_allowed_context_source_rooms,
-        )
-
         room_id = incoming.channel_metadata.get("room_id", "")
         if room_id not in resolve_allowed_context_source_rooms(self.runtime.settings):
             return False
@@ -1451,10 +1488,6 @@ class MatrixContextRuntime:
         """Generate once from frozen evidence and recheck gates before each send."""
         if not await self._case_is_open(case_id):
             return False
-        from app.channels.plugins.matrix.room_filter import (
-            resolve_allowed_context_source_rooms,
-        )
-
         staff_room = str(
             getattr(self.runtime.settings, "MATRIX_STAFF_ROOM", "") or ""
         ).strip()
@@ -2231,10 +2264,6 @@ class MatrixContextRuntime:
                     if message.role == "user"
                 )
             return request.recent_messages, None
-        from app.channels.plugins.matrix.room_filter import (
-            resolve_allowed_context_source_rooms,
-        )
-
         if snapshot is not None:
             # Each read has its own decision; publication must not reuse an
             # earlier hold or replace the frozen generation selection.

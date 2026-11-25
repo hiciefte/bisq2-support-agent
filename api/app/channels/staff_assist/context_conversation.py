@@ -1367,14 +1367,6 @@ class StaffConversationCoordinator:
                     )
                     new_case_id = created.id
                     receipt["new_case_id"] = new_case_id
-                    if not metadata.get(
-                        "conversation_admission_request_pending", True
-                    ) and not metadata.get("conversation_replacement_allowed"):
-                        # Boundary revisions invalidate in-flight work but are
-                        # not new facts for an already handled parent request.
-                        metadata["conversation_last_gate_revision"] = metadata.get(
-                            "conversation_revision", 0
-                        )
                     receipt["unassigned_candidate_event_ids"] = [
                         item["event_id"]
                         for item in pending
@@ -1408,6 +1400,20 @@ class StaffConversationCoordinator:
                     )
                     metadata["conversation_last_requester_at_ms"] = metadata.get(
                         "conversation_admission_last_requester_at_ms", 0
+                    )
+                if (
+                    (
+                        new_case_id is not None
+                        or (failure or {}).get("reason")
+                        == "conversation_no_text_anchor"
+                    )
+                    and not metadata.get("conversation_admission_request_pending", True)
+                    and not metadata.get("conversation_replacement_allowed")
+                ):
+                    # Neither a promoted nor an invalidated candidate adds
+                    # facts to an already handled parent request.
+                    metadata["conversation_last_gate_revision"] = metadata.get(
+                        "conversation_revision", 0
                     )
                 metadata["conversation_admission_observed"] = [
                     *metadata.get("conversation_admission_observed", []),
