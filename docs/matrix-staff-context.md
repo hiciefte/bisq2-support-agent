@@ -23,7 +23,13 @@ policy rows migrate with their previous `answer` / `source_room` behavior. An
 operator must explicitly select Staff context to use the new path. Turning it
 off preserves the audience of existing cases.
 
-## Intake, generation, and publication
+New spend-bound trials use the conversation gate, independent Staff reply prompt,
+per-note judgments and model-spend accounting described in
+[Staff-context quality and budgets](staff-context-quality.md). The legacy intake
+and note sections below document preserved count-bound trial behavior; they are
+not the contract for a newly bound spend trial.
+
+## Legacy intake, generation, and publication
 
 Configure approved group rooms in `MATRIX_CONTEXT_SOURCE_ROOMS` and a distinct
 staff destination in `MATRIX_STAFF_ROOM`. This read scope never expands
@@ -173,25 +179,29 @@ latency, and staff usefulness. The completed operator-supervised pilot is separa
 evidence. Keep runtime generation off until a separately controlled trial is ready.
 Public-room posting remains a separate feature and rollout decision.
 
-An opt-in bounded trial uses `MATRIX_CONTEXT_TRIAL_ID`,
-`MATRIX_CONTEXT_TRIAL_START_AT`, `MATRIX_CONTEXT_TRIAL_END_AT`, and
-`MATRIX_CONTEXT_TRIAL_MAX_CASES`. Dates require an explicit timezone. The window
-must be positive and at most 7 days; the case limit is 1–20 (default 10).
-These are configuration ceilings for a separately authorized trial, not an
-extension of an existing descriptor or its reservations.
-Existing operation is unchanged when the trial ID and dates are empty.
+A new trial requires a unique `MATRIX_CONTEXT_TRIAL_ID`, timezone-qualified
+`MATRIX_CONTEXT_TRIAL_START_AT` and `MATRIX_CONTEXT_TRIAL_END_AT`, both model
+budgets and both conservative price ceilings. The positive fixed window may be
+at most 30 days. Empty settings enable no new Staff-context generation. See the
+[configuration reference](environment-configuration.md) for the exact variables.
 
-The ID binds an immutable descriptor containing the source rooms, staff room,
-start, end, and case limit in the escalation database. Reusing the ID with changed
-settings fails closed. Reservations are atomic across workers and survive process
-restarts and case retention. A case consumes a slot before paid retrieval, even
-if the model later chooses silence, publication is suppressed, or the outcome is
-uncertain. This deliberately bounds paid cases and consequently bounds notes;
-it does not promise the same number of published notes. Changing to a new ID
-starts a distinct trial and requires a new explicit operational decision.
+The descriptor pins the source and Staff rooms, window, model/output bounds,
+prices, total budget and UTC-day budget in the existing case database. Atomic
+reservations immediately before invocation cover request gates (including
+boundary decisions), initial drafts and updates separately. Deterministic holds
+spend no draft generation. Only measured usage settles a reservation; uncertain
+or missing usage retains its full bound. Restart cannot reset spend or retry an
+ambiguous call. A new ID requires a separate operational decision, not an
+extension to a previous trial.
 
-Source events before the start timestamp remain deferred for Admin review, with
-no paid retrieval or generation. Keep generation off during initial sync catch-up,
+Historical count-bound descriptors retain their original 1–20 case limits and
+at-most-seven-day windows. Their pre-retrieval reservations, including silence
+and uncertainty, remain unchanged. `MATRIX_CONTEXT_TRIAL_MAX_CASES` is not a quota
+for new spend-bound trials, and creating a new count-only descriptor is refused.
+
+Spend-bound v3 source events before the start timestamp are excluded from intake:
+they create no Admin case and trigger no paid retrieval or generation. Historical
+count-bound trials retain their deferred-case behavior. Keep generation off during initial sync catch-up,
 verify the restored account/device and encrypted room state, and record the saved
 cursor before enabling the trial policy. The trial does not reset that cursor.
 Trial authentication restores only the established session; it cannot fall back
@@ -202,14 +212,20 @@ staff sends. A local expiry task turns Matrix generation off and cancels pending
 context workers. Already-started network/model
 operations may finish after cancellation and remain uncertain until reconciled;
 they are never automatically retried. A process that is down at expiration still
-rejects expired work after restart. Filling the cap denies further paid admission;
-an operator can then reconcile the admitted cases and turn the policy off.
+rejects expired work after restart. A daily budget limit denies a call while its
+reservation would exceed the remaining allowance; it does not turn the policy off.
+Settlement can release enough reserved capacity for another call on the same UTC
+day. Admission can also resume the next UTC day within the unchanged total budget
+and cutoff. A total
+budget ceiling denies further model admission; the watchdog can then reconcile
+the admitted calls and stop the trial under its separately bound authority.
 
 Cases retain whether generation was called, the exact model decision, and reported
 token counters. `model_called=null` with a reserved call means interruption left
 the call outcome unknown. Missing usage is unknown, not zero cost. This accounting
 does not include retrieval embedding charges, ingress language-detection tiebreaks,
 or provider-side invoice adjustments. Language detection precedes trial admission:
-while generation stays on after the case cap, incoming messages can still incur
-that auxiliary cost. Turn generation off once admitted work is reconciled. The
-case cap bounds note-generation cases, not every provider call in shared ingress.
+while generation stays on after model admission stops, incoming messages can
+still incur that auxiliary cost. Turn generation off once admitted work is
+reconciled. Model budgets and historical case caps do not cap every provider call
+in shared ingress.

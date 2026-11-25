@@ -257,18 +257,34 @@ The Matrix integration uses lane-specific names to separate support-channel inge
     *   Description: Enables Matrix `!case` command handling in staff rooms.
     *   Default: `false`
 *   **`MATRIX_CONTEXT_TRIAL_ID`**, **`MATRIX_CONTEXT_TRIAL_START_AT`**,
-    **`MATRIX_CONTEXT_TRIAL_END_AT`**, **`MATRIX_CONTEXT_TRIAL_MAX_CASES`**
-    *   Optional staff-context trial descriptor. ID and dates default empty;
-        the case cap defaults to 10. Dates must include a timezone, the window
-        must be at most 7 days, and the cap must be 1–20. Existing descriptors
-        retain their original limits; a larger trial requires a new authorization.
-    *   A durable reservation is spent before paid retrieval and is never
-        replenished by silence, failure, restart, or deleting a review case.
-        The start timestamp excludes older source messages; the end time is
-        checked before retrieval, generation, and every staff send.
-    *   The same ID cannot be reused with changed rooms, dates, or cap.
-        Trial login is restoration-only; keep the existing identity/store.
-        See [Matrix staff-context operation](matrix-staff-context.md).
+    **`MATRIX_CONTEXT_TRIAL_END_AT`**
+    *   New Staff-context generation requires a separately authorized trial.
+        ID and dates default empty, which does not enable generation. Dates
+        require an explicit timezone and a positive fixed window of at most
+        30 days. The start excludes older sources; the end is checked before
+        retrieval, generation and every Staff send.
+*   **`MATRIX_CONTEXT_TRIAL_BUDGET_USD`**,
+    **`MATRIX_CONTEXT_TRIAL_DAILY_BUDGET_USD`**,
+    **`MATRIX_CONTEXT_TRIAL_INPUT_USD_PER_MILLION`**,
+    **`MATRIX_CONTEXT_TRIAL_OUTPUT_USD_PER_MILLION`**
+    *   All four default empty and must be explicitly set for a new trial.
+        The daily ceiling uses UTC and cannot exceed the total ceiling.
+        Conservative input prices must include any cache-write premium.
+        Compose passes these settings into the API without default amounts.
+    *   The immutable descriptor pins rooms, dates, budgets, model, maximum
+        output tokens and price ceilings. Reusing its ID with changes fails
+        closed. Gate, draft and update calls reserve their worst-case model
+        cost atomically immediately before invocation. Valid measured usage
+        settles each call once; missing usage and uncertain attempts retain
+        the reservation across restart. No automatic retries refund it.
+    *   Shared retrieval embeddings, auxiliary services and operator costs are
+        outside this model budget. Configuring a budget does not activate a
+        policy or authorize a paid test. Preserve the established session.
+        See [Staff budgets and review](staff-context-quality.md).
+*   **`MATRIX_CONTEXT_TRIAL_MAX_CASES`**
+    *   Historical count-bound descriptors only (1–20 cases, at most 7 days).
+        Existing descriptors and reservations remain unchanged. This setting
+        does not cap new spend-bound trials; a new count-only trial is refused.
 *   **`MATRIX_CHATOPS_ROOM_IDS`**
     *   Description: Comma-separated Matrix room IDs where ChatOps commands are accepted.
     *   Required: Yes (when `MATRIX_CHATOPS_ENABLED=true`)

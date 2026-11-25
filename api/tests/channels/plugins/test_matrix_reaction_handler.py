@@ -112,8 +112,8 @@ class TestMatrixReactionHandlerListening:
         await handler.start_listening()
 
         mock_runtime.resolve.assert_called_with("matrix_client")
-        # Two callbacks registered: reaction + redaction
-        assert mock_client.add_event_callback.call_count == 2
+        # Typed reaction/redaction plus nio's room-v11 redaction fallback.
+        assert mock_client.add_event_callback.call_count == 3
 
     @pytest.mark.asyncio
     async def test_start_listening_callback_targets(self, handler, mock_runtime):
@@ -127,13 +127,14 @@ class TestMatrixReactionHandlerListening:
         await handler.start_listening()
 
         calls = mock_client.add_event_callback.call_args_list
-        assert len(calls) == 2
+        assert len(calls) == 3
         # Both should be callable handlers
         assert callable(calls[0][0][0])
         assert callable(calls[1][0][0])
         # Verify event classes (nio expects type filters, not string names)
         assert calls[0][0][1] is rh.NioReactionEvent
         assert calls[1][0][1] is rh.NioRedactionEvent
+        assert calls[2][0][1] is rh.NioBadEventType
 
     @pytest.mark.asyncio
     async def test_stop_listening_removes_callback(self, handler, mock_runtime):
@@ -149,8 +150,7 @@ class TestMatrixReactionHandlerListening:
 
         await handler.stop_listening()
 
-        # Two callbacks removed: reaction + redaction
-        assert mock_client.remove_event_callback.call_count == 2
+        assert mock_client.remove_event_callback.call_count == 3
 
     @pytest.mark.asyncio
     async def test_stop_listening_noop_when_not_started(self, handler, mock_runtime):

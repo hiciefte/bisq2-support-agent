@@ -12,6 +12,7 @@ assessment, particularly effective for:
 """
 
 import logging
+import math
 import threading
 from typing import List, Optional
 
@@ -133,6 +134,8 @@ class ColBERTReranker(RerankerProtocol):
         query: str,
         documents: List[RetrievedDocument],
         top_n: Optional[int] = None,
+        *,
+        require_model: bool = False,
     ) -> List[RetrievedDocument]:
         """Rerank documents by relevance to query using ColBERT.
 
@@ -140,6 +143,8 @@ class ColBERTReranker(RerankerProtocol):
             query: Original search query
             documents: Documents from initial retrieval
             top_n: Number of top documents to return (defaults to self.top_n)
+            require_model: Raise instead of returning an unranked prefix when
+                           Staff needs proof that reranking actually succeeded.
 
         Returns:
             Reranked list of documents (top_n or fewer)
@@ -151,11 +156,15 @@ class ColBERTReranker(RerankerProtocol):
 
         # If reranking is disabled, just return top_n documents
         if not self.settings.ENABLE_COLBERT_RERANK:
+            if require_model:
+                raise RuntimeError("ColBERT reranking disabled")
             logger.debug("ColBERT reranking disabled, returning original order")
             return documents[:effective_top_n]
 
         # Ensure model is loaded
         if not self._ensure_model_loaded():
+            if require_model:
+                raise RuntimeError("ColBERT model unavailable")
             logger.warning(
                 "ColBERT model not available, returning documents without reranking"
             )
@@ -176,10 +185,31 @@ class ColBERTReranker(RerankerProtocol):
                 documents=doc_texts,
                 k=effective_top_n,
             )
+            if require_model and not reranked_results:
+                raise ValueError("ColBERT returned no ranked evidence")
 
             # Map reranked results back to RetrievedDocument objects
             reranked_docs = []
+            seen_content: set[str] = set()
             for result in reranked_results:
+                if require_model:
+                    if isinstance(result, dict):
+                        content, score = result.get("content"), result.get("score")
+                    elif isinstance(result, (tuple, list)) and len(result) == 2:
+                        content, score = result
+                    else:
+                        raise ValueError("ColBERT returned an invalid result")
+                    if (
+                        not isinstance(content, str)
+                        or type(score) not in (int, float)
+                        or not math.isfinite(score)
+                        or content in seen_content
+                        or sum(doc.content == content for doc in documents) != 1
+                    ):
+                        raise ValueError(
+                            "ColBERT returned ambiguous or invalid evidence"
+                        )
+                    seen_content.add(content)
                 # RAGatouille returns dict with 'content' and 'score'
                 if isinstance(result, dict):
                     content = result.get("content", "")
@@ -206,6 +236,8 @@ class ColBERTReranker(RerankerProtocol):
                         )
                     )
                 else:
+                    if require_model:
+                        raise ValueError("ColBERT returned unknown evidence")
                     # Document not found in original list (shouldn't happen)
                     logger.warning("Reranked document not found in original list")
                     reranked_docs.append(
@@ -223,6 +255,8 @@ class ColBERTReranker(RerankerProtocol):
 
         except Exception as e:
             logger.error(f"ColBERT reranking failed: {e}", exc_info=True)
+            if require_model:
+                raise
             # Fallback: return original documents without reranking
             return documents[:effective_top_n]
 

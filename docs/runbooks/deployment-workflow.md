@@ -214,6 +214,91 @@ or grants conversation reads. Follow the separately reviewed
 absolute cutoff, cap, health and finalization. A source-publication receipt is
 not a commissioning or pilot-activation receipt.
 
+## Staff quality tools and inactive spend pass-throughs
+
+For the initial Staff-quality release from the Staff release branch, use
+`--include-staff-quality-tools` with `--include-deployment-tooling` when the
+controller also changes. This creates plan/approval version 7. It admits exactly:
+
+- `api/app/scripts/replay_staff_context.py`,
+  `api/app/scripts/replay_staff_context_continuation.py`, and
+  `api/app/scripts/summarize_staff_context.py`, each a regular non-executable
+  source file whose complete candidate bytes are pinned; deployment never runs them.
+- The four `MATRIX_CONTEXT_TRIAL_{BUDGET_USD,DAILY_BUDGET_USD,INPUT_USD_PER_MILLION,OUTPUT_USD_PER_MILLION}`
+  API environment pass-throughs with empty defaults in Compose, and the exact
+  corresponding explanatory block and empty assignments in `.env.example`.
+- Optionally, the exact PR #277 change to `.github/workflows/ci.yml` that adds
+  the Staff rollout success/refusal CI rehearsals. Planner and host verify
+  regular file mode and the reviewed SHA256 of both versions.
+
+The plan and approval carry the same exact five-file `staff_quality_sha256` map.
+The host revalidates each source blob and the exact before/after configuration
+edit. No other operational utility, Compose change, environment default, source
+mode or deletion is admitted. This capability cannot combine with the existing
+heap, monitoring, Staff-monitoring or runner capabilities. API source is required;
+web changes still require an explicit API-plus-web service selection.
+
+This is a source-only rollout. Existing protected `.env` bytes, disabled channels,
+monetary settings, identities, data and other services remain preserved. Before
+runtime work the host requires each new budget/rate variable to be absent or a
+literal empty `NAME=` assignment (an optional trailing comment is accepted).
+Nonempty, quoted, exported, duplicate or ambiguous assignments are refused before
+an effect. Runtime API variables must also be absent or empty. The four new empty
+API entries in the resolved Compose configuration are the only configuration
+comparison exception; every other field remains exact. Container replacement may
+likewise differ only by the complete four-entry empty API bundle. Before the source fast-forward, the host resolves the candidate Compose file
+with the installed project directory, protected environment and preserved override.
+A configuration mismatch refuses publication while the installed source still
+points to the previous commit. The post-publication check remains a guard against
+concurrent drift: failure keeps the scheduler held and the failed receipt intact;
+read-only receipt/configuration reconciliation and separately reviewed recovery
+are required, never a retry of `publish_source` or an automatic scheduler resume.
+Source publication proves `staff_quality_config_preserved=true`; it neither writes
+protected settings nor creates a trial descriptor or enables generation.
+
+Data-preservation normalization permits only the API's additive
+`staff_context_verdicts TEXT NOT NULL DEFAULT '[]'` column appended to
+`escalations`, with every row still exactly `[]`. Existing column names and all
+previous Matrix escalation row values remain compared; this is not a digest of
+all non-Matrix escalation rows. Reviewed empty additions are allowed, but removal
+of a table or column present at the baseline is refused. Newly created verdict,
+proposed-answer and spend ledgers must be empty, so actual new work is not hidden
+by the migration exception. Version 7 also compares normalized table definitions
+and every non-internal index, trigger and view, preserving existing constraints.
+Older plans retain their original file hashes, selected history-row hashes and
+counts; they do not provide this schema comparison or full database byte equality.
+
+The existing empty answer-event ledger may also gain only the nullable
+`reply_to_event_id TEXT` column. Existing rows remain unknown; no historical
+reply-to association is inferred. Nonempty ledgers still refuse this source-only
+rollout. Preserved SQLite catalog SQL is compared byte for byte, including quoted
+identifier spaces and comment boundaries; only the validated verdict-column
+addition is removed from that comparison.
+
+The existing build and switch still use the preserved installed configuration.
+A later separately reviewed trial binding may configure the approved total/day
+budgets and conservative model-price ceilings. Do not use this capability or a
+successful source receipt as that authority.
+
+For a spend-bound Staff pilot the cutoff is application-only. The application
+checks the bound end time before reserving spend and before posting a note.
+The operator must monitor the spend ledger against both limits ($60 per trial
+and $10 per UTC day for the proposed pilot), including unresolved reservations,
+and track the fixed UTC end time. At that time verify that new spending and
+posts have stopped and carry out the approved shutdown and closeout. The running
+application also attempts to disable the Matrix generation policy at expiry.
+Verify that change and the separate Matrix sync shutdown explicitly. The
+historical count-bound host watchdog does not enforce a monetary pilot's cutoff.
+
+Preserve the separate main/wiki and Staff release lineages and choose the exact
+installed baseline before preparing a plan.
+
+The independent release review must be followed by the actual final-head CI,
+protected exact-commit/model quality result, disposable Linux rehearsal, physical
+consumer approval, both backup/restore gates, once-only smoke and runtime
+preservation checks. The v7 fixture scenarios are `staff_quality_success` and
+`staff_quality_config_refusal`; their external boundaries remain synthetic.
+
 ## Protected profile and explicit approval
 
 `scripts/lib/deployment_protocol.py` is the shared producer/consumer contract.

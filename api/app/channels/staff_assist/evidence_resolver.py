@@ -17,6 +17,12 @@ from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
+from app.channels.staff_assist.evidence_applicability import (
+    annotate_source,
+    source_applicability,
+    staff_requester_product,
+    staff_requester_version,
+)
 from app.channels.staff_assist.public_context import (
     ContextEvidence,
     PublicEvidence,
@@ -27,8 +33,6 @@ from app.services.rag.canonical_fixes import find_linked_canonical_fix
 from app.services.rag.code_evidence import (
     canonical_code_repo,
     code_repo_for_context,
-    explicit_product,
-    explicit_user_version,
 )
 from app.services.rag.source_refs import is_precise_code_source_ref
 from markdown_it import MarkdownIt
@@ -37,8 +41,25 @@ from markdown_it import MarkdownIt
 @dataclass
 class EvidenceBundle:
     evidence: list[ContextEvidence] = field(default_factory=list)
+    excluded_evidence: list[ContextEvidence] = field(default_factory=list)
     internal_grounding: dict[str, Any] | None = None
     diagnostics: list[str] = field(default_factory=list)
+
+
+def _conflicted_source_ids(
+    sources: list[ContextEvidence], product: str | None
+) -> set[str]:
+    """A weaker duplicate cannot clear another copy's explicit scope."""
+    scopes: dict[str, set[str]] = {}
+    conflicted = set()
+    for source in sources:
+        check = source_applicability(source, product=product)
+        if not check["eligible_for_reply"]:
+            conflicted.add(source.id)
+        scope = check["declared_product"] or check["explicit_text_scope"]
+        if scope:
+            scopes.setdefault(source.id, set()).add(scope)
+    return conflicted | {key for key, values in scopes.items() if len(values) > 1}
 
 
 def _value(row: Any, key: str, default: Any = None) -> Any:
@@ -118,9 +139,13 @@ class StaffEvidenceResolver:
         scores: list[float] | None = None,
         product: str | None = None,
         user_version: str | None = None,
+        applicability_question: str | None = None,
     ) -> EvidenceBundle:
-        product = product or explicit_product(question)
-        user_version = user_version or explicit_user_version(question)
+        scope_question = (
+            applicability_question if applicability_question is not None else question
+        )
+        product = product or staff_requester_product(scope_question)
+        user_version = user_version or staff_requester_version(scope_question)
         bundle = EvidenceBundle()
         candidates: list[ContextEvidence] = []
         published_faqs: list[tuple[PublicEvidence, str]] = []
@@ -181,12 +206,15 @@ class StaffEvidenceResolver:
             except (ValueError, TypeError, AttributeError):
                 bundle.diagnostics.append("invalid_source_excluded")
         candidates.extend(await self._live(question, bundle))
+        conflicted_ids = _conflicted_source_ids(candidates, product)
         if self.grounding_service is not None:
             try:
                 brief = await asyncio.to_thread(
                     self.grounding_service.build,
-                    question=question,
+                    question=scope_question,
                     product=product,
+                    infer_product=False,
+                    infer_user_version=False,
                     user_version=user_version,
                     knowledge_sources=[
                         {
@@ -194,6 +222,10 @@ class StaffEvidenceResolver:
                             "protocol": source.provenance.get("protocol"),
                         }
                         for source in candidates
+                        if source.id not in conflicted_ids
+                        and source_applicability(source, product=product)[
+                            "eligible_for_reply"
+                        ]
                     ],
                 )
                 if isinstance(brief, dict):
@@ -239,7 +271,10 @@ class StaffEvidenceResolver:
                         )
                     candidates.extend(
                         self._code(
-                            question, brief, product=product, user_version=user_version
+                            scope_question,
+                            brief,
+                            product=product,
+                            user_version=user_version,
                         )
                     )
             except Exception:
@@ -247,7 +282,10 @@ class StaffEvidenceResolver:
         # Resolve published FAQ links after grounding so scoped documentation
         # cannot change the inferred product used for code/release selection.
         linked = self._linked_guide(
-            question, published_faqs, product=product, user_version=user_version
+            question,
+            [faq for faq in published_faqs if faq[0].id not in conflicted_ids],
+            product=product,
+            user_version=user_version,
         )
         if linked is not None:
             # The bounded reviewed guide must survive the evidence cap. Prefer
@@ -258,16 +296,47 @@ class StaffEvidenceResolver:
                 if not (source.kind == "wiki" and source.url == linked.url)
             ]
             candidates.insert(0, linked)
+        # Preserve conflicting source bodies separately for Admin, but do not let
+        # them consume the eight usable evidence slots or re-enter by source ID.
+        conflicted_ids.update(_conflicted_source_ids(candidates, product))
+        eligible = []
+        excluded_snapshots = set()
+        for source in candidates:
+            annotated = annotate_source(source, product=product)
+            applicability = annotated.provenance["staff_applicability"]
+            if source.id in conflicted_ids and applicability["eligible_for_reply"]:
+                applicability["eligible_for_reply"] = False
+                applicability["blocked_reasons"].append(
+                    "duplicate_source_scope_conflict"
+                )
+                applicability["product_scope"] = "conflict"
+            if applicability["eligible_for_reply"]:
+                eligible.append(annotated)
+            else:
+                # Keep distinct conflicting bodies and scope labels for Admin;
+                # collapse only an identical repeated snapshot, never by ID alone.
+                snapshot = json.dumps(annotated.model_dump(), sort_keys=True)
+                if snapshot in excluded_snapshots:
+                    continue
+                excluded_snapshots.add(snapshot)
+                excluded = annotated.model_copy(
+                    update={"id": f"excluded-{len(bundle.excluded_evidence) + 1}"}
+                )
+                bundle.excluded_evidence.append(excluded)
+                bundle.diagnostics.extend(
+                    f"{excluded.id}:{reason}"
+                    for reason in applicability["blocked_reasons"]
+                )
         # Retain source diversity before filling remaining slots in retrieval order.
         selected: list[ContextEvidence] = []
         seen: set[str] = set()
         kinds: set[str] = set()
-        for source in candidates:
+        for source in eligible:
             if source.kind not in kinds:
                 selected.append(source)
                 seen.add(source.id)
                 kinds.add(source.kind)
-        for source in candidates:
+        for source in eligible:
             if source.id not in seen and len(selected) < 8:
                 selected.append(source)
                 seen.add(source.id)
@@ -290,6 +359,8 @@ class StaffEvidenceResolver:
         # decode or trim punctuation from a URL to obtain an eligible match.
         markdown.normalizeLink = lambda url: url  # type: ignore[method-assign]
         for faq, answer in published_faqs:
+            if not source_applicability(faq, product=product)["eligible_for_reply"]:
+                continue
             refs: set[str] = set()
             for block in markdown.parse(answer):
                 # HTML labels can look like standalone URLs while pointing
@@ -487,9 +558,9 @@ class StaffEvidenceResolver:
         product: str | None = None,
         user_version: str | None = None,
     ) -> list[StaffEvidence]:
-        version = user_version or explicit_user_version(question)
+        version = user_version
         repo = code_repo_for_context(
-            product or explicit_product(question), brief.get("likely_protocol")
+            product or staff_requester_product(question), brief.get("likely_protocol")
         )
         evidence = []
         for fact in brief.get("evidence", [])[:3]:

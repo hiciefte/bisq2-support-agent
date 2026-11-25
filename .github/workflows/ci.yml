@@ -143,6 +143,28 @@ jobs:
       - name: Validate monitoring configuration
         run: bash scripts/validate-monitoring-config.sh
 
+      - name: Rehearse inactive Staff source rollout
+        run: |
+          python3 api/tests/scripts/test_deployment_rehearsal.py \
+            --source "$GITHUB_WORKSPACE" \
+            --output "$RUNNER_TEMP/staff-quality-success" \
+            --scenario staff_quality_success
+          python3 api/tests/scripts/test_deployment_rehearsal.py \
+            --source "$GITHUB_WORKSPACE" \
+            --output "$RUNNER_TEMP/staff-quality-refusal" \
+            --scenario staff_quality_config_refusal
+
+      - name: Save synthetic rollout rehearsal results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: staff-rollout-rehearsal
+          path: |
+            ${{ runner.temp }}/staff-quality-success/result.json
+            ${{ runner.temp }}/staff-quality-refusal/result.json
+          if-no-files-found: warn
+          retention-days: 7
+
   security:
     name: Security Scan
     if: github.event_name != 'schedule'

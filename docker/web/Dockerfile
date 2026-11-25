@@ -47,8 +47,8 @@ WORKDIR /app
 
 # Upgrade vulnerable packages from the pinned Alpine release to exact fixed versions.
 RUN apk add --no-cache \
-  libcrypto3=3.5.9-r0 \
-  libssl3=3.5.9-r0 \
+  libcrypto3=3.5.9-r1 \
+  libssl3=3.5.9-r1 \
   musl=1.2.5-r24 \
   musl-utils=1.2.5-r24 \
   zlib=1.4-r0 && \

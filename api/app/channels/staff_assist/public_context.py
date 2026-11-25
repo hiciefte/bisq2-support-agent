@@ -10,9 +10,10 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import quote, unquote, urlparse
 
+from app.channels.staff_assist.staff_prompt import STAFF_CONTEXT_PROMPT
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -21,6 +22,9 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+if TYPE_CHECKING:
+    from app.channels.staff_assist.staff_context import StaffContextPreview
 
 PUBLIC_CONTEXT_PROMPT = """You prepare a short AI context note for a public Bisq
 support conversation with human support staff. You assist the existing discussion.
@@ -278,7 +282,7 @@ class StaffEvidence(_StrictModel):
     id: str = Field(min_length=1, max_length=80, pattern=r"^[a-zA-Z0-9_-]+$")
     title: str = Field(min_length=1, max_length=160)
     content: str = Field(min_length=1, max_length=16000)
-    kind: Literal["llm_wiki", "code_fact", "live_tool"]
+    kind: Literal["llm_wiki", "code_fact", "live_tool", "saved_excerpt"]
     audience: Literal["staff_only"] = "staff_only"
     url: None = None
     source_refs: list[str] = Field(default_factory=list, max_length=30)
@@ -286,87 +290,6 @@ class StaffEvidence(_StrictModel):
 
 
 ContextEvidence = PublicEvidence | StaffEvidence
-
-STAFF_CONTEXT_PROMPT = (
-    PUBLIC_CONTEXT_PROMPT.replace(
-        "You prepare a short AI context note for a public Bisq\n"
-        "support conversation with human support staff. You assist the existing discussion.",
-        "Draft the exact user-facing reply proposed for the public Bisq support "
-        "conversation. Address the original user directly. Staff will review this "
-        "same reply body; do not write instructions to staff or describe an internal "
-        "investigation, guide title, review status or evidence pipeline.",
-    )
-    .replace(
-        "Use only supplied public evidence for facts, and return its IDs in source_ids.\n"
-        "Do not treat a prior AI answer as evidence. Do not use private code facts.",
-        "Use only supplied evidence for facts, and return its IDs in source_ids. "
-        "Reviewed internal LLM-wiki guidance is usable staff evidence; it is not a "
-        "public webpage. Its page-level references do not establish that every claim "
-        "appears in each original source. Return the compiled guide's evidence ID; "
-        "the renderer may list its eligible public references as Further reading, "
-        "not claim-level citations. Cite an original public source only when its "
-        "supplied content supports the claim. Code facts have explicit source "
-        "release scope, not proof of the user's release or cause. Live tool results "
-        "are timestamped observations from the configured node, not whole-network "
-        "truth. Preserve unavailable, stale and partial coverage. Do not treat a prior "
-        "AI answer as evidence.",
-    )
-    .replace(
-        "checking. Add only materially new, relevant evidence; otherwise choose silence.",
-        "checking. Add only materially new, relevant evidence or a useful missing-detail "
-        "question under the clarification rules below; otherwise choose silence.",
-    )
-    .replace(
-        "Choose silence when your contribution would repeat existing information or add no\n"
-        "useful evidence. A note must add a relevant finding from the supplied evidence,",
-        "Choose silence when your contribution would repeat existing information or add "
-        "no useful progress. A note must add a relevant finding from the supplied evidence,",
-    )
-    .replace(
-        "Choose silence if no useful, complete supported claim fits within the word limit.",
-        "If no useful, complete supported claim fits within the word limit, choose a "
-        "focused clarification under the rules below or silence.",
-    )
-    .replace(
-        "Never post a generic clarification or a question-only note. Choose silence if you\n"
-        "cannot add a useful supported fact without first asking for more information.",
-        "For a confirmed unresolved support request, you may choose clarification when "
-        "one specific missing non-sensitive diagnostic detail would determine the next "
-        "useful step. Ask one focused question, not a generic request for more information. "
-        "Use the captured requester context: do not ask again for facts already supplied "
-        "or a question a human already asked. A volunteered hypothesis does not by itself "
-        "require a clarification. Otherwise choose silence.",
-    )
-    .replace(
-        "step. A scoped fact may still help; otherwise choose silence. Do not ask the room\n"
-        "for clarification.",
-        "step. A material safety boundary or correction can still help without a remedy. "
-        "Otherwise choose a focused clarification or silence; do not invent a diagnosis "
-        "or a troubleshooting action from general background.",
-    )
-    .replace(
-        "If useful evidence establishes only a related concept,\n"
-        "FIRST state specifically what the evidence cannot determine about the asked\n"
-        "proposition, then give the narrowly scoped supported context.",
-        "For an unresolved diagnostic request, related architecture or historical "
-        "background alone is not useful progress: prefer a focused clarification or "
-        "silence. A supported material safety boundary, correction of an unsupported "
-        "claim, or direct answer to a conceptual question can be useful without a remedy. "
-        "When giving such partial help, FIRST state what remains undetermined, then the "
-        "narrowly scoped supported context.",
-    )
-    .replace('{"action":"note|silence",', '{"action":"note|clarification|silence",')
-    .replace(
-        "source ID. The legacy clarification action is suppressed and never shown.",
-        "source ID. A clarification has no source IDs and contains exactly one "
-        "non-sensitive question, without a diagnosis, factual preamble, suggested "
-        "procedure or promise. Ask about an existing observation, never suggest an "
-        "operation by phrasing it as a question. Never request secrets, private keys, "
-        "seed words, passwords, pairing tokens, personal identifiers, DMs or full logs. "
-        "A useful factual note may end with one focused diagnostic question, retaining "
-        "its supported facts and citations. A question alone must use clarification.",
-    )
-)
 
 
 class RoomMessage(_StrictModel):
@@ -613,7 +536,20 @@ class PublicContextService:
     def __init__(self, llm: Any) -> None:
         self.llm = llm
 
-    def preview(self, request: PublicContextRequest) -> PublicContextPreview:
+    def preview(
+        self, request: PublicContextRequest
+    ) -> PublicContextPreview | StaffContextPreview:
+        if request.audience == "staff_only":
+            if request.recent_bot_reply:
+                return _silence("recent_bot_reply")
+            from app.channels.staff_assist.staff_context import (
+                StaffContextRequest,
+                StaffContextService,
+            )
+
+            return StaffContextService(self.llm).preview(
+                StaffContextRequest.model_validate(request.model_dump())
+            )
         if request.needs_moderation_review:
             return _silence("moderation_review_required")
         for field in (

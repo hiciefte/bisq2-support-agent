@@ -55,7 +55,12 @@ async def test_unrelated_neighbor_never_becomes_retrieval_fact(runtime_case, sen
     prior = "My client reports PeerHandshakeMismatch."
     source(bundle, question, before=[event("$neighbor", prior, sender=sender)])
     case = await runtime_fixtures.run(bundle)
-    bundle.retrieve.assert_called_once_with(question)
+    bundle.retrieve.assert_called_once_with(
+        question,
+        detected_version=None,
+        detect_from_query=False,
+        require_reranker_success=True,
+    )
     assert prior in json.dumps(case.channel_metadata["source_context_snapshot"])
 
 
@@ -69,7 +74,12 @@ async def test_helper_diagnostic_is_prompt_context_not_requester_query(runtime_c
         before=[event("$helper", "Does PeerHandshakeMismatch appear?")],
     )
     await runtime_fixtures.run(bundle)
-    bundle.retrieve.assert_called_once_with(question)
+    bundle.retrieve.assert_called_once_with(
+        question,
+        detected_version=None,
+        detect_from_query=False,
+        require_reranker_success=True,
+    )
 
 
 @pytest.mark.asyncio

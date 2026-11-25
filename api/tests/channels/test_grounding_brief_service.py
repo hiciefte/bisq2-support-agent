@@ -133,6 +133,34 @@ def test_grounding_brief_passes_protocol_from_sources() -> None:
     ]
 
 
+def test_strict_unknown_staff_scope_does_not_redetect_product_or_call_code_retriever():
+    retriever = FakeRetriever([_code_doc(protocol="multisig_v1")])
+    brief = GroundingBriefService(code_retriever=retriever).build(
+        question="I am not using Bisq 1. Which steps apply?",
+        knowledge_sources=[{"protocol": "multisig_v1"}],
+        product=None,
+        infer_product=False,
+    )
+    assert brief is None
+    assert retriever.calls == []
+
+
+def test_strict_established_staff_scope_overrides_other_product_mentions():
+    retriever = FakeRetriever([_code_doc()])
+    brief = GroundingBriefService(code_retriever=retriever).build(
+        question="A helper mentioned Bisq 1. My client cannot create an offer.",
+        knowledge_sources=[{"protocol": "multisig_v1"}],
+        product="bisq2",
+        infer_product=False,
+    )
+    assert brief is not None
+    # Bisq 2 product scope includes multiple protocols; one code result must
+    # not silently establish Easy as the requester's protocol.
+    assert brief["likely_protocol"] is None
+    assert brief["evidence"][0]["repo"] == "bisq2"
+    assert retriever.calls[0]["protocol"] == "all"
+
+
 def test_grounding_brief_rejects_wrong_protocol_evidence_from_retriever() -> None:
     retriever = FakeRetriever([_code_doc(protocol="multisig_v1")])
     service = GroundingBriefService(code_retriever=retriever)
