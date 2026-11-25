@@ -41,6 +41,13 @@ from lib.deployment_protocol import (
     validate_plan,
 )
 
+STAFF_QUALITY_WORKFLOW = ".github/workflows/ci.yml"
+# Only the reviewed addition of the two offline Staff rollout rehearsals.
+STAFF_QUALITY_WORKFLOW_SHA256 = (
+    "ddb169e8937d92c37933286a73ab0d468247047ce2af339502824bbd618b54f7",
+    "55977306e317b37d8a32377655207c437e22b189a539210c8ce8f52941734c5f",
+)
+
 
 def full_commit(value: object) -> bool:
     return isinstance(value, str) and bool(re.fullmatch(r"[0-9a-f]{40}", value))
@@ -161,6 +168,9 @@ def classify_services(
     )
     selected = set()
     for path in paths:
+        if include_staff_quality_tools and path == STAFF_QUALITY_WORKFLOW:
+            # Planner and host both call staff_quality_hashes to check its bytes.
+            continue
         if include_staff_quality_tools and path in STAFF_QUALITY_FILES:
             if path in STAFF_QUALITY_TOOLS:
                 selected.add("api")
@@ -358,6 +368,15 @@ def staff_quality_hashes(
         )
         return local_git(repository, "show", revision + ":" + name)
 
+    if STAFF_QUALITY_WORKFLOW in paths:
+        require(
+            tuple(
+                digest(blob(revision, STAFF_QUALITY_WORKFLOW))
+                for revision in (previous, candidate)
+            )
+            == STAFF_QUALITY_WORKFLOW_SHA256,
+            "staff_quality_workflow_content",
+        )
     pins = {name: digest(blob(candidate, name)) for name in sorted(STAFF_QUALITY_FILES)}
     name = "docker/docker-compose.yml"
     before = blob(previous, name)

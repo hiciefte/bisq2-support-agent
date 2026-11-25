@@ -2,14 +2,17 @@
 
 import ast
 import copy
+import hashlib
+import importlib
 import json
+import runpy
 import sqlite3
 import subprocess
 from contextlib import closing
 from pathlib import Path
 
 import pytest
-from test_deploy_release import cli, commit, git, plan_args
+from test_deploy_release import HELPER, cli, commit, git, plan_args
 from test_deploy_release import repository as repository_fixture
 from test_deployment_host import host as host_fixture
 from test_deployment_host import module as module_fixture
@@ -40,7 +43,14 @@ def quality_repo(repository, protocol):
         OLD_COMMENT
         + "MATRIX_CONTEXT_TRIAL_ID=\nMATRIX_CONTEXT_TRIAL_START_AT=\nMATRIX_CONTEXT_TRIAL_END_AT=\nMATRIX_CONTEXT_TRIAL_MAX_CASES=10\n"
     )
-    previous = commit(root, {COMPOSE: compose, EXAMPLE: example})
+    previous = commit(
+        root,
+        {
+            COMPOSE: compose,
+            EXAMPLE: example,
+            ".github/workflows/ci.yml": "name: fixture\n",
+        },
+    )
     additions = "".join(
         f"      - {key}=${{{key}:-}}\n" for key in protocol.STAFF_SPEND_ENV
     )
@@ -1004,3 +1014,48 @@ def test_empty_answer_ledger_can_gain_only_nullable_explicit_reply_target(host, 
     assert host._protected_data_preserved(after)
     host.baseline["protected_data"] = after
     assert not host._protected_data_preserved(before)
+
+
+def test_pr277_reviewed_file_list_selects_api_and_web(monkeypatch):
+    # Frozen output of git diff --name-only 4b01a1ed a0209f0b (CI can be shallow).
+    paths = (
+        (Path(__file__).parent / "fixtures/pr277-paths.txt").read_text().splitlines()
+    )
+    monkeypatch.syspath_prepend(str(HELPER.parent))
+    classify = runpy.run_path(str(HELPER))["classify_services"]
+    assert classify(
+        paths, include_deployment_tooling=True, include_staff_quality_tools=True
+    ) == ["api", "web"]
+
+
+def test_staff_quality_refuses_different_ci_workflow(quality_repo, tmp_path):
+    root, previous, candidate = quality_repo
+    workflow = ".github/workflows/ci.yml"
+    candidate = commit(root, {workflow: "name: another workflow\n"})
+    operation = tmp_path / "refused"
+    result = cli(*plan_args(root, previous, candidate, operation), FLAG)
+    assert result.returncode == 2
+    assert json.loads(result.stderr) == {"error": "staff_quality_workflow_content"}
+    assert not operation.exists()
+
+
+@pytest.mark.parametrize("changed_side", ["previous", "candidate"])
+def test_staff_workflow_both_revisions_must_match(
+    quality_repo, monkeypatch, changed_side
+):
+    root, previous, candidate = quality_repo
+    monkeypatch.syspath_prepend(str(HELPER.parent))
+    release = importlib.import_module("deploy_release")
+    workflow = release.STAFF_QUALITY_WORKFLOW
+    candidate = commit(root, {workflow: "name: reviewed rehearsal\n"})
+    paths = release.changed_paths(root, previous, candidate)
+    pins = [
+        hashlib.sha256(git(root, "show", f"{revision}:{workflow}")).hexdigest()
+        for revision in (previous, candidate)
+    ]
+    monkeypatch.setattr(release, "STAFF_QUALITY_WORKFLOW_SHA256", tuple(pins))
+    release.staff_quality_hashes(root, previous, candidate, paths)
+    pins[0 if changed_side == "previous" else 1] = "0" * 64
+    monkeypatch.setattr(release, "STAFF_QUALITY_WORKFLOW_SHA256", tuple(pins))
+    with pytest.raises(release.JournalError, match="staff_quality_workflow_content"):
+        release.staff_quality_hashes(root, previous, candidate, paths)

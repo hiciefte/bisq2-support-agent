@@ -227,6 +227,9 @@ controller also changes. This creates plan/approval version 7. It admits exactly
 - The four `MATRIX_CONTEXT_TRIAL_{BUDGET_USD,DAILY_BUDGET_USD,INPUT_USD_PER_MILLION,OUTPUT_USD_PER_MILLION}`
   API environment pass-throughs with empty defaults in Compose, and the exact
   corresponding explanatory block and empty assignments in `.env.example`.
+- Optionally, the exact PR #277 change to `.github/workflows/ci.yml` that adds
+  the Staff rollout success/refusal CI rehearsals. Planner and host verify
+  regular file mode and the reviewed SHA256 of both versions.
 
 The plan and approval carry the same exact five-file `staff_quality_sha256` map.
 The host revalidates each source blob and the exact before/after configuration
@@ -275,10 +278,20 @@ addition is removed from that comparison.
 The existing build and switch still use the preserved installed configuration.
 A later separately reviewed trial binding may configure the approved total/day
 budgets and conservative model-price ceilings. Do not use this capability or a
-successful source receipt as that authority. Do not reuse the historical
-count-bound watchdog descriptor for a monetary pilot without its own verified
-adapter and lifecycle binding. Preserve the separate main/wiki and Staff release
-lineages; choose the exact intended baseline before preparing a plan.
+successful source receipt as that authority.
+
+For a spend-bound Staff pilot the cutoff is application-only. The application
+checks the bound end time before reserving spend and before posting a note.
+The operator must monitor the spend ledger against both limits ($60 per trial
+and $10 per UTC day for the proposed pilot), including unresolved reservations,
+and track the fixed UTC end time. At that time verify that new spending and
+posts have stopped and carry out the approved shutdown and closeout. The running
+application also attempts to disable the Matrix generation policy at expiry.
+Verify that change and the separate Matrix sync shutdown explicitly. The
+historical count-bound host watchdog does not enforce a monetary pilot's cutoff.
+
+Preserve the separate main/wiki and Staff release lineages and choose the exact
+installed baseline before preparing a plan.
 
 The independent release review must be followed by the actual final-head CI,
 protected exact-commit/model quality result, disposable Linux rehearsal, physical
